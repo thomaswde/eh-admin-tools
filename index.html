@@ -566,7 +566,7 @@
         };
 
         // Configuration - SET YOUR LAMBDA ENDPOINT HERE
-        const LAMBDA_PROXY_URL = 'https://mdpg23urni.execute-api.us-east-2.amazonaws.com/default/extrahop-api-wrapper-proxy'; // e.g., https://abc123.execute-api.us-east-1.amazonaws.com/default/extrahop-api-proxy
+        const LAMBDA_PROXY_URL = 'YOUR_LAMBDA_ENDPOINT_HERE'; // e.g., https://abc123.execute-api.us-east-1.amazonaws.com/default/extrahop-api-proxy
 
         // API Client (using Lambda Proxy)
         class ExtraHopAPI {
@@ -723,6 +723,11 @@
             }
 
             async request(endpoint, options = {}) {
+                // Ensure endpoint starts with /api/v1 unless it's the OAuth token endpoint
+                if (!endpoint.startsWith('/api/v1') && !endpoint.startsWith('/oauth2')) {
+                    endpoint = '/api/v1' + endpoint;
+                }
+
                 const proxyRequest = {
                     deploymentType: this.config.type,
                     method: options.method || 'GET',
@@ -782,10 +787,31 @@
             }
 
             async deleteDashboard(dashboardId) {
-                const response = await fetch(`${this.baseUrl}/dashboards/${dashboardId}`, {
+                const proxyRequest = {
+                    deploymentType: this.config.type,
                     method: 'DELETE',
-                    headers: this.getHeaders()
+                    endpoint: `/dashboards/${dashboardId}`
+                };
+
+                if (this.config.type === '360') {
+                    proxyRequest.tenant = this.config.tenant;
+                    proxyRequest.accessToken = this.accessToken;
+                } else {
+                    proxyRequest.host = this.config.host;
+                    proxyRequest.apiKey = this.config.apiKey;
+                }
+
+                // Need to prepend /api/v1 manually here since deleteDashboard bypasses request()
+                proxyRequest.endpoint = '/api/v1' + proxyRequest.endpoint;
+
+                const response = await fetch(this.proxyUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(proxyRequest)
                 });
+                
                 return response.ok;
             }
 
