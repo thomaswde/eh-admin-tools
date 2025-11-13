@@ -565,33 +565,35 @@
             itemsPerPage: 50
         };
 
-        // API Client
+        // Configuration - SET YOUR LAMBDA ENDPOINT HERE
+        const LAMBDA_PROXY_URL = 'YOUR_LAMBDA_ENDPOINT_HERE'; // e.g., https://abc123.execute-api.us-east-1.amazonaws.com/default/extrahop-api-proxy
+
+        // API Client (using Lambda Proxy)
         class ExtraHopAPI {
             constructor(config) {
                 this.config = config;
-                this.baseUrl = config.type === '360' 
-                    ? `https://${config.tenant}.api.cloud.extrahop.com/api/v1`
-                    : `https://${config.host}/api/v1`;
-                this.tokenUrl = config.type === '360'
-                    ? `https://${config.tenant}.api.cloud.extrahop.com/oauth2/token`
-                    : null;
+                this.proxyUrl = LAMBDA_PROXY_URL;
             }
 
             async authenticate() {
                 if (this.config.type === '360') {
-                    const credentials = btoa(`${this.config.apiId}:${this.config.apiSecret}`);
-                    const requestUrl = this.tokenUrl;
-                    const requestHeaders = {
-                        'Authorization': `Basic ${credentials}`,
-                        'Content-Type': 'application/x-www-form-urlencoded'
+                    // Request OAuth token through Lambda proxy
+                    const proxyRequest = {
+                        deploymentType: '360',
+                        tenant: this.config.tenant,
+                        apiId: this.config.apiId,
+                        apiSecret: this.config.apiSecret,
+                        method: 'POST',
+                        endpoint: '/oauth2/token'
                     };
-                    const requestBody = 'grant_type=client_credentials';
 
                     try {
-                        const response = await fetch(requestUrl, {
+                        const response = await fetch(this.proxyUrl, {
                             method: 'POST',
-                            headers: requestHeaders,
-                            body: requestBody
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(proxyRequest)
                         });
 
                         const responseText = await response.text();
@@ -604,9 +606,9 @@
 
                         if (!response.ok) {
                             const errorDetails = {
-                                url: requestUrl,
-                                headers: requestHeaders,
-                                body: requestBody,
+                                url: this.proxyUrl,
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(proxyRequest, null, 2),
                                 status: `${response.status} ${response.statusText}`,
                                 response: responseData
                             };
@@ -618,6 +620,8 @@
                                 errorMessage += 'Access forbidden (403 Forbidden). Check API permissions.';
                             } else if (response.status === 404) {
                                 errorMessage += 'Endpoint not found (404). Check tenant name.';
+                            } else if (response.status === 400) {
+                                errorMessage += `Bad request: ${responseData.error || 'Check configuration'}`;
                             } else {
                                 errorMessage += `Server returned ${response.status} ${response.statusText}.`;
                             }
@@ -635,26 +639,33 @@
                         }
                         // Network error
                         const errorDetails = {
-                            url: requestUrl,
-                            headers: requestHeaders,
-                            body: requestBody,
+                            url: this.proxyUrl,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(proxyRequest, null, 2),
                             status: 'Network Error',
                             response: error.message
                         };
-                        const errorMessage = `Network error: ${error.message}. Check tenant name and network connectivity.`;
+                        const errorMessage = `Network error: ${error.message}. Check Lambda proxy URL: ${this.proxyUrl}`;
                         showErrorModal(errorMessage, errorDetails);
                         throw new Error(errorMessage);
                     }
                 } else {
-                    // Enterprise - test with /extrahop endpoint
-                    const requestUrl = `${this.baseUrl}/extrahop`;
-                    const requestHeaders = {
-                        'Authorization': `ExtraHop apikey=${this.config.apiKey}`
+                    // Enterprise - test with /api/v1/extrahop endpoint through proxy
+                    const proxyRequest = {
+                        deploymentType: 'enterprise',
+                        host: this.config.host,
+                        apiKey: this.config.apiKey,
+                        method: 'GET',
+                        endpoint: '/api/v1/extrahop'
                     };
 
                     try {
-                        const response = await fetch(requestUrl, {
-                            headers: requestHeaders
+                        const response = await fetch(this.proxyUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(proxyRequest)
                         });
 
                         const responseText = await response.text();
@@ -667,9 +678,9 @@
 
                         if (!response.ok) {
                             const errorDetails = {
-                                url: requestUrl,
-                                headers: requestHeaders,
-                                body: 'N/A',
+                                url: this.proxyUrl,
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(proxyRequest, null, 2),
                                 status: `${response.status} ${response.statusText}`,
                                 response: responseData
                             };
@@ -681,6 +692,8 @@
                                 errorMessage += 'Access forbidden (403 Forbidden). Check API key permissions.';
                             } else if (response.status === 404) {
                                 errorMessage += 'Endpoint not found (404). Check hostname.';
+                            } else if (response.status === 400) {
+                                errorMessage += `Bad request: ${responseData.error || 'Check configuration'}`;
                             } else {
                                 errorMessage += `Server returned ${response.status} ${response.statusText}.`;
                             }
@@ -696,41 +709,46 @@
                         }
                         // Network error
                         const errorDetails = {
-                            url: requestUrl,
-                            headers: requestHeaders,
-                            body: 'N/A',
+                            url: this.proxyUrl,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(proxyRequest, null, 2),
                             status: 'Network Error',
                             response: error.message
                         };
-                        const errorMessage = `Network error: ${error.message}. Check hostname and network connectivity.`;
+                        const errorMessage = `Network error: ${error.message}. Check Lambda proxy URL: ${this.proxyUrl}`;
                         showErrorModal(errorMessage, errorDetails);
                         throw new Error(errorMessage);
                     }
                 }
             }
 
-            getHeaders() {
-                if (this.config.type === '360') {
-                    return {
-                        'Authorization': `Bearer ${this.accessToken}`,
-                        'Content-Type': 'application/json'
-                    };
-                } else {
-                    return {
-                        'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
-                        'Content-Type': 'application/json'
-                    };
-                }
-            }
-
             async request(endpoint, options = {}) {
-                const url = `${this.baseUrl}${endpoint}`;
-                const response = await fetch(url, {
-                    ...options,
+                const proxyRequest = {
+                    deploymentType: this.config.type,
+                    method: options.method || 'GET',
+                    endpoint: endpoint
+                };
+
+                // Add deployment-specific fields
+                if (this.config.type === '360') {
+                    proxyRequest.tenant = this.config.tenant;
+                    proxyRequest.accessToken = this.accessToken;
+                } else {
+                    proxyRequest.host = this.config.host;
+                    proxyRequest.apiKey = this.config.apiKey;
+                }
+
+                // Add request body if present
+                if (options.body) {
+                    proxyRequest.requestBody = JSON.parse(options.body);
+                }
+
+                const response = await fetch(this.proxyUrl, {
+                    method: 'POST',
                     headers: {
-                        ...this.getHeaders(),
-                        ...options.headers
-                    }
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(proxyRequest)
                 });
 
                 if (!response.ok) {
