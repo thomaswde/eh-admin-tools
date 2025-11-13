@@ -510,6 +510,47 @@
         </div>
     </div>
 
+    <!-- Error Details Modal -->
+    <div id="errorModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <h3 class="text-xl font-bold mb-4" style="color: #ef4444;">Connection Error</h3>
+            <div class="mb-4">
+                <p class="font-semibold mb-2" style="color: var(--text-primary);">Error Message:</p>
+                <p id="errorMessage" class="mb-4 p-3 rounded" style="background-color: var(--bg-subtle); color: var(--text-secondary);"></p>
+            </div>
+            <div class="mb-4">
+                <button id="toggleErrorDetails" class="btn-secondary px-4 py-2 rounded font-semibold mb-3">
+                    Show Technical Details
+                </button>
+                <div id="errorDetails" style="display: none;">
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Request URL:</p>
+                        <pre id="errorUrl" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Request Headers:</p>
+                        <pre id="errorHeaders" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Request Body:</p>
+                        <pre id="errorBody" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Response Status:</p>
+                        <pre id="errorStatus" class="p-3 rounded text-xs" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div>
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Response Body:</p>
+                        <pre id="errorResponse" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                </div>
+            </div>
+            <button id="closeErrorModal" class="btn-primary w-full px-4 py-2 rounded font-semibold">
+                Close
+            </button>
+        </div>
+    </div>
+
     <script>
         // Global State
         const state = {
@@ -539,36 +580,132 @@
             async authenticate() {
                 if (this.config.type === '360') {
                     const credentials = btoa(`${this.config.apiId}:${this.config.apiSecret}`);
-                    const response = await fetch(this.tokenUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Basic ${credentials}`,
-                            'Content-Type': 'application/x-www-form-urlencoded'
-                        },
-                        body: 'grant_type=client_credentials'
-                    });
+                    const requestUrl = this.tokenUrl;
+                    const requestHeaders = {
+                        'Authorization': `Basic ${credentials}`,
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    };
+                    const requestBody = 'grant_type=client_credentials';
 
-                    if (!response.ok) {
-                        throw new Error('Authentication failed. Check your API ID and Secret.');
+                    try {
+                        const response = await fetch(requestUrl, {
+                            method: 'POST',
+                            headers: requestHeaders,
+                            body: requestBody
+                        });
+
+                        const responseText = await response.text();
+                        let responseData;
+                        try {
+                            responseData = JSON.parse(responseText);
+                        } catch (e) {
+                            responseData = responseText;
+                        }
+
+                        if (!response.ok) {
+                            const errorDetails = {
+                                url: requestUrl,
+                                headers: requestHeaders,
+                                body: requestBody,
+                                status: `${response.status} ${response.statusText}`,
+                                response: responseData
+                            };
+                            
+                            let errorMessage = 'Authentication failed. ';
+                            if (response.status === 401) {
+                                errorMessage += 'Invalid API ID or Secret (401 Unauthorized).';
+                            } else if (response.status === 403) {
+                                errorMessage += 'Access forbidden (403 Forbidden). Check API permissions.';
+                            } else if (response.status === 404) {
+                                errorMessage += 'Endpoint not found (404). Check tenant name.';
+                            } else {
+                                errorMessage += `Server returned ${response.status} ${response.statusText}.`;
+                            }
+
+                            showErrorModal(errorMessage, errorDetails);
+                            throw new Error(errorMessage);
+                        }
+
+                        this.accessToken = responseData.access_token;
+                        sessionStorage.setItem('eh_access_token', responseData.access_token);
+                        return true;
+                    } catch (error) {
+                        if (error.message.includes('Authentication failed')) {
+                            throw error;
+                        }
+                        // Network error
+                        const errorDetails = {
+                            url: requestUrl,
+                            headers: requestHeaders,
+                            body: requestBody,
+                            status: 'Network Error',
+                            response: error.message
+                        };
+                        const errorMessage = `Network error: ${error.message}. Check tenant name and network connectivity.`;
+                        showErrorModal(errorMessage, errorDetails);
+                        throw new Error(errorMessage);
                     }
-
-                    const data = await response.json();
-                    this.accessToken = data.access_token;
-                    sessionStorage.setItem('eh_access_token', data.access_token);
-                    return true;
                 } else {
                     // Enterprise - test with /extrahop endpoint
-                    const response = await fetch(`${this.baseUrl}/extrahop`, {
-                        headers: {
-                            'Authorization': `ExtraHop apikey=${this.config.apiKey}`
+                    const requestUrl = `${this.baseUrl}/extrahop`;
+                    const requestHeaders = {
+                        'Authorization': `ExtraHop apikey=${this.config.apiKey}`
+                    };
+
+                    try {
+                        const response = await fetch(requestUrl, {
+                            headers: requestHeaders
+                        });
+
+                        const responseText = await response.text();
+                        let responseData;
+                        try {
+                            responseData = JSON.parse(responseText);
+                        } catch (e) {
+                            responseData = responseText;
                         }
-                    });
 
-                    if (!response.ok) {
-                        throw new Error('Authentication failed. Check your API key.');
+                        if (!response.ok) {
+                            const errorDetails = {
+                                url: requestUrl,
+                                headers: requestHeaders,
+                                body: 'N/A',
+                                status: `${response.status} ${response.statusText}`,
+                                response: responseData
+                            };
+                            
+                            let errorMessage = 'Authentication failed. ';
+                            if (response.status === 401) {
+                                errorMessage += 'Invalid API key (401 Unauthorized).';
+                            } else if (response.status === 403) {
+                                errorMessage += 'Access forbidden (403 Forbidden). Check API key permissions.';
+                            } else if (response.status === 404) {
+                                errorMessage += 'Endpoint not found (404). Check hostname.';
+                            } else {
+                                errorMessage += `Server returned ${response.status} ${response.statusText}.`;
+                            }
+
+                            showErrorModal(errorMessage, errorDetails);
+                            throw new Error(errorMessage);
+                        }
+
+                        return true;
+                    } catch (error) {
+                        if (error.message.includes('Authentication failed')) {
+                            throw error;
+                        }
+                        // Network error
+                        const errorDetails = {
+                            url: requestUrl,
+                            headers: requestHeaders,
+                            body: 'N/A',
+                            status: 'Network Error',
+                            response: error.message
+                        };
+                        const errorMessage = `Network error: ${error.message}. Check hostname and network connectivity.`;
+                        showErrorModal(errorMessage, errorDetails);
+                        throw new Error(errorMessage);
                     }
-
-                    return true;
                 }
             }
 
@@ -653,6 +790,21 @@
             statusDiv.style.display = 'block';
             statusText.textContent = message;
             statusText.style.color = isError ? '#ef4444' : 'var(--cyan)';
+        }
+
+        function showErrorModal(message, details) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorUrl').textContent = details.url || 'N/A';
+            document.getElementById('errorHeaders').textContent = JSON.stringify(details.headers || {}, null, 2);
+            document.getElementById('errorBody').textContent = details.body || 'N/A';
+            document.getElementById('errorStatus').textContent = details.status || 'N/A';
+            document.getElementById('errorResponse').textContent = typeof details.response === 'object' 
+                ? JSON.stringify(details.response, null, 2) 
+                : details.response || 'N/A';
+            
+            document.getElementById('errorDetails').style.display = 'none';
+            document.getElementById('toggleErrorDetails').textContent = 'Show Technical Details';
+            showModal('errorModal');
         }
 
         function switchModule(moduleName) {
@@ -1124,6 +1276,18 @@
 
         document.getElementById('cancelDelete').addEventListener('click', () => hideModal('deleteConfirmModal'));
         document.getElementById('confirmDelete').addEventListener('click', confirmDelete);
+
+        document.getElementById('closeErrorModal').addEventListener('click', () => hideModal('errorModal'));
+        document.getElementById('toggleErrorDetails').addEventListener('click', function() {
+            const detailsDiv = document.getElementById('errorDetails');
+            if (detailsDiv.style.display === 'none') {
+                detailsDiv.style.display = 'block';
+                this.textContent = 'Hide Technical Details';
+            } else {
+                detailsDiv.style.display = 'none';
+                this.textContent = 'Show Technical Details';
+            }
+        });
 
         // Close modals on outside click
         document.querySelectorAll('.modal').forEach(modal => {
