@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ExtraHop API Tools</title>
+    <link rel="icon" href="favicon.png" type="image/png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -26,6 +27,7 @@
             --cyan: #00aaef;
             --tangerine: #f05918;
             --lime: #dae343;
+            --ribbon-height: 60px;
         }
 
         .dark-theme {
@@ -45,6 +47,48 @@
             font-family: 'Source Sans 3', sans-serif;
             background-color: var(--bg-primary);
             color: var(--text-primary);
+            padding-top: var(--ribbon-height);
+        }
+
+        /* Fixed Top Ribbon */
+        .top-ribbon {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: var(--ribbon-height);
+            background-color: var(--bg-card);
+            border-bottom: 2px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            z-index: 100;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .ribbon-logo {
+            height: 40px;
+            width: auto;
+        }
+
+        .ribbon-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-left: 16px;
+        }
+
+        .ribbon-module-title {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--sapphire);
+        }
+
+        .content-wrapper {
+            min-height: calc(100vh - var(--ribbon-height));
         }
 
         aside { 
@@ -205,7 +249,14 @@
     </style>
 </head>
 <body>
-    <div class="flex flex-col lg:flex-row min-h-screen">
+    <!-- Fixed Top Ribbon -->
+    <div class="top-ribbon">
+        <img src="eh_logo.png" alt="ExtraHop" class="ribbon-logo">
+        <span class="ribbon-title">API Tools</span>
+        <span id="ribbonModuleTitle" class="ribbon-module-title"></span>
+    </div>
+
+    <div class="content-wrapper flex flex-col lg:flex-row min-h-screen">
         <!-- Sidebar -->
         <aside class="w-full lg:w-80 border-r p-6 space-y-6 lg:fixed lg:h-full lg:overflow-y-auto">
             <!-- Header -->
@@ -215,8 +266,26 @@
             </div>
 
             <!-- API Configuration -->
-            <div class="space-y-4">
-                <h2 class="text-lg font-semibold" style="color: var(--text-primary);">API Configuration</h2>
+            <div id="apiConfigSection" class="space-y-4">
+                <!-- Collapsed Connected State -->
+                <div id="connectedState" class="hidden">
+                    <div class="flex items-center justify-between p-3 rounded cursor-pointer" style="background-color: var(--bg-subtle);" onclick="toggleApiConfig()">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-2" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                            <span class="font-semibold" style="color: var(--text-primary);">Connected</span>
+                        </div>
+                        <svg id="expandIcon" class="w-5 h-5 transition-transform" style="color: var(--text-secondary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </div>
+                    <p class="text-xs mt-2 text-center" style="color: var(--text-muted);" id="connectedInfo"></p>
+                </div>
+
+                <!-- Expanded Config Form -->
+                <div id="configForm">
+                    <h2 class="text-lg font-semibold" style="color: var(--text-primary);">API Configuration</h2>
                 
                 <!-- Deployment Type -->
                 <div>
@@ -263,7 +332,8 @@
                 <div id="connectionStatus" class="text-sm text-center" style="display: none;">
                     <span id="statusText"></span>
                 </div>
-            </div>
+                </div> <!-- End configForm -->
+            </div> <!-- End apiConfigSection -->
 
             <!-- Module Selection -->
             <div class="space-y-2" id="moduleSelection" style="display: none;">
@@ -565,19 +635,24 @@
             itemsPerPage: 50
         };
 
-        // Configuration - SET YOUR LAMBDA ENDPOINT HERE
+        // Configuration - Lambda proxy URL (360 only)
         const LAMBDA_PROXY_URL = 'https://mdpg23urni.execute-api.us-east-2.amazonaws.com/default/extrahop-api-wrapper-proxy';
 
-        // API Client (using Lambda Proxy)
+        // API Client (hybrid: Lambda for 360, direct for Enterprise)
         class ExtraHopAPI {
             constructor(config) {
                 this.config = config;
                 this.proxyUrl = LAMBDA_PROXY_URL;
+                
+                // For Enterprise, set up direct API URL
+                if (config.type === 'enterprise') {
+                    this.baseUrl = `https://${config.host}/api/v1`;
+                }
             }
 
             async authenticate() {
                 if (this.config.type === '360') {
-                    // Request OAuth token through Lambda proxy
+                    // 360: Use Lambda proxy for OAuth
                     const proxyRequest = {
                         deploymentType: '360',
                         tenant: this.config.tenant,
@@ -637,7 +712,6 @@
                         if (error.message.includes('Authentication failed')) {
                             throw error;
                         }
-                        // Network error
                         const errorDetails = {
                             url: this.proxyUrl,
                             headers: { 'Content-Type': 'application/json' },
@@ -650,22 +724,16 @@
                         throw new Error(errorMessage);
                     }
                 } else {
-                    // Enterprise - test with /api/v1/extrahop endpoint through proxy
-                    const proxyRequest = {
-                        deploymentType: 'enterprise',
-                        host: this.config.host,
-                        apiKey: this.config.apiKey,
-                        method: 'GET',
-                        endpoint: '/api/v1/extrahop'
+                    // Enterprise: Direct API call to test connection
+                    const requestUrl = `${this.baseUrl}/extrahop`;
+                    const requestHeaders = {
+                        'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
+                        'Accept': 'application/json'
                     };
 
                     try {
-                        const response = await fetch(this.proxyUrl, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify(proxyRequest)
+                        const response = await fetch(requestUrl, {
+                            headers: requestHeaders
                         });
 
                         const responseText = await response.text();
@@ -678,9 +746,9 @@
 
                         if (!response.ok) {
                             const errorDetails = {
-                                url: this.proxyUrl,
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(proxyRequest, null, 2),
+                                url: requestUrl,
+                                headers: requestHeaders,
+                                body: 'N/A',
                                 status: `${response.status} ${response.statusText}`,
                                 response: responseData
                             };
@@ -693,7 +761,7 @@
                             } else if (response.status === 404) {
                                 errorMessage += 'Endpoint not found (404). Check hostname.';
                             } else if (response.status === 400) {
-                                errorMessage += `Bad request: ${responseData.error || 'Check configuration'}`;
+                                errorMessage += `Bad request: ${responseData.error_message || 'Check configuration'}`;
                             } else {
                                 errorMessage += `Server returned ${response.status} ${response.statusText}.`;
                             }
@@ -707,15 +775,22 @@
                         if (error.message.includes('Authentication failed')) {
                             throw error;
                         }
-                        // Network error
                         const errorDetails = {
-                            url: this.proxyUrl,
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(proxyRequest, null, 2),
+                            url: requestUrl,
+                            headers: requestHeaders,
+                            body: 'N/A',
                             status: 'Network Error',
                             response: error.message
                         };
-                        const errorMessage = `Network error: ${error.message}. Check Lambda proxy URL: ${this.proxyUrl}`;
+                        
+                        let errorMessage = `Network error: ${error.message}. `;
+                        if (error.message.includes('Failed to fetch')) {
+                            errorMessage += 'This is likely a CORS issue. For Enterprise instances, you need to either:\n' +
+                                '1. Enable CORS on your ExtraHop appliance for this domain\n' +
+                                '2. Use a browser extension version of this tool\n' +
+                                '3. Run locally with CORS disabled for testing';
+                        }
+                        
                         showErrorModal(errorMessage, errorDetails);
                         throw new Error(errorMessage);
                     }
@@ -728,56 +803,105 @@
                     endpoint = '/api/v1' + endpoint;
                 }
 
-                const proxyRequest = {
-                    deploymentType: this.config.type,
-                    method: options.method || 'GET',
-                    endpoint: endpoint
+                const makeRequest = async () => {
+                    if (this.config.type === '360') {
+                        // 360: Use Lambda proxy
+                        const proxyRequest = {
+                            deploymentType: '360',
+                            tenant: this.config.tenant,
+                            accessToken: this.accessToken,
+                            method: options.method || 'GET',
+                            endpoint: endpoint
+                        };
+
+                        if (options.body) {
+                            proxyRequest.requestBody = JSON.parse(options.body);
+                        }
+
+                        const response = await fetch(this.proxyUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(proxyRequest)
+                        });
+
+                        // Check for success status codes (2xx)
+                        if (response.status < 200 || response.status >= 300) {
+                            const error = await response.text();
+                            let errorMessage;
+                            try {
+                                const errorJson = JSON.parse(error);
+                                errorMessage = errorJson.error_message || error;
+                            } catch (e) {
+                                errorMessage = error;
+                            }
+                            throw new Error(`API Error: ${response.status} - ${errorMessage}`);
+                        }
+
+                        // Handle different success responses
+                        if (response.status === 204) {
+                            return {};
+                        }
+
+                        const text = await response.text();
+                        return text ? JSON.parse(text) : {};
+                    } else {
+                        // Enterprise: Direct API call
+                        const url = `${this.baseUrl}${endpoint.startsWith('/api/v1') ? endpoint.substring(7) : endpoint}`;
+                        
+                        const response = await fetch(url, {
+                            method: options.method || 'GET',
+                            headers: {
+                                'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json'
+                            },
+                            body: options.body
+                        });
+
+                        // Check for success status codes (2xx)
+                        if (response.status < 200 || response.status >= 300) {
+                            const error = await response.text();
+                            let errorMessage;
+                            try {
+                                const errorJson = JSON.parse(error);
+                                errorMessage = errorJson.error_message || error;
+                            } catch (e) {
+                                errorMessage = error;
+                            }
+                            throw new Error(`API Error: ${response.status} - ${errorMessage}`);
+                        }
+
+                        // Handle different success responses
+                        if (response.status === 204) {
+                            return {};
+                        }
+
+                        const text = await response.text();
+                        return text ? JSON.parse(text) : {};
+                    }
                 };
 
-                // Add deployment-specific fields
-                if (this.config.type === '360') {
-                    proxyRequest.tenant = this.config.tenant;
-                    proxyRequest.accessToken = this.accessToken;
-                } else {
-                    proxyRequest.host = this.config.host;
-                    proxyRequest.apiKey = this.config.apiKey;
-                }
-
-                // Add request body if present
-                if (options.body) {
-                    proxyRequest.requestBody = JSON.parse(options.body);
-                }
-
-                const response = await fetch(this.proxyUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(proxyRequest)
-                });
-
-                // Check for success status codes (2xx)
-                if (response.status < 200 || response.status >= 300) {
-                    const error = await response.text();
-                    let errorMessage;
-                    try {
-                        const errorJson = JSON.parse(error);
-                        errorMessage = errorJson.error_message || error;
-                    } catch (e) {
-                        errorMessage = error;
+                // Try the request, if 401 and 360, refresh token and retry once
+                try {
+                    return await makeRequest();
+                } catch (error) {
+                    if (error.message.includes('401') && this.config.type === '360') {
+                        console.log('Token expired, attempting refresh...');
+                        
+                        // Refresh the token
+                        const tempApi = new ExtraHopAPI(this.config);
+                        await tempApi.authenticate();
+                        this.accessToken = tempApi.accessToken;
+                        
+                        console.log('Token refreshed, retrying request...');
+                        
+                        // Retry once with new token
+                        return await makeRequest();
                     }
-                    throw new Error(`API Error: ${response.status} - ${errorMessage}`);
+                    throw error;
                 }
-
-                // Handle different success responses
-                // 204 No Content - return empty object
-                if (response.status === 204) {
-                    return {};
-                }
-
-                // For other 2xx codes, try to parse JSON, return {} if empty
-                const text = await response.text();
-                return text ? JSON.parse(text) : {};
             }
 
             async getDashboards() {
@@ -852,6 +976,90 @@
             statusText.style.color = isError ? '#ef4444' : 'var(--cyan)';
         }
 
+        function toggleApiConfig() {
+            const configForm = document.getElementById('configForm');
+            const expandIcon = document.getElementById('expandIcon');
+            
+            if (configForm.style.display === 'none') {
+                configForm.style.display = 'block';
+                expandIcon.style.transform = 'rotate(0deg)';
+            } else {
+                configForm.style.display = 'none';
+                expandIcon.style.transform = 'rotate(-90deg)';
+            }
+        }
+
+        function showConnectedState() {
+            const connectedState = document.getElementById('connectedState');
+            const configForm = document.getElementById('configForm');
+            const connectedInfo = document.getElementById('connectedInfo');
+            
+            connectedState.classList.remove('hidden');
+            configForm.style.display = 'none';
+            
+            if (state.apiConfig.type === '360') {
+                connectedInfo.textContent = `RevealX 360: ${state.apiConfig.tenant}`;
+            } else {
+                connectedInfo.textContent = `RevealX Enterprise: ${state.apiConfig.host}`;
+            }
+            
+            document.getElementById('expandIcon').style.transform = 'rotate(-90deg)';
+        }
+
+        function hideConnectedState() {
+            const connectedState = document.getElementById('connectedState');
+            const configForm = document.getElementById('configForm');
+            
+            connectedState.classList.add('hidden');
+            configForm.style.display = 'block';
+        }
+
+        async function refreshAccessToken() {
+            if (!state.apiConfig || state.apiConfig.type !== '360') {
+                return false;
+            }
+
+            console.log('Access token expired, refreshing...');
+            
+            try {
+                const api = new ExtraHopAPI(state.apiConfig);
+                await api.authenticate();
+                
+                // Update the global API client with new token
+                window.apiClient.accessToken = api.accessToken;
+                
+                console.log('Access token refreshed successfully');
+                return true;
+            } catch (error) {
+                console.error('Failed to refresh access token:', error);
+                // Show error and ask user to reconnect
+                alert('Your session has expired. Please reconnect.');
+                hideConnectedState();
+                state.connected = false;
+                return false;
+            }
+        }
+
+        // Wrapper for API requests that handles token refresh
+        async function apiRequestWithRetry(apiMethod, ...args) {
+            try {
+                return await apiMethod(...args);
+            } catch (error) {
+                // Check if it's a 401 error (expired token)
+                if (error.message.includes('401') && state.apiConfig?.type === '360') {
+                    console.log('Detected 401, attempting token refresh...');
+                    const refreshed = await refreshAccessToken();
+                    
+                    if (refreshed) {
+                        // Retry the original request
+                        return await apiMethod(...args);
+                    }
+                }
+                // Re-throw if not a token issue or refresh failed
+                throw error;
+            }
+        }
+
         function showErrorModal(message, details) {
             document.getElementById('errorMessage').textContent = message;
             document.getElementById('errorUrl').textContent = details.url || 'N/A';
@@ -880,6 +1088,16 @@
             });
             document.getElementById('welcomeScreen').style.display = 'none';
             document.getElementById(`${moduleName}Module`).style.display = 'block';
+
+            // Update ribbon module title
+            const moduleTitles = {
+                'dashboards': 'Dashboard Manager',
+                'audit-logs': 'Audit Logs',
+                'detections': 'Detections',
+                'devices': 'Device Manager',
+                'analysis-priorities': 'Analysis Priorities'
+            };
+            document.getElementById('ribbonModuleTitle').textContent = moduleTitles[moduleName] || '';
 
             state.currentModule = moduleName;
         }
@@ -926,6 +1144,7 @@
 
                 showStatus('✓ Connected successfully', false);
                 document.getElementById('moduleSelection').style.display = 'block';
+                showConnectedState();
                 
                 connectBtn.textContent = 'Connected';
                 setTimeout(() => {
