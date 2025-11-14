@@ -308,39 +308,42 @@
             <div id="searchSection" class="space-y-3" style="display: none;">
                 <h2 class="text-lg font-semibold" style="color: var(--text-primary);">Search</h2>
                 <input type="text" id="searchAppliances" placeholder="Search appliances..." class="w-full px-3 py-2 rounded border text-sm">
-                <p class="text-xs" style="color: var(--text-muted);">Searches all fields</p>
+                <p class="text-xs" style="color: var(--text-muted);">Searches within filtered results</p>
             </div>
 
-            <!-- Legend / Filters -->
+            <!-- Filters -->
             <div id="legend" class="space-y-3" style="display: none;">
                 <h2 class="text-lg font-semibold" style="color: var(--text-primary);">Filters</h2>
                 <div class="space-y-2 text-sm">
                     <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
                         <input type="checkbox" id="filter-command" checked class="w-4 h-4" style="accent-color: var(--cyan);">
-                        <div class="w-5 h-5 rounded" style="background-color: var(--cyan); border: 2px solid var(--cyan);"></div>
                         <span>Command</span>
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
                         <input type="checkbox" id="filter-discover" checked class="w-4 h-4" style="accent-color: var(--lime);">
-                        <div class="w-5 h-5 rounded" style="background-color: var(--lime); border: 2px solid var(--lime);"></div>
                         <span>Discover/Sensor</span>
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
                         <input type="checkbox" id="filter-trace" checked class="w-4 h-4" style="accent-color: var(--tangerine);">
-                        <div class="w-5 h-5 rounded" style="background-color: var(--tangerine); border: 2px solid var(--tangerine);"></div>
                         <span>Trace/Packetstore</span>
                     </label>
                 </div>
                 <div class="border-t pt-3 space-y-2 text-sm" style="border-color: var(--border-color);">
                     <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                        <input type="checkbox" id="filter-virtual" class="w-4 h-4" style="accent-color: var(--text-secondary);">
-                        <div class="w-5 h-5 rounded border-2" style="border-style: dashed; border-color: var(--text-muted);"></div>
-                        <span style="color: var(--text-muted);">Virtual Only</span>
+                        <input type="checkbox" id="filter-physical" checked class="w-4 h-4">
+                        <span>Physical</span>
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                        <input type="checkbox" id="filter-offline" class="w-4 h-4" style="accent-color: #ef4444;">
-                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                        <span style="color: var(--text-muted);">Offline Only</span>
+                        <input type="checkbox" id="filter-virtual" checked class="w-4 h-4">
+                        <span>Virtual/Cloud</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                        <input type="checkbox" id="filter-online" checked class="w-4 h-4" style="accent-color: #10b981;">
+                        <span>Online</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                        <input type="checkbox" id="filter-offline" checked class="w-4 h-4" style="accent-color: #ef4444;">
+                        <span>Offline</span>
                     </label>
                 </div>
             </div>
@@ -503,13 +506,15 @@
             'all_in_one': '#dae343'         // Lime
         };
 
-        // Active filters
+        // Active filters - all checked by default
         const filters = {
             command: true,
             discover: true,
             trace: true,
-            virtualOnly: false,
-            offlineOnly: false
+            physical: true,
+            virtual: true,
+            offline: true,
+            online: true
         };
 
         let searchTerm = '';
@@ -1037,20 +1042,32 @@
             const filteredAppliances = state.appliances.filter(a => {
                 const info = getNodeInfo(a);
                 
-                // Apply search filter
+                // First apply checkbox filters
+                // Platform type filters
+                if (info.platform === 'command' && !filters.command) return false;
+                
+                if ((info.platform === 'packet_sensor' || info.platform === 'discover' || 
+                     info.platform === 'multifunction_sensor' || info.platform === 'all_in_one') && !filters.discover) {
+                    return false;
+                }
+                
+                if ((info.platform === 'packetstore' || info.platform === 'trace') && 
+                    !info.hasIntegratedTrace && !filters.trace) {
+                    return false;
+                }
+                
+                // Physical/Virtual filters
+                if (info.isVirtual && !filters.virtual) return false;
+                if (!info.isVirtual && !filters.physical) return false;
+                
+                // Online/Offline filters
+                if (info.isOffline && !filters.offline) return false;
+                if (!info.isOffline && !filters.online) return false;
+                
+                // Finally apply search filter within the checkbox-filtered results
                 if (!matchesSearch(a)) return false;
                 
-                // Apply virtual/offline filters
-                if (filters.virtualOnly && !info.isVirtual) return false;
-                if (filters.offlineOnly && !info.isOffline) return false;
-                
-                // Apply platform type filters
-                if (info.platform === 'command') return filters.command;
-                if (info.platform === 'packetstore' || info.platform === 'trace') {
-                    if (info.hasIntegratedTrace) return filters.discover; // Integrated trace shows with discovers
-                    return filters.trace;
-                }
-                return filters.discover; // All other types
+                return true;
             });
 
             // Group appliances by type
@@ -1281,12 +1298,20 @@
             filters.trace = e.target.checked;
             renderGraph();
         });
+        document.getElementById('filter-physical').addEventListener('change', (e) => {
+            filters.physical = e.target.checked;
+            renderGraph();
+        });
         document.getElementById('filter-virtual').addEventListener('change', (e) => {
-            filters.virtualOnly = e.target.checked;
+            filters.virtual = e.target.checked;
+            renderGraph();
+        });
+        document.getElementById('filter-online').addEventListener('change', (e) => {
+            filters.online = e.target.checked;
             renderGraph();
         });
         document.getElementById('filter-offline').addEventListener('change', (e) => {
-            filters.offlineOnly = e.target.checked;
+            filters.offline = e.target.checked;
             renderGraph();
         });
 
