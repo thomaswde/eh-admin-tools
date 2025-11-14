@@ -190,6 +190,16 @@
             user-select: none;
         }
         
+        .node-text-name {
+            pointer-events: none;
+            user-select: none;
+        }
+        
+        .node-text-model {
+            pointer-events: none;
+            user-select: none;
+        }
+        
         .offline-indicator {
             fill: #ef4444;
         }
@@ -200,10 +210,24 @@
             stroke-width: 2;
         }
 
+        #graphContainer {
+            transition: height 0.3s ease;
+        }
+
         .detail-panel {
             background-color: var(--bg-card);
             border: 1px solid var(--border-color);
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+        }
+
+        /* Dynamic height containers */
+        #graphContainer {
+            transition: height 0.3s ease, min-height 0.3s ease;
+        }
+
+        #detailPanel {
+            transition: all 0.3s ease;
         }
 
         ::-webkit-scrollbar { width: 8px; }
@@ -365,8 +389,8 @@
                 </div>
                 
                 <!-- Graph Container -->
-                <div id="graphContainer" class="detail-panel rounded-lg p-6" style="display: none; min-height: 800px;">
-                    <svg id="nodeGraph" width="100%" height="800"></svg>
+                <div id="graphContainer" class="detail-panel rounded-lg p-6" style="display: none;">
+                    <svg id="nodeGraph" width="100%"></svg>
                 </div>
 
                 <!-- Detail Panel -->
@@ -1005,9 +1029,25 @@
         function renderGraph() {
             const svg = d3.select('#nodeGraph');
             const container = document.getElementById('graphContainer');
-            const width = container.clientWidth - 48;
-            const height = 800; // Increased height for 2 rows
             
+            // Calculate available height based on whether detail panel is open
+            const detailPanel = document.getElementById('detailPanel');
+            const isDetailOpen = detailPanel.style.display !== 'none';
+            const detailHeight = isDetailOpen ? 300 : 0;
+            
+            // Use viewport height minus other elements
+            const viewportHeight = window.innerHeight;
+            const ribbonHeight = 60;
+            const headerHeight = 80;
+            const padding = 80;
+            const availableHeight = viewportHeight - ribbonHeight - headerHeight - detailHeight - padding;
+            
+            const width = container.clientWidth - 48;
+            const height = Math.max(400, availableHeight);
+            
+            // Update container and SVG sizes
+            container.style.height = height + 'px';
+            container.style.minHeight = height + 'px';
             svg.attr('width', width).attr('height', height);
             svg.selectAll('*').remove();
 
@@ -1021,29 +1061,38 @@
                 return;
             }
 
-            // Create zoom behavior
+            // Create zoom behavior - right-click + scroll to zoom
             const g = svg.append('g');
             const zoom = d3.zoom()
-                .scaleExtent([0.5, 2])
+                .scaleExtent([0.3, 3])
+                .filter(event => {
+                    // Only zoom on right-button + wheel, or ctrl+wheel
+                    return (event.button === 2 || event.ctrlKey) || event.type !== 'wheel';
+                })
                 .on('zoom', (event) => {
                     g.attr('transform', event.transform);
                 });
+            
             svg.call(zoom);
+            
+            // Prevent context menu on right-click
+            svg.on('contextmenu', (event) => {
+                event.preventDefault();
+            });
 
-            // Add reset zoom button info
+            // Add instructions
             svg.append('text')
                 .attr('x', 10)
                 .attr('y', 20)
                 .attr('fill', '#9ca3af')
                 .attr('font-size', '12')
-                .text('Scroll to zoom, drag to pan');
+                .text('Right-click + scroll to zoom, drag to pan');
 
             // Filter appliances based on active filters
             const filteredAppliances = state.appliances.filter(a => {
                 const info = getNodeInfo(a);
                 
                 // First apply checkbox filters
-                // Platform type filters
                 if (info.platform === 'command' && !filters.command) return false;
                 
                 if ((info.platform === 'packet_sensor' || info.platform === 'discover' || 
@@ -1056,15 +1105,12 @@
                     return false;
                 }
                 
-                // Physical/Virtual filters
                 if (info.isVirtual && !filters.virtual) return false;
                 if (!info.isVirtual && !filters.physical) return false;
                 
-                // Online/Offline filters
                 if (info.isOffline && !filters.offline) return false;
                 if (!info.isOffline && !filters.online) return false;
                 
-                // Finally apply search filter within the checkbox-filtered results
                 if (!matchesSearch(a)) return false;
                 
                 return true;
@@ -1091,55 +1137,59 @@
             // Layout parameters
             const nodeWidth = 180;
             const nodeHeight = 60;
-            const verticalGap = 100;
             const horizontalGap = 20;
+            const verticalGap = 100;
             const rowGap = 80;
-            const nodesPerRow = Math.max(5, Math.ceil(Math.max(commandAppliances.length, discoverAppliances.length, traceAppliances.length) / 2));
+            
+            // Calculate optimal nodes per row based on available width
+            const maxNodesPerRow = Math.floor((width - 100) / (nodeWidth + horizontalGap));
+            const nodesPerRow = Math.max(3, Math.min(maxNodesPerRow, 10));
 
-            // Calculate positions for each group with 2 rows max
+            // Calculate positions for each group with flexible rows
             function calculatePositions(appliances, startY) {
                 const positions = [];
-                const itemsInFirstRow = Math.min(nodesPerRow, appliances.length);
-                const itemsInSecondRow = Math.max(0, appliances.length - nodesPerRow);
+                let currentRow = 0;
+                let currentX = 0;
                 
-                // First row
-                const firstRowWidth = itemsInFirstRow * (nodeWidth + horizontalGap) - horizontalGap;
-                const firstRowStartX = (width - firstRowWidth) / 2;
+                const numRows = Math.ceil(appliances.length / nodesPerRow);
                 
-                appliances.slice(0, nodesPerRow).forEach((app, i) => {
+                appliances.forEach((app, i) => {
+                    if (i > 0 && i % nodesPerRow === 0) {
+                        currentRow++;
+                        currentX = 0;
+                    }
+                    
+                    const nodesInThisRow = Math.min(nodesPerRow, appliances.length - currentRow * nodesPerRow);
+                    const rowWidth = nodesInThisRow * (nodeWidth + horizontalGap) - horizontalGap;
+                    const rowStartX = (width - rowWidth) / 2;
+                    
                     positions.push({
                         appliance: app,
-                        x: firstRowStartX + i * (nodeWidth + horizontalGap),
-                        y: startY
+                        x: rowStartX + currentX * (nodeWidth + horizontalGap),
+                        y: startY + currentRow * rowGap
                     });
-                });
-                
-                // Second row if needed
-                if (itemsInSecondRow > 0) {
-                    const secondRowWidth = itemsInSecondRow * (nodeWidth + horizontalGap) - horizontalGap;
-                    const secondRowStartX = (width - secondRowWidth) / 2;
                     
-                    appliances.slice(nodesPerRow).forEach((app, i) => {
-                        positions.push({
-                            appliance: app,
-                            x: secondRowStartX + i * (nodeWidth + horizontalGap),
-                            y: startY + rowGap
-                        });
-                    });
-                }
+                    currentX++;
+                });
                 
                 return positions;
             }
 
+            // Calculate Y positions for each tier
             const commandY = 60;
-            const discoverY = commandY + verticalGap + (commandAppliances.length > nodesPerRow ? rowGap : 0);
-            const traceY = discoverY + verticalGap + (discoverAppliances.length > nodesPerRow ? rowGap : 0);
-
             const commandPositions = calculatePositions(commandAppliances, commandY);
+            const commandMaxY = commandPositions.length > 0 ? 
+                Math.max(...commandPositions.map(p => p.y)) + nodeHeight : commandY;
+            
+            const discoverY = commandMaxY + verticalGap;
             const discoverPositions = calculatePositions(discoverAppliances, discoverY);
+            const discoverMaxY = discoverPositions.length > 0 ? 
+                Math.max(...discoverPositions.map(p => p.y)) + nodeHeight : discoverY;
+            
+            const traceY = discoverMaxY + verticalGap;
             const tracePositions = calculatePositions(traceAppliances, traceY);
 
-            // Draw links from command to all other appliances
+            // Draw curved links from command to all other appliances
             commandPositions.forEach(cmd => {
                 const cmdX = cmd.x + nodeWidth / 2;
                 const cmdY = cmd.y + nodeHeight;
@@ -1148,18 +1198,23 @@
                     const disX = dis.x + nodeWidth / 2;
                     const disY = dis.y;
                     
+                    // Calculate control points for curve
+                    const midY = (cmdY + disY) / 2;
+                    
                     g.append('path')
                         .attr('class', 'link')
-                        .attr('d', `M ${cmdX} ${cmdY} L ${disX} ${disY}`);
+                        .attr('d', `M ${cmdX} ${cmdY} Q ${cmdX} ${midY}, ${disX} ${disY}`);
                 });
                 
                 tracePositions.forEach(trc => {
                     const trcX = trc.x + nodeWidth / 2;
                     const trcY = trc.y;
                     
+                    const midY = (cmdY + trcY) / 2;
+                    
                     g.append('path')
                         .attr('class', 'link')
-                        .attr('d', `M ${cmdX} ${cmdY} L ${trcX} ${trcY}`);
+                        .attr('d', `M ${cmdX} ${cmdY} Q ${cmdX} ${midY}, ${trcX} ${trcY}`);
                 });
             });
 
@@ -1187,7 +1242,9 @@
                         .attr('stroke', color)
                         .attr('fill-opacity', 0.2);
 
-                    nodeGroup.append('text')
+                    // Display name with truncation
+                    const displayName = appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`;
+                    const displayText = nodeGroup.append('text')
                         .attr('class', 'node-text')
                         .attr('x', x + nodeWidth / 2)
                         .attr('y', y + 22)
@@ -1195,9 +1252,20 @@
                         .attr('fill', 'currentColor')
                         .attr('font-weight', '600')
                         .attr('font-size', '14')
-                        .text(appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`);
+                        .text(displayName);
+                    
+                    // Truncate if too long
+                    let textLength = displayText.node().getComputedTextLength();
+                    let text = displayName;
+                    while (textLength > (nodeWidth - 10) && text.length > 0) {
+                        text = text.substring(0, text.length - 1);
+                        displayText.text(text + '...');
+                        textLength = displayText.node().getComputedTextLength();
+                    }
 
-                    nodeGroup.append('text')
+                    // Model name with truncation
+                    const modelName = appliance.license_platform || appliance.platform;
+                    const modelText = nodeGroup.append('text')
                         .attr('class', 'node-text')
                         .attr('x', x + nodeWidth / 2)
                         .attr('y', y + 40)
@@ -1205,7 +1273,16 @@
                         .attr('fill', 'currentColor')
                         .attr('font-size', '11')
                         .attr('opacity', 0.7)
-                        .text(appliance.license_platform || appliance.platform);
+                        .text(modelName);
+                    
+                    // Truncate model name if needed
+                    textLength = modelText.node().getComputedTextLength();
+                    text = modelName;
+                    while (textLength > (nodeWidth - 10) && text.length > 0) {
+                        text = text.substring(0, text.length - 1);
+                        modelText.text(text + '...');
+                        textLength = modelText.node().getComputedTextLength();
+                    }
 
                     if (info.isOffline) {
                         nodeGroup.append('circle')
@@ -1244,7 +1321,7 @@
             drawNodes(discoverPositions);
             drawNodes(tracePositions);
 
-            // Update count to show filtered vs total
+            // Update count
             const totalCount = state.appliances.length;
             const filteredCount = filteredAppliances.length;
             if (filteredCount < totalCount) {
@@ -1270,7 +1347,9 @@
             document.getElementById('detailModules').textContent = modules;
             
             panel.style.display = 'block';
-            panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            
+            // Re-render graph to adjust for detail panel height
+            renderGraph();
         }
 
         // Event Listeners
@@ -1283,6 +1362,7 @@
         document.getElementById('connectBtn').addEventListener('click', handleConnect);
         document.getElementById('closeDetail').addEventListener('click', () => {
             document.getElementById('detailPanel').style.display = 'none';
+            renderGraph(); // Re-render to reclaim space
         });
 
         // Filter checkboxes
