@@ -51,7 +51,6 @@
             padding-top: var(--ribbon-height);
         }
 
-        /* Fixed Top Ribbon */
         .top-ribbon {
             position: fixed;
             top: 0;
@@ -108,6 +107,17 @@
             transform: translateY(-1px);
         }
 
+        .btn-secondary {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--bg-hover);
+        }
+
         input[type="text"], 
         input[type="password"],
         select {
@@ -116,11 +126,47 @@
             color: var(--text-primary);
         }
 
-        input[type="radio"] {
-            accent-color: var(--cyan);
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
         }
 
-        /* Node styles */
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background-color: var(--bg-card);
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 700px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .spinner {
+            border: 3px solid var(--bg-subtle);
+            border-top: 3px solid var(--cyan);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
         .node-group {
             cursor: pointer;
         }
@@ -154,7 +200,6 @@
             stroke-width: 2;
         }
 
-        /* Detail panel */
         .detail-panel {
             background-color: var(--bg-card);
             border: 1px solid var(--border-color);
@@ -190,8 +235,26 @@
             </div>
 
             <!-- API Configuration -->
-            <div class="space-y-4">
-                <h2 class="text-lg font-semibold" style="color: var(--text-primary);">API Configuration</h2>
+            <div id="apiConfigSection" class="space-y-4">
+                <!-- Collapsed Connected State -->
+                <div id="connectedState" class="hidden">
+                    <div class="flex items-center justify-between p-3 rounded cursor-pointer" style="background-color: var(--bg-subtle);" onclick="toggleApiConfig()">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-2" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                            <span class="font-semibold" style="color: var(--text-primary);">Connected</span>
+                        </div>
+                        <svg id="expandIcon" class="w-5 h-5 transition-transform" style="color: var(--text-secondary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </div>
+                    <p class="text-xs mt-2 text-center" style="color: var(--text-muted);" id="connectedInfo"></p>
+                </div>
+
+                <!-- Expanded Config Form -->
+                <div id="configForm">
+                    <h2 class="text-lg font-semibold" style="color: var(--text-primary);">API Configuration</h2>
                 
                 <!-- Deployment Type -->
                 <div>
@@ -231,12 +294,15 @@
                     </div>
                 </div>
 
-                <button id="fetchNodesBtn" class="btn-primary w-full px-4 py-2 rounded font-semibold">
-                    Load Node Map
+                <button id="connectBtn" class="btn-primary w-full px-4 py-2 rounded font-semibold">
+                    Connect & Load Map
                 </button>
 
-                <div id="connectionStatus" class="text-sm text-center" style="color: var(--text-muted);"></div>
-            </div>
+                <div id="connectionStatus" class="text-sm text-center" style="display: none;">
+                    <span id="statusText"></span>
+                </div>
+                </div> <!-- End configForm -->
+            </div> <!-- End apiConfigSection -->
 
             <!-- Legend -->
             <div id="legend" class="space-y-3" style="display: none;">
@@ -277,14 +343,20 @@
         <!-- Main Content -->
         <main class="flex-1 lg:ml-80 p-6">
             <div class="space-y-6">
+                <!-- Loading State -->
+                <div id="loadingState" class="text-center py-20" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p style="color: var(--text-muted);">Loading appliances...</p>
+                </div>
+
                 <!-- Header -->
-                <div class="flex items-center justify-between">
+                <div id="graphHeader" class="flex items-center justify-between" style="display: none;">
                     <h2 class="text-2xl font-bold" style="color: var(--text-primary);">Network Topology</h2>
-                    <p id="nodeCount" style="color: var(--text-muted);">No nodes loaded</p>
+                    <p id="nodeCount" style="color: var(--text-muted);"></p>
                 </div>
                 
                 <!-- Graph Container -->
-                <div id="graphContainer" class="detail-panel rounded-lg p-6" style="min-height: 600px;">
+                <div id="graphContainer" class="detail-panel rounded-lg p-6" style="display: none; min-height: 600px;">
                     <svg id="nodeGraph" width="100%" height="600"></svg>
                 </div>
 
@@ -321,19 +393,100 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Welcome Screen -->
+                <div id="welcomeScreen">
+                    <div class="max-w-2xl mx-auto text-center py-20">
+                        <h2 class="text-3xl font-bold mb-4" style="color: var(--sapphire);">Appliance Node Map</h2>
+                        <p class="text-lg mb-8" style="color: var(--text-secondary);">
+                            Connect to your ExtraHop instance to visualize your appliance topology.
+                        </p>
+                        <div class="space-y-4 text-left" style="color: var(--text-muted);">
+                            <div class="flex items-start">
+                                <svg class="w-6 h-6 mr-3 flex-shrink-0" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <div>
+                                    <strong>Visual Topology</strong> - See Command, Discover, and Trace appliances in hierarchical layout
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <svg class="w-6 h-6 mr-3 flex-shrink-0" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <div>
+                                    <strong>Appliance Details</strong> - Click any node to view firmware, modules, and status
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <svg class="w-6 h-6 mr-3 flex-shrink-0" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <div>
+                                    <strong>Platform Types</strong> - Color-coded nodes show physical/virtual appliances and platform types
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </main>
     </div>
 
-    <script>
-        // Deployment type toggle
-        document.getElementById('deploymentType').addEventListener('change', (e) => {
-            const is360 = e.target.value === '360';
-            document.getElementById('config360').style.display = is360 ? 'block' : 'none';
-            document.getElementById('configEnterprise').style.display = is360 ? 'none' : 'block';
-        });
+    <!-- Error Details Modal -->
+    <div id="errorModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <h3 class="text-xl font-bold mb-4" style="color: #ef4444;">Connection Error</h3>
+            <div class="mb-4">
+                <p class="font-semibold mb-2" style="color: var(--text-primary);">Error Message:</p>
+                <p id="errorMessage" class="mb-4 p-3 rounded" style="background-color: var(--bg-subtle); color: var(--text-secondary);"></p>
+            </div>
+            <div class="mb-4">
+                <button id="toggleErrorDetails" class="btn-secondary px-4 py-2 rounded font-semibold mb-3">
+                    Show Technical Details
+                </button>
+                <div id="errorDetails" style="display: none;">
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Request URL:</p>
+                        <pre id="errorUrl" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Request Headers:</p>
+                        <pre id="errorHeaders" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Request Body:</p>
+                        <pre id="errorBody" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Status:</p>
+                        <pre id="errorStatus" class="p-3 rounded text-xs" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Response:</p>
+                        <pre id="errorResponse" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                </div>
+            </div>
+            <button id="closeErrorModal" class="btn-primary w-full px-4 py-2 rounded font-semibold">
+                Close
+            </button>
+        </div>
+    </div>
 
-        // Color mapping for platform types
+    <script>
+        // Global State
+        const state = {
+            apiConfig: null,
+            connected: false,
+            appliances: [],
+            catalogData: []
+        };
+
+        // Configuration - Lambda proxy URL (360 only)
+        const LAMBDA_PROXY_URL = 'https://mdpg23urni.execute-api.us-east-2.amazonaws.com/default/extrahop-api-wrapper-proxy';
+
+        // Platform color mapping
         const platformColors = {
             'command': '#00aaef',           // Cyan
             'packet_sensor': '#ec0089',     // Magenta
@@ -344,14 +497,334 @@
             'all_in_one': '#dae343'         // Lime
         };
 
-        let appliancesData = [];
-        let catalogData = [];
+        // API Client (matching index.html pattern)
+        class ExtraHopAPI {
+            constructor(config) {
+                this.config = config;
+                this.proxyUrl = LAMBDA_PROXY_URL;
+                
+                if (config.type === 'enterprise') {
+                    this.baseUrl = `https://${config.host}/api/v1`;
+                }
+            }
+
+            async authenticate() {
+                if (this.config.type === '360') {
+                    const proxyRequest = {
+                        deploymentType: '360',
+                        tenant: this.config.tenant,
+                        apiId: this.config.apiId,
+                        apiSecret: this.config.apiSecret,
+                        method: 'POST',
+                        endpoint: '/oauth2/token'
+                    };
+
+                    try {
+                        const response = await fetch(this.proxyUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(proxyRequest)
+                        });
+
+                        const responseText = await response.text();
+                        let responseData;
+                        try {
+                            responseData = JSON.parse(responseText);
+                        } catch (e) {
+                            responseData = responseText;
+                        }
+
+                        if (!response.ok) {
+                            const errorDetails = {
+                                url: this.proxyUrl,
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(proxyRequest, null, 2),
+                                status: `${response.status} ${response.statusText}`,
+                                response: responseData
+                            };
+                            
+                            let errorMessage = 'Authentication failed. ';
+                            if (response.status === 401) {
+                                errorMessage += 'Invalid API ID or Secret (401 Unauthorized).';
+                            } else if (response.status === 403) {
+                                errorMessage += 'Access forbidden (403 Forbidden). Check API permissions.';
+                            } else if (response.status === 404) {
+                                errorMessage += 'Endpoint not found (404). Check tenant name.';
+                            } else if (response.status === 400) {
+                                errorMessage += `Bad request: ${responseData.error || 'Check configuration'}`;
+                            } else {
+                                errorMessage += `Server returned ${response.status} ${response.statusText}.`;
+                            }
+
+                            showErrorModal(errorMessage, errorDetails);
+                            throw new Error(errorMessage);
+                        }
+
+                        this.accessToken = responseData.access_token;
+                        sessionStorage.setItem('eh_access_token', responseData.access_token);
+                        return true;
+                    } catch (error) {
+                        if (error.message.includes('Authentication failed')) {
+                            throw error;
+                        }
+                        const errorDetails = {
+                            url: this.proxyUrl,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(proxyRequest, null, 2),
+                            status: 'Network Error',
+                            response: error.message
+                        };
+                        const errorMessage = `Network error: ${error.message}. Check Lambda proxy URL: ${this.proxyUrl}`;
+                        showErrorModal(errorMessage, errorDetails);
+                        throw new Error(errorMessage);
+                    }
+                } else {
+                    // Enterprise: Direct API call
+                    const requestUrl = `${this.baseUrl}/extrahop`;
+                    const requestHeaders = {
+                        'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
+                        'Accept': 'application/json'
+                    };
+
+                    try {
+                        const response = await fetch(requestUrl, {
+                            headers: requestHeaders
+                        });
+
+                        const responseText = await response.text();
+                        let responseData;
+                        try {
+                            responseData = JSON.parse(responseText);
+                        } catch (e) {
+                            responseData = responseText;
+                        }
+
+                        if (!response.ok) {
+                            const errorDetails = {
+                                url: requestUrl,
+                                headers: requestHeaders,
+                                body: 'N/A',
+                                status: `${response.status} ${response.statusText}`,
+                                response: responseData
+                            };
+                            
+                            let errorMessage = 'Authentication failed. ';
+                            if (response.status === 401) {
+                                errorMessage += 'Invalid API key (401 Unauthorized).';
+                            } else if (response.status === 403) {
+                                errorMessage += 'Access forbidden (403 Forbidden). Check API key permissions.';
+                            } else if (response.status === 404) {
+                                errorMessage += 'Endpoint not found (404). Check hostname.';
+                            } else if (response.status === 400) {
+                                errorMessage += `Bad request: ${responseData.error_message || 'Check configuration'}`;
+                            } else {
+                                errorMessage += `Server returned ${response.status} ${response.statusText}.`;
+                            }
+
+                            showErrorModal(errorMessage, errorDetails);
+                            throw new Error(errorMessage);
+                        }
+
+                        return true;
+                    } catch (error) {
+                        if (error.message.includes('Authentication failed')) {
+                            throw error;
+                        }
+                        const errorDetails = {
+                            url: requestUrl,
+                            headers: requestHeaders,
+                            body: 'N/A',
+                            status: 'Network Error',
+                            response: error.message
+                        };
+                        
+                        let errorMessage = `Network error: ${error.message}. `;
+                        if (error.message.includes('Failed to fetch')) {
+                            errorMessage += 'This is likely a CORS issue. For Enterprise instances, you need to either:\n' +
+                                '1. Enable CORS on your ExtraHop appliance for this domain\n' +
+                                '2. Use a browser extension version of this tool\n' +
+                                '3. Run locally with CORS disabled for testing';
+                        }
+                        
+                        showErrorModal(errorMessage, errorDetails);
+                        throw new Error(errorMessage);
+                    }
+                }
+            }
+
+            async request(endpoint, options = {}) {
+                if (!endpoint.startsWith('/api/v1') && !endpoint.startsWith('/oauth2')) {
+                    endpoint = '/api/v1' + endpoint;
+                }
+
+                const makeRequest = async () => {
+                    if (this.config.type === '360') {
+                        // 360: Use Lambda proxy
+                        const proxyRequest = {
+                            deploymentType: '360',
+                            tenant: this.config.tenant,
+                            accessToken: this.accessToken,
+                            method: options.method || 'GET',
+                            endpoint: endpoint
+                        };
+
+                        if (options.body) {
+                            proxyRequest.requestBody = JSON.parse(options.body);
+                        }
+
+                        const response = await fetch(this.proxyUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(proxyRequest)
+                        });
+
+                        if (response.status < 200 || response.status >= 300) {
+                            const error = await response.text();
+                            let errorMessage;
+                            try {
+                                const errorJson = JSON.parse(error);
+                                errorMessage = errorJson.error_message || error;
+                            } catch (e) {
+                                errorMessage = error;
+                            }
+                            throw new Error(`API Error: ${response.status} - ${errorMessage}`);
+                        }
+
+                        if (response.status === 204) {
+                            return {};
+                        }
+
+                        const text = await response.text();
+                        return text ? JSON.parse(text) : {};
+                    } else {
+                        // Enterprise: Direct API call
+                        const url = `${this.baseUrl}${endpoint.startsWith('/api/v1') ? endpoint.substring(7) : endpoint}`;
+                        
+                        const response = await fetch(url, {
+                            method: options.method || 'GET',
+                            headers: {
+                                'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json'
+                            },
+                            body: options.body
+                        });
+
+                        if (response.status < 200 || response.status >= 300) {
+                            const error = await response.text();
+                            let errorMessage;
+                            try {
+                                const errorJson = JSON.parse(error);
+                                errorMessage = errorJson.error_message || error;
+                            } catch (e) {
+                                errorMessage = error;
+                            }
+                            throw new Error(`API Error: ${response.status} - ${errorMessage}`);
+                        }
+
+                        if (response.status === 204) {
+                            return {};
+                        }
+
+                        const text = await response.text();
+                        return text ? JSON.parse(text) : {};
+                    }
+                };
+
+                // Try request, if 401 and 360, refresh token and retry
+                try {
+                    return await makeRequest();
+                } catch (error) {
+                    if (error.message.includes('401') && this.config.type === '360') {
+                        console.log('Token expired, attempting refresh...');
+                        
+                        const tempApi = new ExtraHopAPI(this.config);
+                        await tempApi.authenticate();
+                        this.accessToken = tempApi.accessToken;
+                        
+                        console.log('Token refreshed, retrying request...');
+                        return await makeRequest();
+                    }
+                    throw error;
+                }
+            }
+
+            async getAppliances() {
+                return this.request('/appliances');
+            }
+        }
+
+        // UI Functions
+        function showStatus(message, isError = false) {
+            const statusDiv = document.getElementById('connectionStatus');
+            const statusText = document.getElementById('statusText');
+            statusDiv.style.display = 'block';
+            statusText.textContent = message;
+            statusText.style.color = isError ? '#ef4444' : 'var(--cyan)';
+        }
+
+        function toggleApiConfig() {
+            const configForm = document.getElementById('configForm');
+            const expandIcon = document.getElementById('expandIcon');
+            
+            if (configForm.style.display === 'none') {
+                configForm.style.display = 'block';
+                expandIcon.style.transform = 'rotate(0deg)';
+            } else {
+                configForm.style.display = 'none';
+                expandIcon.style.transform = 'rotate(-90deg)';
+            }
+        }
+
+        function showConnectedState() {
+            const connectedState = document.getElementById('connectedState');
+            const configForm = document.getElementById('configForm');
+            const connectedInfo = document.getElementById('connectedInfo');
+            
+            connectedState.classList.remove('hidden');
+            configForm.style.display = 'none';
+            
+            if (state.apiConfig.type === '360') {
+                connectedInfo.textContent = `RevealX 360: ${state.apiConfig.tenant}`;
+            } else {
+                connectedInfo.textContent = `RevealX Enterprise: ${state.apiConfig.host}`;
+            }
+            
+            document.getElementById('expandIcon').style.transform = 'rotate(-90deg)';
+        }
+
+        function showErrorModal(message, details) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorUrl').textContent = details.url || 'N/A';
+            document.getElementById('errorHeaders').textContent = JSON.stringify(details.headers || {}, null, 2);
+            document.getElementById('errorBody').textContent = details.body || 'N/A';
+            document.getElementById('errorStatus').textContent = details.status || 'N/A';
+            document.getElementById('errorResponse').textContent = typeof details.response === 'object' 
+                ? JSON.stringify(details.response, null, 2) 
+                : details.response || 'N/A';
+            
+            document.getElementById('errorDetails').style.display = 'none';
+            document.getElementById('toggleErrorDetails').textContent = 'Show Technical Details';
+            showModal('errorModal');
+        }
+
+        function showModal(modalId) {
+            document.getElementById(modalId).classList.add('show');
+        }
+
+        function hideModal(modalId) {
+            document.getElementById(modalId).classList.remove('show');
+        }
 
         // Load catalog data
         async function loadCatalog() {
             try {
                 const response = await fetch('catalog_eh.json');
-                catalogData = await response.json();
+                state.catalogData = await response.json();
             } catch (error) {
                 console.error('Could not load catalog:', error);
             }
@@ -362,7 +835,7 @@
             if (!licensePlatform) return null;
             
             let modelName = licensePlatform.replace(/_TRACE$/, '');
-            return catalogData.find(item => item.name === modelName || item.name === licensePlatform);
+            return state.catalogData.find(item => item.name === modelName || item.name === licensePlatform);
         }
 
         // Determine platform type and characteristics
@@ -392,87 +865,93 @@
             return { platform, isVirtual, hasIntegratedTrace, isOffline };
         }
 
-        // Fetch appliances from API
-        async function fetchAppliances() {
+        // Handle connect and load
+        async function handleConnect() {
+            const connectBtn = document.getElementById('connectBtn');
             const deploymentType = document.getElementById('deploymentType').value;
-            const statusEl = document.getElementById('connectionStatus');
-            
-            statusEl.textContent = 'Connecting...';
-            statusEl.style.color = '#f59e0b';
 
             try {
-                let apiUrl, headers;
+                connectBtn.disabled = true;
+                connectBtn.textContent = 'Connecting...';
 
+                let config;
                 if (deploymentType === '360') {
-                    const tenant = document.getElementById('tenantName').value.trim();
-                    const apiId = document.getElementById('apiId').value.trim();
-                    const apiSecret = document.getElementById('apiSecret').value.trim();
-
-                    if (!tenant || !apiId || !apiSecret) {
-                        throw new Error('Please fill in all 360 credentials');
-                    }
-
-                    // Get OAuth token
-                    const tokenUrl = `https://${tenant}.api.cloud.extrahop.com/oauth2/token`;
-                    const auth = btoa(`${apiId}:${apiSecret}`);
-
-                    const tokenResponse = await fetch(tokenUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Basic ${auth}`,
-                            'Content-Type': 'application/x-www-form-urlencoded'
-                        },
-                        body: 'grant_type=client_credentials'
-                    });
-
-                    if (!tokenResponse.ok) {
-                        throw new Error('OAuth authentication failed');
-                    }
-
-                    const tokenData = await tokenResponse.json();
-                    apiUrl = `https://${tenant}.api.cloud.extrahop.com/api/v1/appliances`;
-                    headers = {
-                        'Authorization': `Bearer ${tokenData.access_token}`,
-                        'Accept': 'application/json'
+                    config = {
+                        type: '360',
+                        tenant: document.getElementById('tenantName').value.trim(),
+                        apiId: document.getElementById('apiId').value.trim(),
+                        apiSecret: document.getElementById('apiSecret').value.trim()
                     };
+
+                    if (!config.tenant || !config.apiId || !config.apiSecret) {
+                        throw new Error('Please fill in all fields');
+                    }
                 } else {
-                    const host = document.getElementById('enterpriseHost').value.trim();
-                    const apiKey = document.getElementById('enterpriseApiKey').value.trim();
-
-                    if (!host || !apiKey) {
-                        throw new Error('Please fill in hostname and API key');
-                    }
-
-                    apiUrl = `https://${host}/api/v1/appliances`;
-                    headers = {
-                        'Authorization': `ExtraHop apikey=${apiKey}`,
-                        'Accept': 'application/json'
+                    config = {
+                        type: 'enterprise',
+                        host: document.getElementById('enterpriseHost').value.trim(),
+                        apiKey: document.getElementById('enterpriseApiKey').value.trim()
                     };
+
+                    if (!config.host || !config.apiKey) {
+                        throw new Error('Please fill in all fields');
+                    }
                 }
 
-                const response = await fetch(apiUrl, { headers });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
+                const api = new ExtraHopAPI(config);
+                await api.authenticate();
 
-                appliancesData = await response.json();
+                state.apiConfig = config;
+                state.connected = true;
+                sessionStorage.setItem('eh_config', JSON.stringify(config));
+                window.apiClient = api;
+
+                showStatus('✓ Connected successfully', false);
+                showConnectedState();
                 
-                statusEl.textContent = `Connected - ${appliancesData.length} appliances found`;
-                statusEl.style.color = '#10b981';
-                
-                document.getElementById('legend').style.display = 'block';
-                document.getElementById('nodeCount').textContent = `${appliancesData.length} appliances`;
-                
-                renderGraph();
+                // Load appliances
+                await loadAppliances();
+
             } catch (error) {
-                console.error('Error fetching appliances:', error);
-                statusEl.textContent = `Error: ${error.message}`;
-                statusEl.style.color = '#ef4444';
+                showStatus('✗ ' + error.message, true);
+                connectBtn.textContent = 'Connect & Load Map';
+                connectBtn.disabled = false;
             }
         }
 
-        // Render the node graph
+        async function loadAppliances() {
+            const connectBtn = document.getElementById('connectBtn');
+            
+            try {
+                connectBtn.textContent = 'Loading appliances...';
+                document.getElementById('welcomeScreen').style.display = 'none';
+                document.getElementById('loadingState').style.display = 'block';
+
+                state.appliances = await window.apiClient.getAppliances();
+                
+                document.getElementById('loadingState').style.display = 'none';
+                document.getElementById('graphHeader').style.display = 'flex';
+                document.getElementById('graphContainer').style.display = 'block';
+                document.getElementById('legend').style.display = 'block';
+                document.getElementById('nodeCount').textContent = `${state.appliances.length} appliances`;
+                
+                connectBtn.textContent = 'Connected';
+                setTimeout(() => {
+                    connectBtn.textContent = 'Reconnect';
+                    connectBtn.disabled = false;
+                }, 2000);
+
+                renderGraph();
+            } catch (error) {
+                document.getElementById('loadingState').style.display = 'none';
+                document.getElementById('welcomeScreen').style.display = 'block';
+                showStatus('✗ Error loading appliances: ' + error.message, true);
+                connectBtn.textContent = 'Connect & Load Map';
+                connectBtn.disabled = false;
+            }
+        }
+
+        // Render the graph
         function renderGraph() {
             const svg = d3.select('#nodeGraph');
             const container = document.getElementById('graphContainer');
@@ -482,7 +961,7 @@
             svg.attr('width', width).attr('height', height);
             svg.selectAll('*').remove();
 
-            if (appliancesData.length === 0) {
+            if (state.appliances.length === 0) {
                 svg.append('text')
                     .attr('x', width / 2)
                     .attr('y', height / 2)
@@ -493,18 +972,18 @@
             }
 
             // Group appliances by type
-            const commandAppliances = appliancesData.filter(a => {
+            const commandAppliances = state.appliances.filter(a => {
                 const info = getNodeInfo(a);
                 return info.platform === 'command';
             });
             
-            const discoverAppliances = appliancesData.filter(a => {
+            const discoverAppliances = state.appliances.filter(a => {
                 const info = getNodeInfo(a);
                 return info.platform === 'packet_sensor' || info.platform === 'discover' || 
                        info.platform === 'multifunction_sensor' || info.platform === 'all_in_one';
             });
             
-            const traceAppliances = appliancesData.filter(a => {
+            const traceAppliances = state.appliances.filter(a => {
                 const info = getNodeInfo(a);
                 return (info.platform === 'packetstore' || info.platform === 'trace') && 
                        !info.hasIntegratedTrace;
@@ -516,7 +995,6 @@
             const verticalGap = 150;
             const horizontalGap = 30;
 
-            // Calculate positions
             const commandY = 80;
             const commandX = width / 2 - (commandAppliances.length * (nodeWidth + horizontalGap) - horizontalGap) / 2;
 
@@ -528,7 +1006,7 @@
 
             const g = svg.append('g');
             
-            // Draw links from command to all other appliances
+            // Draw links
             commandAppliances.forEach((cmd, i) => {
                 const cmdX = commandX + i * (nodeWidth + horizontalGap) + nodeWidth / 2;
                 const cmdY = commandY + nodeHeight;
@@ -564,7 +1042,6 @@
                         .attr('class', 'node-group')
                         .attr('data-id', appliance.id);
 
-                    // Node rectangle
                     nodeGroup.append('rect')
                         .attr('class', `node-rect ${info.isVirtual ? 'virtual' : ''}`)
                         .attr('x', x)
@@ -576,7 +1053,6 @@
                         .attr('stroke', color)
                         .attr('fill-opacity', 0.2);
 
-                    // Display name
                     nodeGroup.append('text')
                         .attr('class', 'node-text')
                         .attr('x', x + nodeWidth / 2)
@@ -587,7 +1063,6 @@
                         .attr('font-size', '14')
                         .text(appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`);
 
-                    // Model name
                     nodeGroup.append('text')
                         .attr('class', 'node-text')
                         .attr('x', x + nodeWidth / 2)
@@ -598,7 +1073,6 @@
                         .attr('opacity', 0.7)
                         .text(appliance.license_platform || appliance.platform);
 
-                    // Offline indicator
                     if (info.isOffline) {
                         nodeGroup.append('circle')
                             .attr('class', 'offline-indicator')
@@ -607,7 +1081,6 @@
                             .attr('r', 6);
                     }
 
-                    // Integrated trace badge
                     if (info.hasIntegratedTrace) {
                         nodeGroup.append('rect')
                             .attr('x', x + 5)
@@ -629,7 +1102,6 @@
                             .text('PCAP');
                     }
 
-                    // Click handler
                     nodeGroup.on('click', () => showNodeDetails(appliance));
                 });
             }
@@ -658,22 +1130,45 @@
             panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
 
-        // Close detail panel
+        // Event Listeners
+        document.getElementById('deploymentType').addEventListener('change', (e) => {
+            const is360 = e.target.value === '360';
+            document.getElementById('config360').style.display = is360 ? 'block' : 'none';
+            document.getElementById('configEnterprise').style.display = is360 ? 'none' : 'block';
+        });
+
+        document.getElementById('connectBtn').addEventListener('click', handleConnect);
         document.getElementById('closeDetail').addEventListener('click', () => {
             document.getElementById('detailPanel').style.display = 'none';
         });
 
-        // Fetch nodes button
-        document.getElementById('fetchNodesBtn').addEventListener('click', fetchAppliances);
+        document.getElementById('closeErrorModal').addEventListener('click', () => hideModal('errorModal'));
+        document.getElementById('toggleErrorDetails').addEventListener('click', function() {
+            const detailsDiv = document.getElementById('errorDetails');
+            if (detailsDiv.style.display === 'none') {
+                detailsDiv.style.display = 'block';
+                this.textContent = 'Hide Technical Details';
+            } else {
+                detailsDiv.style.display = 'none';
+                this.textContent = 'Show Technical Details';
+            }
+        });
 
-        // Handle window resize
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.remove('show');
+                }
+            });
+        });
+
         window.addEventListener('resize', () => {
-            if (appliancesData.length > 0) {
+            if (state.appliances.length > 0) {
                 renderGraph();
             }
         });
 
-        // Load saved config from main page
+        // Load saved config and catalog on page load
         window.addEventListener('DOMContentLoaded', () => {
             const savedConfig = sessionStorage.getItem('eh_config');
             if (savedConfig) {
