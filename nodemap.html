@@ -304,37 +304,34 @@
                 </div> <!-- End configForm -->
             </div> <!-- End apiConfigSection -->
 
-            <!-- Legend -->
+            <!-- Legend / Filters -->
             <div id="legend" class="space-y-3" style="display: none;">
-                <h2 class="text-lg font-semibold" style="color: var(--text-primary);">Legend</h2>
+                <h2 class="text-lg font-semibold" style="color: var(--text-primary);">Filters</h2>
                 <div class="space-y-2 text-sm">
-                    <div class="flex items-center gap-2">
+                    <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                        <input type="checkbox" id="filter-command" checked class="w-4 h-4" style="accent-color: var(--cyan);">
                         <div class="w-5 h-5 rounded" style="background-color: var(--cyan); border: 2px solid var(--cyan);"></div>
                         <span>Command</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <div class="w-5 h-5 rounded" style="background-color: var(--magenta); border: 2px solid var(--magenta);"></div>
-                        <span>Discover/Packet Sensor</span>
-                    </div>
-                    <div class="flex items-center gap-2">
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                        <input type="checkbox" id="filter-discover" checked class="w-4 h-4" style="accent-color: var(--lime);">
+                        <div class="w-5 h-5 rounded" style="background-color: var(--lime); border: 2px solid var(--lime);"></div>
+                        <span>Discover/Sensor</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                        <input type="checkbox" id="filter-trace" checked class="w-4 h-4" style="accent-color: var(--tangerine);">
                         <div class="w-5 h-5 rounded" style="background-color: var(--tangerine); border: 2px solid var(--tangerine);"></div>
                         <span>Trace/Packetstore</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <div class="w-5 h-5 rounded" style="background-color: var(--plum); border: 2px solid var(--plum);"></div>
-                        <span>Multifunction/Ultra</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <div class="w-5 h-5 rounded" style="background-color: var(--lime); border: 2px solid var(--lime);"></div>
-                        <span>All-in-One</span>
-                    </div>
+                    </label>
+                </div>
+                <div class="border-t pt-3 space-y-2 text-sm" style="border-color: var(--border-color);">
                     <div class="flex items-center gap-2">
                         <div class="w-5 h-5 rounded border-2" style="border-style: dashed; border-color: var(--text-muted);"></div>
-                        <span>Virtual Appliance</span>
+                        <span style="color: var(--text-muted);">Virtual Appliance</span>
                     </div>
                     <div class="flex items-center gap-2">
                         <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                        <span>Offline/Disconnected</span>
+                        <span style="color: var(--text-muted);">Offline/Disconnected</span>
                     </div>
                 </div>
             </div>
@@ -351,13 +348,13 @@
 
                 <!-- Header -->
                 <div id="graphHeader" class="flex items-center justify-between" style="display: none;">
-                    <h2 class="text-2xl font-bold" style="color: var(--text-primary);">Network Topology</h2>
+                    <h2 class="text-2xl font-bold" style="color: var(--text-primary);">Appliance Topology</h2>
                     <p id="nodeCount" style="color: var(--text-muted);"></p>
                 </div>
                 
                 <!-- Graph Container -->
-                <div id="graphContainer" class="detail-panel rounded-lg p-6" style="display: none; min-height: 600px;">
-                    <svg id="nodeGraph" width="100%" height="600"></svg>
+                <div id="graphContainer" class="detail-panel rounded-lg p-6" style="display: none; min-height: 800px;">
+                    <svg id="nodeGraph" width="100%" height="800"></svg>
                 </div>
 
                 <!-- Detail Panel -->
@@ -486,15 +483,22 @@
         // Configuration - Lambda proxy URL (360 only)
         const LAMBDA_PROXY_URL = 'https://mdpg23urni.execute-api.us-east-2.amazonaws.com/default/extrahop-api-wrapper-proxy';
 
-        // Platform color mapping
+        // Platform color mapping - simplified
         const platformColors = {
             'command': '#00aaef',           // Cyan
-            'packet_sensor': '#ec0089',     // Magenta
-            'discover': '#ec0089',          // Magenta
+            'packet_sensor': '#dae343',     // Lime
+            'discover': '#dae343',          // Lime
             'packetstore': '#f05918',       // Tangerine
             'trace': '#f05918',             // Tangerine
-            'multifunction_sensor': '#7f2854', // Plum
+            'multifunction_sensor': '#dae343', // Lime
             'all_in_one': '#dae343'         // Lime
+        };
+
+        // Active filters
+        const filters = {
+            command: true,
+            discover: true,
+            trace: true
         };
 
         // API Client (matching index.html pattern)
@@ -854,9 +858,12 @@
                     hasIntegratedTrace = true;
                 }
             } else {
+                // Fallback: check if model name has V before underscore or at end
+                // Examples: EDA1100V, EDA1100V_TRACE, ETA6150v
                 if (appliance.license_platform) {
-                    isVirtual = appliance.license_platform.toLowerCase().endsWith('v') || 
-                               /\d+v$/i.test(appliance.license_platform);
+                    const model = appliance.license_platform;
+                    // Check for V/v right before underscore or at the end of string
+                    isVirtual = /v(_|$)/i.test(model);
                 }
             }
             
@@ -956,7 +963,7 @@
             const svg = d3.select('#nodeGraph');
             const container = document.getElementById('graphContainer');
             const width = container.clientWidth - 48;
-            const height = 600;
+            const height = 800; // Increased height for 2 rows
             
             svg.attr('width', width).attr('height', height);
             svg.selectAll('*').remove();
@@ -971,19 +978,47 @@
                 return;
             }
 
+            // Create zoom behavior
+            const g = svg.append('g');
+            const zoom = d3.zoom()
+                .scaleExtent([0.5, 2])
+                .on('zoom', (event) => {
+                    g.attr('transform', event.transform);
+                });
+            svg.call(zoom);
+
+            // Add reset zoom button info
+            svg.append('text')
+                .attr('x', 10)
+                .attr('y', 20)
+                .attr('fill', '#9ca3af')
+                .attr('font-size', '12')
+                .text('Scroll to zoom, drag to pan');
+
+            // Filter appliances based on active filters
+            const filteredAppliances = state.appliances.filter(a => {
+                const info = getNodeInfo(a);
+                if (info.platform === 'command') return filters.command;
+                if (info.platform === 'packetstore' || info.platform === 'trace') {
+                    if (info.hasIntegratedTrace) return filters.discover; // Integrated trace shows with discovers
+                    return filters.trace;
+                }
+                return filters.discover; // All other types
+            });
+
             // Group appliances by type
-            const commandAppliances = state.appliances.filter(a => {
+            const commandAppliances = filteredAppliances.filter(a => {
                 const info = getNodeInfo(a);
                 return info.platform === 'command';
             });
             
-            const discoverAppliances = state.appliances.filter(a => {
+            const discoverAppliances = filteredAppliances.filter(a => {
                 const info = getNodeInfo(a);
                 return info.platform === 'packet_sensor' || info.platform === 'discover' || 
                        info.platform === 'multifunction_sensor' || info.platform === 'all_in_one';
             });
             
-            const traceAppliances = state.appliances.filter(a => {
+            const traceAppliances = filteredAppliances.filter(a => {
                 const info = getNodeInfo(a);
                 return (info.platform === 'packetstore' || info.platform === 'trace') && 
                        !info.hasIntegratedTrace;
@@ -992,37 +1027,71 @@
             // Layout parameters
             const nodeWidth = 180;
             const nodeHeight = 60;
-            const verticalGap = 150;
-            const horizontalGap = 30;
+            const verticalGap = 100;
+            const horizontalGap = 20;
+            const rowGap = 80;
+            const nodesPerRow = Math.max(5, Math.ceil(Math.max(commandAppliances.length, discoverAppliances.length, traceAppliances.length) / 2));
 
-            const commandY = 80;
-            const commandX = width / 2 - (commandAppliances.length * (nodeWidth + horizontalGap) - horizontalGap) / 2;
-
-            const discoverY = commandY + verticalGap;
-            const discoverX = width / 2 - (discoverAppliances.length * (nodeWidth + horizontalGap) - horizontalGap) / 2;
-
-            const traceY = discoverY + verticalGap;
-            const traceX = width / 2 - (traceAppliances.length * (nodeWidth + horizontalGap) - horizontalGap) / 2;
-
-            const g = svg.append('g');
-            
-            // Draw links
-            commandAppliances.forEach((cmd, i) => {
-                const cmdX = commandX + i * (nodeWidth + horizontalGap) + nodeWidth / 2;
-                const cmdY = commandY + nodeHeight;
+            // Calculate positions for each group with 2 rows max
+            function calculatePositions(appliances, startY) {
+                const positions = [];
+                const itemsInFirstRow = Math.min(nodesPerRow, appliances.length);
+                const itemsInSecondRow = Math.max(0, appliances.length - nodesPerRow);
                 
-                discoverAppliances.forEach((dis, j) => {
-                    const disX = discoverX + j * (nodeWidth + horizontalGap) + nodeWidth / 2;
-                    const disY = discoverY;
+                // First row
+                const firstRowWidth = itemsInFirstRow * (nodeWidth + horizontalGap) - horizontalGap;
+                const firstRowStartX = (width - firstRowWidth) / 2;
+                
+                appliances.slice(0, nodesPerRow).forEach((app, i) => {
+                    positions.push({
+                        appliance: app,
+                        x: firstRowStartX + i * (nodeWidth + horizontalGap),
+                        y: startY
+                    });
+                });
+                
+                // Second row if needed
+                if (itemsInSecondRow > 0) {
+                    const secondRowWidth = itemsInSecondRow * (nodeWidth + horizontalGap) - horizontalGap;
+                    const secondRowStartX = (width - secondRowWidth) / 2;
+                    
+                    appliances.slice(nodesPerRow).forEach((app, i) => {
+                        positions.push({
+                            appliance: app,
+                            x: secondRowStartX + i * (nodeWidth + horizontalGap),
+                            y: startY + rowGap
+                        });
+                    });
+                }
+                
+                return positions;
+            }
+
+            const commandY = 60;
+            const discoverY = commandY + verticalGap + (commandAppliances.length > nodesPerRow ? rowGap : 0);
+            const traceY = discoverY + verticalGap + (discoverAppliances.length > nodesPerRow ? rowGap : 0);
+
+            const commandPositions = calculatePositions(commandAppliances, commandY);
+            const discoverPositions = calculatePositions(discoverAppliances, discoverY);
+            const tracePositions = calculatePositions(traceAppliances, traceY);
+
+            // Draw links from command to all other appliances
+            commandPositions.forEach(cmd => {
+                const cmdX = cmd.x + nodeWidth / 2;
+                const cmdY = cmd.y + nodeHeight;
+                
+                discoverPositions.forEach(dis => {
+                    const disX = dis.x + nodeWidth / 2;
+                    const disY = dis.y;
                     
                     g.append('path')
                         .attr('class', 'link')
                         .attr('d', `M ${cmdX} ${cmdY} L ${disX} ${disY}`);
                 });
                 
-                traceAppliances.forEach((trc, k) => {
-                    const trcX = traceX + k * (nodeWidth + horizontalGap) + nodeWidth / 2;
-                    const trcY = traceY;
+                tracePositions.forEach(trc => {
+                    const trcX = trc.x + nodeWidth / 2;
+                    const trcY = trc.y;
                     
                     g.append('path')
                         .attr('class', 'link')
@@ -1031,10 +1100,11 @@
             });
 
             // Draw nodes
-            function drawNodes(appliances, startX, startY) {
-                appliances.forEach((appliance, i) => {
-                    const x = startX + i * (nodeWidth + horizontalGap);
-                    const y = startY;
+            function drawNodes(positions) {
+                positions.forEach(pos => {
+                    const appliance = pos.appliance;
+                    const x = pos.x;
+                    const y = pos.y;
                     const info = getNodeInfo(appliance);
                     const color = platformColors[info.platform] || '#6b7280';
 
@@ -1106,9 +1176,18 @@
                 });
             }
 
-            drawNodes(commandAppliances, commandX, commandY);
-            drawNodes(discoverAppliances, discoverX, discoverY);
-            drawNodes(traceAppliances, traceX, traceY);
+            drawNodes(commandPositions);
+            drawNodes(discoverPositions);
+            drawNodes(tracePositions);
+
+            // Update count to show filtered vs total
+            const totalCount = state.appliances.length;
+            const filteredCount = filteredAppliances.length;
+            if (filteredCount < totalCount) {
+                document.getElementById('nodeCount').textContent = `${filteredCount} of ${totalCount} appliances`;
+            } else {
+                document.getElementById('nodeCount').textContent = `${totalCount} appliances`;
+            }
         }
 
         // Show node details
@@ -1140,6 +1219,20 @@
         document.getElementById('connectBtn').addEventListener('click', handleConnect);
         document.getElementById('closeDetail').addEventListener('click', () => {
             document.getElementById('detailPanel').style.display = 'none';
+        });
+
+        // Filter checkboxes
+        document.getElementById('filter-command').addEventListener('change', (e) => {
+            filters.command = e.target.checked;
+            renderGraph();
+        });
+        document.getElementById('filter-discover').addEventListener('change', (e) => {
+            filters.discover = e.target.checked;
+            renderGraph();
+        });
+        document.getElementById('filter-trace').addEventListener('change', (e) => {
+            filters.trace = e.target.checked;
+            renderGraph();
         });
 
         document.getElementById('closeErrorModal').addEventListener('click', () => hideModal('errorModal'));
