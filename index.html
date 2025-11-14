@@ -323,6 +323,14 @@
                         <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Secret</label>
                         <input type="password" id="apiSecret" class="w-full px-3 py-2 rounded border">
                     </div>
+                    <div class="mb-4">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="checkbox" id="useAwsProxy" checked class="mr-2">
+                            <span class="text-sm" style="color: var(--text-secondary);">Use AWS Proxy</span>
+                            <span class="ml-2 text-xs" style="color: var(--text-muted);" title="The proxy allows API requests without configuring CORS on your tenant. Contact support to configure CORS if you want to make direct API calls.">ℹ️</span>
+                        </label>
+                        <p class="text-xs mt-1 ml-6" style="color: var(--text-muted);">Unchecking requires CORS configuration on tenant</p>
+                    </div>
                 </div>
 
                 <!-- Enterprise Config -->
@@ -334,6 +342,21 @@
                     <div class="mb-4">
                         <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Key</label>
                         <input type="password" id="enterpriseApiKey" class="w-full px-3 py-2 rounded border">
+                    </div>
+                    <div class="mb-4 p-3 rounded" style="background-color: var(--bg-subtle);">
+                        <p class="text-xs mb-2" style="color: var(--text-muted);">
+                            <strong>Note:</strong> Web-based API requests require CORS to be configured on your RevealX Enterprise appliance.
+                        </p>
+                        <a href="https://docs.extrahop.com/current/rest-api-guide/#:~:text=Configure%20cross%2Dorigin%20resource%20sharing%20(CORS)" 
+                           target="_blank" 
+                           rel="noopener noreferrer" 
+                           class="text-xs flex items-center gap-1" 
+                           style="color: var(--cyan);">
+                            <span>Configure CORS on RevealX Enterprise</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                        </a>
                     </div>
                 </div>
 
@@ -605,7 +628,7 @@
 
                         <!-- CRS Trend Analysis Tool Link -->
                         <div class="mt-4 pt-4" style="border-top: 1px solid var(--border-color);">
-                            <a href="https://thomaswde.github.io/crs-report/" target="_blank" rel="noopener noreferrer" class="btn-secondary w-full px-4 py-2 rounded font-semibold flex items-center justify-center gap-2" style="display: flex;">
+                            <a href="https://thomaswde.github.io/crs-report/" target="_blank" rel="noopener noreferrer" class="btn-primary w-full px-4 py-2 rounded font-semibold flex items-center justify-center gap-2" style="display: flex;">
                                 <span>Open CRS Trend Analysis Tool</span>
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -839,6 +862,38 @@
 
             async authenticate() {
                 if (this.config.type === '360') {
+                    if (this.config.useProxy === false) {
+                        // Direct 360 API call (no proxy)
+                        const authUrl = `https://${this.config.tenant}.api.cloud.extrahop.com/oauth2/token`;
+                        const authPayload = new URLSearchParams({
+                            grant_type: 'client_credentials',
+                            client_id: this.config.apiId,
+                            client_secret: this.config.apiSecret
+                        });
+
+                        try {
+                            const response = await fetch(authUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/x-www-form-urlencoded'
+                                },
+                                body: authPayload
+                            });
+
+                            if (!response.ok) {
+                                const errorData = await response.json().catch(() => ({}));
+                                throw new Error(`Authentication failed: ${response.status} - ${errorData.error_description || response.statusText}`);
+                            }
+
+                            const data = await response.json();
+                            this.accessToken = data.access_token;
+                            sessionStorage.setItem('eh_access_token', data.access_token);
+                            return true;
+                        } catch (error) {
+                            throw new Error(`Direct 360 authentication failed: ${error.message}. Ensure CORS is configured on your tenant.`);
+                        }
+                    }
+                    
                     // 360: Use Lambda proxy for OAuth
                     const proxyRequest = {
                         deploymentType: '360',
@@ -992,6 +1047,40 @@
 
                 const makeRequest = async () => {
                     if (this.config.type === '360') {
+                        if (this.config.useProxy === false) {
+                            // Direct 360 API call (no proxy)
+                            const url = `https://${this.config.tenant}.api.cloud.extrahop.com${endpoint}`;
+                            
+                            const response = await fetch(url, {
+                                method: options.method || 'GET',
+                                headers: {
+                                    'Authorization': `Bearer ${this.accessToken}`,
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/json'
+                                },
+                                body: options.body
+                            });
+
+                            if (response.status < 200 || response.status >= 300) {
+                                const error = await response.text();
+                                let errorMessage;
+                                try {
+                                    const errorJson = JSON.parse(error);
+                                    errorMessage = errorJson.error_message || error;
+                                } catch (e) {
+                                    errorMessage = error;
+                                }
+                                throw new Error(`API Error: ${response.status} - ${errorMessage}`);
+                            }
+
+                            if (response.status === 204) {
+                                return {};
+                            }
+
+                            const text = await response.text();
+                            return text ? JSON.parse(text) : {};
+                        }
+                        
                         // 360: Use Lambda proxy
                         const proxyRequest = {
                             deploymentType: '360',
@@ -1303,11 +1392,13 @@
 
                 let config;
                 if (deploymentType === '360') {
+                    const useProxy = document.getElementById('useAwsProxy').checked;
                     config = {
                         type: '360',
                         tenant: document.getElementById('tenantName').value.trim(),
                         apiId: document.getElementById('apiId').value.trim(),
-                        apiSecret: document.getElementById('apiSecret').value.trim()
+                        apiSecret: document.getElementById('apiSecret').value.trim(),
+                        useProxy: useProxy
                     };
 
                     if (!config.tenant || !config.apiId || !config.apiSecret) {
@@ -1778,6 +1869,8 @@
                     document.getElementById('tenantName').value = config.tenant;
                     document.getElementById('apiId').value = config.apiId;
                     document.getElementById('apiSecret').value = config.apiSecret;
+                    // Restore proxy checkbox state (default to true if not set)
+                    document.getElementById('useAwsProxy').checked = config.useProxy !== false;
                 } else {
                     document.getElementById('deploymentType').value = 'enterprise';
                     document.getElementById('enterpriseHost').value = config.host;
@@ -1820,22 +1913,20 @@
         // Update capacity input options based on selected period
         function updateCapacityInputOptions() {
             const isMultiDay = crsState.selectedPeriod !== 'yesterday';
-            const manualBtn = document.querySelector('.capacity-input-btn[data-input="manual"]');
-            const csvBtn = document.querySelector('.capacity-input-btn[data-input="csv"]');
             const capacityInputSection = document.getElementById('capacityInputSection');
             
             if (isMultiDay) {
-                // For multi-day periods, force CSV mode and hide manual option
-                manualBtn.style.display = 'none';
-                csvBtn.classList.add('active');
-                csvBtn.style.width = '100%';
+                // For multi-day periods, hide the button section entirely and force CSV mode
+                capacityInputSection.style.display = 'none';
                 crsState.inputMethod = 'csv';
                 document.getElementById('manualCapacityInput').style.display = 'none';
                 document.getElementById('csvCapacityInput').style.display = 'block';
             } else {
-                // For single day, show both options
-                manualBtn.style.display = 'flex';
-                csvBtn.style.width = '';
+                // For single day, show button section
+                capacityInputSection.style.display = 'block';
+                
+                const manualBtn = document.querySelector('.capacity-input-btn[data-input="manual"]');
+                const csvBtn = document.querySelector('.capacity-input-btn[data-input="csv"]');
                 
                 // Restore previous selection or default to manual
                 if (crsState.inputMethod === 'manual') {
@@ -1936,17 +2027,25 @@
                 
                 return { reserved, utilized };
             } else {
+                // CSV mode - capacity data is optional
                 if (!crsState.csvData || crsState.csvData.length === 0) {
-                    throw new Error('Please upload a valid CSV file');
+                    return null; // No CSV = no capacity data, which is fine
                 }
                 
-                // For multi-day periods, average the values
+                // Sort by date to get most recent
+                const sortedData = [...crsState.csvData].sort((a, b) => 
+                    new Date(b.date) - new Date(a.date)
+                );
+                
+                // Use reserved from most recent day (may have changed over time)
+                // Use average utilized across the period
                 const avgUtilized = crsState.csvData.reduce((sum, d) => sum + d.utilized, 0) / crsState.csvData.length;
-                const avgReserved = crsState.csvData.reduce((sum, d) => sum + d.reserved, 0) / crsState.csvData.length;
+                const mostRecentReserved = sortedData[0].reserved;
                 
                 return {
-                    reserved: avgReserved,
-                    utilized: avgUtilized
+                    reserved: mostRecentReserved,
+                    utilized: avgUtilized,
+                    isAveraged: true // Flag to show in UI
                 };
             }
         }
@@ -2053,7 +2152,8 @@
                 
                 if (utilizationPercent) {
                     document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
-                    document.getElementById('capacityUtilizationSubtext').textContent = 'Of reserved capacity';
+                    const subtext = capacityData.isAveraged ? 'Of reserved (avg utilized from CSV)' : 'Of reserved capacity';
+                    document.getElementById('capacityUtilizationSubtext').textContent = subtext;
                 } else {
                     document.getElementById('capacityUtilization').textContent = 'N/A';
                     document.getElementById('capacityUtilizationSubtext').textContent = 'Add capacity data to calculate';
