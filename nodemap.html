@@ -276,7 +276,7 @@
                         <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API ID</label>
                         <input type="text" id="apiId" class="w-full px-3 py-2 rounded border">
                     </div>
-                    <div>
+                    <div class="mb-4">
                         <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Secret</label>
                         <input type="password" id="apiSecret" class="w-full px-3 py-2 rounded border">
                     </div>
@@ -288,13 +288,13 @@
                         <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Hostname or IP</label>
                         <input type="text" id="enterpriseHost" placeholder="e.g., extrahop.company.com" class="w-full px-3 py-2 rounded border">
                     </div>
-                    <div>
+                    <div class="mb-4">
                         <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Key</label>
                         <input type="password" id="enterpriseApiKey" class="w-full px-3 py-2 rounded border">
                     </div>
                 </div>
 
-                <button id="connectBtn" class="btn-primary w-full px-4 py-2 rounded font-semibold">
+                <button id="connectBtn" class="btn-primary w-full px-4 py-2 rounded font-semibold mt-4">
                     Connect & Load Map
                 </button>
 
@@ -303,6 +303,13 @@
                 </div>
                 </div> <!-- End configForm -->
             </div> <!-- End apiConfigSection -->
+
+            <!-- Search -->
+            <div id="searchSection" class="space-y-3" style="display: none;">
+                <h2 class="text-lg font-semibold" style="color: var(--text-primary);">Search</h2>
+                <input type="text" id="searchAppliances" placeholder="Search appliances..." class="w-full px-3 py-2 rounded border text-sm">
+                <p class="text-xs" style="color: var(--text-muted);">Searches all fields</p>
+            </div>
 
             <!-- Legend / Filters -->
             <div id="legend" class="space-y-3" style="display: none;">
@@ -325,14 +332,16 @@
                     </label>
                 </div>
                 <div class="border-t pt-3 space-y-2 text-sm" style="border-color: var(--border-color);">
-                    <div class="flex items-center gap-2">
+                    <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                        <input type="checkbox" id="filter-virtual" class="w-4 h-4" style="accent-color: var(--text-secondary);">
                         <div class="w-5 h-5 rounded border-2" style="border-style: dashed; border-color: var(--text-muted);"></div>
-                        <span style="color: var(--text-muted);">Virtual Appliance</span>
-                    </div>
-                    <div class="flex items-center gap-2">
+                        <span style="color: var(--text-muted);">Virtual Only</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                        <input type="checkbox" id="filter-offline" class="w-4 h-4" style="accent-color: #ef4444;">
                         <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                        <span style="color: var(--text-muted);">Offline/Disconnected</span>
-                    </div>
+                        <span style="color: var(--text-muted);">Offline Only</span>
+                    </label>
                 </div>
             </div>
         </aside>
@@ -498,8 +507,12 @@
         const filters = {
             command: true,
             discover: true,
-            trace: true
+            trace: true,
+            virtualOnly: false,
+            offlineOnly: false
         };
+
+        let searchTerm = '';
 
         // API Client (matching index.html pattern)
         class ExtraHopAPI {
@@ -940,6 +953,7 @@
                 document.getElementById('graphHeader').style.display = 'flex';
                 document.getElementById('graphContainer').style.display = 'block';
                 document.getElementById('legend').style.display = 'block';
+                document.getElementById('searchSection').style.display = 'block';
                 document.getElementById('nodeCount').textContent = `${state.appliances.length} appliances`;
                 
                 connectBtn.textContent = 'Connected';
@@ -956,6 +970,30 @@
                 connectBtn.textContent = 'Connect & Load Map';
                 connectBtn.disabled = false;
             }
+        }
+
+        // Helper function to check if appliance matches search
+        function matchesSearch(appliance) {
+            if (!searchTerm) return true;
+            
+            const term = searchTerm.toLowerCase();
+            const searchableFields = [
+                appliance.display_name,
+                appliance.hostname,
+                appliance.nickname,
+                appliance.license_platform,
+                appliance.platform,
+                appliance.firmware_version,
+                appliance.status_message,
+                appliance.uuid,
+                appliance.id?.toString(),
+                ...(appliance.product_modules || []),
+                ...(appliance.licensed_modules || [])
+            ];
+            
+            return searchableFields.some(field => 
+                field && field.toString().toLowerCase().includes(term)
+            );
         }
 
         // Render the graph
@@ -998,6 +1036,15 @@
             // Filter appliances based on active filters
             const filteredAppliances = state.appliances.filter(a => {
                 const info = getNodeInfo(a);
+                
+                // Apply search filter
+                if (!matchesSearch(a)) return false;
+                
+                // Apply virtual/offline filters
+                if (filters.virtualOnly && !info.isVirtual) return false;
+                if (filters.offlineOnly && !info.isOffline) return false;
+                
+                // Apply platform type filters
                 if (info.platform === 'command') return filters.command;
                 if (info.platform === 'packetstore' || info.platform === 'trace') {
                     if (info.hasIntegratedTrace) return filters.discover; // Integrated trace shows with discovers
@@ -1232,6 +1279,20 @@
         });
         document.getElementById('filter-trace').addEventListener('change', (e) => {
             filters.trace = e.target.checked;
+            renderGraph();
+        });
+        document.getElementById('filter-virtual').addEventListener('change', (e) => {
+            filters.virtualOnly = e.target.checked;
+            renderGraph();
+        });
+        document.getElementById('filter-offline').addEventListener('change', (e) => {
+            filters.offlineOnly = e.target.checked;
+            renderGraph();
+        });
+
+        // Search input
+        document.getElementById('searchAppliances').addEventListener('input', (e) => {
+            searchTerm = e.target.value.trim();
             renderGraph();
         });
 
