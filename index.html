@@ -2455,12 +2455,17 @@
 
         // API Functions for Network Localities
         async function loadNetworkLocalities() {
+            if (!state.connected || !window.apiClient) {
+                alert('Please connect to your ExtraHop instance first');
+                return;
+            }
+
             try {
                 document.getElementById('localitiesLoading').style.display = 'block';
                 document.getElementById('localitiesTable').style.display = 'none';
                 document.getElementById('localityStatus').style.display = 'none';
 
-                const response = await state.apiConfig.request('/networklocalities');
+                const response = await window.apiClient.request('/networklocalities');
                 
                 localitiesState.originalLocalities = response.map(loc => ({...loc}));
                 localitiesState.currentLocalities = response.map(loc => ({...loc}));
@@ -2618,7 +2623,7 @@
                 // Process deletions
                 for (const id of localitiesState.deletedIds) {
                     try {
-                        await state.apiConfig.request(`/networklocalities/${id}`, { method: 'DELETE' });
+                        await window.apiClient.request(`/networklocalities/${id}`, { method: 'DELETE' });
                         results.deleted.push(id);
                     } catch (error) {
                         results.errors.push(`Failed to delete locality ID ${id}: ${error.message}`);
@@ -2645,14 +2650,14 @@
                     try {
                         if (locality._isNew && !locality.id) {
                             // Create new locality
-                            const response = await state.apiConfig.request('/networklocalities', {
+                            const response = await window.apiClient.request('/networklocalities', {
                                 method: 'POST',
                                 body: JSON.stringify(payload)
                             });
                             results.created.push(locality.name);
                         } else if (locality._modified && locality.id) {
                             // Update existing locality
-                            await state.apiConfig.request(`/networklocalities/${locality.id}`, {
+                            await window.apiClient.request(`/networklocalities/${locality.id}`, {
                                 method: 'PATCH',
                                 body: JSON.stringify(payload)
                             });
