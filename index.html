@@ -6,6 +6,7 @@
     <title>ExtraHop API Tools</title>
     <link rel="icon" href="favicon.png" type="image/png">
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
@@ -218,6 +219,22 @@
             display: flex;
         }
 
+        .crs-period-btn, .capacity-input-btn {
+            transition: all 0.2s;
+            border-color: var(--border-color);
+            background-color: var(--bg-card);
+        }
+
+        .crs-period-btn:hover, .capacity-input-btn:hover {
+            background-color: var(--bg-hover);
+        }
+
+        .crs-period-btn.active, .capacity-input-btn.active {
+            border-color: var(--cyan);
+            background-color: var(--bg-hover);
+            font-weight: 600;
+        }
+
         .modal-content {
             background-color: var(--bg-card);
             border-radius: 8px;
@@ -337,6 +354,11 @@
                 <button class="module-btn active w-full text-left px-4 py-3 rounded" data-module="dashboards">
                     <div class="font-semibold">Dashboard Manager</div>
                     <div class="text-xs" style="color: var(--text-muted);">Manage ownership & sharing</div>
+                </button>
+
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="crs-usage">
+                    <div class="font-semibold">CRS Usage Report</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Capacity & compression analysis</div>
                 </button>
 
                 <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="audit-logs">
@@ -505,6 +527,155 @@
                 <div class="text-center py-20">
                     <h2 class="text-2xl font-bold mb-4" style="color: var(--sapphire);">Analysis Priorities</h2>
                     <p style="color: var(--text-muted);">This module is coming soon</p>
+                </div>
+            </div>
+
+            <!-- CRS Usage Report Module -->
+            <div id="crs-usageModule" class="module-content" style="display: none;">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">CRS Usage Report</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Analyze record storage capacity and compression ratios</p>
+                </div>
+
+                <!-- Configuration Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <!-- Time Period Selection -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Time Period</h3>
+                        <div class="space-y-3">
+                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border active" data-period="yesterday">
+                                <div class="font-semibold">Yesterday</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Previous day's data</div>
+                            </button>
+                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="week">
+                                <div class="font-semibold">Last 7 Days</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Weekly trend analysis</div>
+                            </button>
+                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="month">
+                                <div class="font-semibold">Last 30 Days</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Monthly overview</div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Capacity Data Input -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Data</h3>
+                        
+                        <!-- Input Method Selection -->
+                        <div class="mb-4">
+                            <div class="flex gap-3 mb-4">
+                                <button class="capacity-input-btn flex-1 px-4 py-2 rounded border active" data-input="manual">
+                                    Manual Entry
+                                </button>
+                                <button class="capacity-input-btn flex-1 px-4 py-2 rounded border" data-input="csv">
+                                    CSV Upload
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Manual Input Fields -->
+                        <div id="manualCapacityInput" class="space-y-3">
+                            <div>
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Reserved Capacity (GB)</label>
+                                <input type="number" id="reservedCapacity" placeholder="e.g., 1500" class="w-full px-3 py-2 rounded border">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Utilized Capacity (GB)</label>
+                                <input type="number" id="utilizedCapacity" placeholder="e.g., 817" class="w-full px-3 py-2 rounded border">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">From your data lake (BigQuery/LogScale/Elastic)</p>
+                            </div>
+                        </div>
+
+                        <!-- CSV Upload Fields -->
+                        <div id="csvCapacityInput" class="space-y-3" style="display: none;">
+                            <div>
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Upload Usage CSV</label>
+                                <input type="file" id="csvFileInput" accept=".csv" class="w-full px-3 py-2 rounded border">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">CSV with "Summary Date UTC", "Utilized", and "Reserved" columns</p>
+                            </div>
+                            <div id="csvPreview" style="display: none;">
+                                <p class="text-sm font-medium mb-2" style="color: var(--text-secondary);">Parsed Data:</p>
+                                <div class="p-3 rounded text-xs" style="background-color: var(--bg-subtle);">
+                                    <div id="csvSummary"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Generate Report Button -->
+                <div class="mb-6">
+                    <button id="generateCrsReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
+                        Generate Report
+                    </button>
+                </div>
+
+                <!-- Loading State -->
+                <div id="crsLoading" class="text-center py-20" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p style="color: var(--text-muted);">Fetching appliance data and calculating metrics...</p>
+                </div>
+
+                <!-- Results Section -->
+                <div id="crsResults" style="display: none;">
+                    <!-- KPI Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--cyan);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Compression Ratio</div>
+                            <div id="compressionRatio" class="text-4xl font-bold" style="color: var(--cyan);">-</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">1 GB stored : X GB ingested</div>
+                        </div>
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--magenta);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Total Record Bytes</div>
+                            <div id="totalRecordBytes" class="text-4xl font-bold" style="color: var(--magenta);">-</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">From all EDA appliances</div>
+                        </div>
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Capacity Utilization</div>
+                            <div id="capacityUtilization" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">Of reserved capacity</div>
+                        </div>
+                    </div>
+
+                    <!-- Charts -->
+                    <div class="space-y-6">
+                        <!-- Stacked Bar Chart -->
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Consumption by Sensor</h3>
+                            <div style="position: relative; height: 150px;">
+                                <canvas id="stackedBarChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Bar Chart -->
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Utilization by Sensor</h3>
+                            <div style="position: relative; height: 400px;">
+                                <canvas id="sensorBarChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Data Table -->
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Breakdown</h3>
+                            <div class="table-container rounded-lg overflow-hidden">
+                                <table id="crsDataTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Sensor Name</th>
+                                            <th>Platform</th>
+                                            <th>Record Bytes (GB)</th>
+                                            <th>After Compression (GB)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="crsDataTableBody">
+                                        <!-- Populated dynamically -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </main>
@@ -969,6 +1140,10 @@
                     console.warn('Could not fetch users:', e);
                     return [];
                 }
+            }
+
+            async getAppliances() {
+                return this.request('/appliances');
             }
         }
 
@@ -1601,6 +1776,406 @@
                 }
             }
         });
+
+        // ==================== CRS USAGE REPORT MODULE ====================
+
+        const crsState = {
+            selectedPeriod: 'yesterday',
+            inputMethod: 'manual',
+            csvData: null,
+            chartInstances: {}
+        };
+
+        // Model capacity mapping
+        const CRS_CAPACITIES = {
+            'EDA1100V_TRACE': 20,
+            'EDA1100V': 20,
+            'EDA1200': 20,
+            'EDA4200': 100,
+            'EDA6100V_TRACE': 200,
+            'EDA6100V': 200,
+            'EDA6200': 200,
+            'EDA8200V': 500,
+            'EDA8200': 500,
+            'EDA9200': 750,
+            'EDA9300': 750,
+            'EDA10200': 1000,
+            'EDA10300': 1000
+        };
+
+        // ExtraHop brand colors for charts
+        const EH_COLORS = ['#ec0089', '#00aaef', '#f05918', '#dae343', '#7f2854', '#261f63'];
+
+        // Helper functions
+        function bytesToGB(bytes) {
+            return Math.round(bytes / (1024 ** 3));
+        }
+
+        function getDateUnixTimes(dateStr) {
+            const date = new Date(dateStr);
+            const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+            const endOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+            return {
+                from: Math.floor(startOfDay.getTime()),
+                until: Math.floor(endOfDay.getTime())
+            };
+        }
+
+        function getYesterday() {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            return yesterday.toISOString().split('T')[0];
+        }
+
+        function getDateRange(period) {
+            const end = new Date();
+            end.setDate(end.getDate() - 1); // Yesterday
+            const start = new Date(end);
+            
+            if (period === 'week') {
+                start.setDate(start.getDate() - 6);
+            } else if (period === 'month') {
+                start.setDate(start.getDate() - 29);
+            }
+            
+            return {
+                start: start.toISOString().split('T')[0],
+                end: end.toISOString().split('T')[0]
+            };
+        }
+
+        // Parse CSV data
+        function parseCSV(csvText) {
+            const lines = csvText.trim().split('\n');
+            const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+            
+            const dateIdx = headers.findIndex(h => h.includes('Summary Date'));
+            const utilizedIdx = headers.findIndex(h => h === 'Utilized');
+            const reservedIdx = headers.findIndex(h => h === 'Reserved');
+            
+            if (dateIdx === -1 || utilizedIdx === -1 || reservedIdx === -1) {
+                throw new Error('CSV must have "Summary Date UTC", "Utilized", and "Reserved" columns');
+            }
+            
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.replace(/"/g, '').trim());
+                if (values.length < 3) continue;
+                
+                data.push({
+                    date: values[dateIdx],
+                    utilized: parseFloat(values[utilizedIdx]),
+                    reserved: parseFloat(values[reservedIdx])
+                });
+            }
+            
+            return data;
+        }
+
+        // Get capacity data based on input method
+        function getCapacityData() {
+            if (crsState.inputMethod === 'manual') {
+                const reserved = parseFloat(document.getElementById('reservedCapacity').value);
+                const utilized = parseFloat(document.getElementById('utilizedCapacity').value);
+                
+                if (!reserved || !utilized) {
+                    throw new Error('Please enter both reserved and utilized capacity values');
+                }
+                
+                return { reserved, utilized };
+            } else {
+                if (!crsState.csvData || crsState.csvData.length === 0) {
+                    throw new Error('Please upload a valid CSV file');
+                }
+                
+                // For multi-day periods, average the values
+                const avgUtilized = crsState.csvData.reduce((sum, d) => sum + d.utilized, 0) / crsState.csvData.length;
+                const avgReserved = crsState.csvData.reduce((sum, d) => sum + d.reserved, 0) / crsState.csvData.length;
+                
+                return {
+                    reserved: avgReserved,
+                    utilized: avgUtilized
+                };
+            }
+        }
+
+        // Fetch appliances and metrics
+        async function fetchCRSData(dateRange) {
+            const appliances = await window.apiClient.getAppliances();
+            
+            // Filter for EDA discover appliances only
+            const edaAppliances = appliances.filter(a => 
+                a.platform === 'discover' && 
+                a.license_platform && 
+                a.license_platform.includes('EDA')
+            );
+            
+            const results = [];
+            
+            for (const appliance of edaAppliances) {
+                const times = getDateUnixTimes(dateRange.end); // Use end date for single day query
+                
+                const metricPayload = {
+                    cycle: 'auto',
+                    from: times.from,
+                    until: times.until,
+                    metric_category: 'capture',
+                    metric_specs: [{ name: 'record_bytes' }],
+                    object_ids: [appliance.id],
+                    object_type: 'system'
+                };
+                
+                try {
+                    const metricResponse = await window.apiClient.request('/metrics/total', {
+                        method: 'POST',
+                        body: JSON.stringify(metricPayload)
+                    });
+                    const recordBytes = metricResponse.stats?.[0]?.values?.[0] || 0;
+                    
+                    results.push({
+                        name: appliance.display_name,
+                        model: appliance.license_platform,
+                        recordBytes: recordBytes,
+                        recordBytesGB: bytesToGB(recordBytes),
+                        capacity: CRS_CAPACITIES[appliance.license_platform] || 0
+                    });
+                } catch (error) {
+                    console.error(`Error fetching metrics for ${appliance.display_name}:`, error);
+                    results.push({
+                        name: appliance.display_name,
+                        model: appliance.license_platform,
+                        recordBytes: 0,
+                        recordBytesGB: 0,
+                        capacity: CRS_CAPACITIES[appliance.license_platform] || 0
+                    });
+                }
+            }
+            
+            return results;
+        }
+
+        // Generate report
+        async function generateCRSReport() {
+            document.getElementById('crsLoading').style.display = 'block';
+            document.getElementById('crsResults').style.display = 'none';
+            
+            try {
+                const dateRange = getDateRange(crsState.selectedPeriod);
+                const capacityData = getCapacityData();
+                const applianceData = await fetchCRSData(dateRange);
+                
+                // Calculate totals
+                const totalRecordBytesGB = applianceData.reduce((sum, a) => sum + a.recordBytesGB, 0);
+                const compressionRatio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized).toFixed(2) : 'N/A';
+                const utilizationPercent = ((capacityData.utilized / capacityData.reserved) * 100).toFixed(1);
+                
+                // Calculate compressed values
+                const compressedData = applianceData.map(a => ({
+                    ...a,
+                    compressedGB: totalRecordBytesGB > 0 ? (a.recordBytesGB / compressionRatio).toFixed(2) : 0
+                }));
+                
+                // Update KPIs
+                document.getElementById('compressionRatio').textContent = compressionRatio;
+                document.getElementById('totalRecordBytes').textContent = `${totalRecordBytesGB} GB`;
+                document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
+                
+                // Render charts
+                renderStackedBarChart(compressedData, capacityData.reserved);
+                renderSensorBarChart(compressedData);
+                renderDataTable(compressedData, compressionRatio);
+                
+                document.getElementById('crsLoading').style.display = 'none';
+                document.getElementById('crsResults').style.display = 'block';
+                
+            } catch (error) {
+                alert(`Error generating report: ${error.message}`);
+                document.getElementById('crsLoading').style.display = 'none';
+            }
+        }
+
+        // Render stacked horizontal bar chart
+        function renderStackedBarChart(data, reservedCapacity) {
+            const canvas = document.getElementById('stackedBarChart');
+            const ctx = canvas.getContext('2d');
+            
+            // Destroy existing chart
+            if (crsState.chartInstances.stacked) {
+                crsState.chartInstances.stacked.destroy();
+            }
+            
+            const consumed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0);
+            const remaining = Math.max(0, reservedCapacity - consumed);
+            
+            const datasets = data
+                .filter(d => parseFloat(d.compressedGB) > 0)
+                .map((d, i) => ({
+                    label: d.name,
+                    data: [parseFloat(d.compressedGB)],
+                    backgroundColor: EH_COLORS[i % EH_COLORS.length]
+                }));
+            
+            datasets.push({
+                label: 'Remaining Capacity',
+                data: [remaining],
+                backgroundColor: '#898a8d'
+            });
+            
+            crsState.chartInstances.stacked = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: ['Capacity'], datasets },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            stacked: true,
+                            title: { display: true, text: 'Capacity (GB)' }
+                        },
+                        y: { stacked: true, display: false }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => `${context.dataset.label}: ${context.parsed.x} GB`
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Render vertical bar chart
+        function renderSensorBarChart(data) {
+            const canvas = document.getElementById('sensorBarChart');
+            const ctx = canvas.getContext('2d');
+            
+            if (crsState.chartInstances.bar) {
+                crsState.chartInstances.bar.destroy();
+            }
+            
+            const sortedData = [...data].sort((a, b) => parseFloat(b.compressedGB) - parseFloat(a.compressedGB));
+            const labels = sortedData.map(d => d.name);
+            const values = sortedData.map(d => parseFloat(d.compressedGB));
+            
+            crsState.chartInstances.bar = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Utilization (GB)',
+                        data: values,
+                        backgroundColor: '#7f2854'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Capacity Utilization (GB)' }
+                        },
+                        x: {
+                            ticks: {
+                                autoSkip: false,
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+
+        // Render data table
+        function renderDataTable(data, compressionRatio) {
+            const tbody = document.getElementById('crsDataTableBody');
+            tbody.innerHTML = '';
+            
+            const sortedData = [...data].sort((a, b) => parseFloat(b.compressedGB) - parseFloat(a.compressedGB));
+            
+            sortedData.forEach(d => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${d.name}</td>
+                    <td>${d.model}</td>
+                    <td>${d.recordBytesGB}</td>
+                    <td>${d.compressedGB}</td>
+                `;
+                tbody.appendChild(row);
+            });
+            
+            // Add totals row
+            const totalRow = document.createElement('tr');
+            totalRow.style.fontWeight = 'bold';
+            totalRow.style.borderTop = '2px solid var(--border-color)';
+            const totalRecordBytes = data.reduce((sum, d) => sum + d.recordBytesGB, 0);
+            const totalCompressed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0).toFixed(2);
+            totalRow.innerHTML = `
+                <td colspan="2">TOTAL</td>
+                <td>${totalRecordBytes}</td>
+                <td>${totalCompressed}</td>
+            `;
+            tbody.appendChild(totalRow);
+        }
+
+        // Event listeners for CRS module
+        document.querySelectorAll('.crs-period-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.crs-period-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                crsState.selectedPeriod = btn.dataset.period;
+            });
+        });
+
+        document.querySelectorAll('.capacity-input-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.capacity-input-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                crsState.inputMethod = btn.dataset.input;
+                
+                if (crsState.inputMethod === 'manual') {
+                    document.getElementById('manualCapacityInput').style.display = 'block';
+                    document.getElementById('csvCapacityInput').style.display = 'none';
+                } else {
+                    document.getElementById('manualCapacityInput').style.display = 'none';
+                    document.getElementById('csvCapacityInput').style.display = 'block';
+                }
+            });
+        });
+
+        document.getElementById('csvFileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    crsState.csvData = parseCSV(event.target.result);
+                    
+                    const summary = document.getElementById('csvSummary');
+                    summary.innerHTML = `
+                        <strong>${crsState.csvData.length} records loaded</strong><br>
+                        Date range: ${crsState.csvData[crsState.csvData.length - 1].date} to ${crsState.csvData[0].date}<br>
+                        Avg Utilized: ${(crsState.csvData.reduce((s, d) => s + d.utilized, 0) / crsState.csvData.length).toFixed(1)} GB<br>
+                        Avg Reserved: ${(crsState.csvData.reduce((s, d) => s + d.reserved, 0) / crsState.csvData.length).toFixed(1)} GB
+                    `;
+                    document.getElementById('csvPreview').style.display = 'block';
+                } catch (error) {
+                    alert(`Error parsing CSV: ${error.message}`);
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        document.getElementById('generateCrsReport').addEventListener('click', generateCRSReport);
+
     </script>
 </body>
 </html>
