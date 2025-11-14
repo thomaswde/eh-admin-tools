@@ -357,7 +357,7 @@
                 </button>
 
                 <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="crs-usage">
-                    <div class="font-semibold">CRS Usage Report</div>
+                    <div class="font-semibold">Records Report</div>
                     <div class="text-xs" style="color: var(--text-muted);">Capacity & compression analysis</div>
                 </button>
 
@@ -530,10 +530,10 @@
                 </div>
             </div>
 
-            <!-- CRS Usage Report Module -->
+            <!-- Records Report Module -->
             <div id="crs-usageModule" class="module-content" style="display: none;">
                 <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">CRS Usage Report</h2>
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Records Report</h2>
                     <p class="mt-2" style="color: var(--text-muted);">Analyze record storage capacity and compression ratios</p>
                 </div>
 
@@ -560,10 +560,11 @@
 
                     <!-- Capacity Data Input -->
                     <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Data</h3>
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Data (Optional)</h3>
+                        <p class="text-sm mb-4" style="color: var(--text-muted);">Provide capacity data to calculate compression ratios. Leave blank to view raw record bytes only.</p>
                         
                         <!-- Input Method Selection -->
-                        <div class="mb-4">
+                        <div id="capacityInputSection" class="mb-4">
                             <div class="flex gap-3 mb-4">
                                 <button class="capacity-input-btn flex-1 px-4 py-2 rounded border active" data-input="manual">
                                     Manual Entry
@@ -601,6 +602,16 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- CRS Trend Analysis Tool Link -->
+                        <div class="mt-4 pt-4" style="border-top: 1px solid var(--border-color);">
+                            <a href="https://thomaswde.github.io/crs-report/" target="_blank" rel="noopener noreferrer" class="btn-secondary w-full px-4 py-2 rounded font-semibold flex items-center justify-center gap-2" style="display: flex;">
+                                <span>Open CRS Trend Analysis Tool</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                            </a>
+                        </div>
                     </div>
                 </div>
 
@@ -624,7 +635,7 @@
                         <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--cyan);">
                             <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Compression Ratio</div>
                             <div id="compressionRatio" class="text-4xl font-bold" style="color: var(--cyan);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">1 GB stored : X GB ingested</div>
+                            <div id="compressionRatioSubtext" class="text-xs mt-2" style="color: var(--text-muted);">1 GB stored : X GB ingested</div>
                         </div>
                         <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--magenta);">
                             <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Total Record Bytes</div>
@@ -634,7 +645,7 @@
                         <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
                             <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Capacity Utilization</div>
                             <div id="capacityUtilization" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">Of reserved capacity</div>
+                            <div id="capacityUtilizationSubtext" class="text-xs mt-2" style="color: var(--text-muted);">Of reserved capacity</div>
                         </div>
                     </div>
 
@@ -642,7 +653,7 @@
                     <div class="space-y-6">
                         <!-- Stacked Bar Chart -->
                         <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Consumption by Sensor</h3>
+                            <h3 id="stackedChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Consumption by Sensor</h3>
                             <div style="position: relative; height: 150px;">
                                 <canvas id="stackedBarChart"></canvas>
                             </div>
@@ -650,7 +661,7 @@
 
                         <!-- Bar Chart -->
                         <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Utilization by Sensor</h3>
+                            <h3 id="barChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Utilization by Sensor</h3>
                             <div style="position: relative; height: 400px;">
                                 <canvas id="sensorBarChart"></canvas>
                             </div>
@@ -1806,6 +1817,41 @@
         // ExtraHop brand colors for charts
         const EH_COLORS = ['#ec0089', '#00aaef', '#f05918', '#dae343', '#7f2854', '#261f63'];
 
+        // Update capacity input options based on selected period
+        function updateCapacityInputOptions() {
+            const isMultiDay = crsState.selectedPeriod !== 'yesterday';
+            const manualBtn = document.querySelector('.capacity-input-btn[data-input="manual"]');
+            const csvBtn = document.querySelector('.capacity-input-btn[data-input="csv"]');
+            const capacityInputSection = document.getElementById('capacityInputSection');
+            
+            if (isMultiDay) {
+                // For multi-day periods, force CSV mode and hide manual option
+                manualBtn.style.display = 'none';
+                csvBtn.classList.add('active');
+                csvBtn.style.width = '100%';
+                crsState.inputMethod = 'csv';
+                document.getElementById('manualCapacityInput').style.display = 'none';
+                document.getElementById('csvCapacityInput').style.display = 'block';
+            } else {
+                // For single day, show both options
+                manualBtn.style.display = 'flex';
+                csvBtn.style.width = '';
+                
+                // Restore previous selection or default to manual
+                if (crsState.inputMethod === 'manual') {
+                    manualBtn.classList.add('active');
+                    csvBtn.classList.remove('active');
+                    document.getElementById('manualCapacityInput').style.display = 'block';
+                    document.getElementById('csvCapacityInput').style.display = 'none';
+                } else {
+                    manualBtn.classList.remove('active');
+                    csvBtn.classList.add('active');
+                    document.getElementById('manualCapacityInput').style.display = 'none';
+                    document.getElementById('csvCapacityInput').style.display = 'block';
+                }
+            }
+        }
+
         // Helper functions
         function bytesToGB(bytes) {
             return Math.round(bytes / (1024 ** 3));
@@ -1878,8 +1924,14 @@
                 const reserved = parseFloat(document.getElementById('reservedCapacity').value);
                 const utilized = parseFloat(document.getElementById('utilizedCapacity').value);
                 
+                // Return null if neither value is provided (optional capacity data)
+                if (!reserved && !utilized) {
+                    return null;
+                }
+                
+                // If one is provided but not the other, that's an error
                 if (!reserved || !utilized) {
-                    throw new Error('Please enter both reserved and utilized capacity values');
+                    throw new Error('Please enter both reserved and utilized capacity values, or leave both blank');
                 }
                 
                 return { reserved, utilized };
@@ -1961,27 +2013,65 @@
             
             try {
                 const dateRange = getDateRange(crsState.selectedPeriod);
-                const capacityData = getCapacityData();
+                const capacityData = getCapacityData(); // Can be null
                 const applianceData = await fetchCRSData(dateRange);
                 
                 // Calculate totals
                 const totalRecordBytesGB = applianceData.reduce((sum, a) => sum + a.recordBytesGB, 0);
-                const compressionRatio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized).toFixed(2) : 'N/A';
-                const utilizationPercent = ((capacityData.utilized / capacityData.reserved) * 100).toFixed(1);
                 
-                // Calculate compressed values
-                const compressedData = applianceData.map(a => ({
-                    ...a,
-                    compressedGB: totalRecordBytesGB > 0 ? (a.recordBytesGB / compressionRatio).toFixed(2) : 0
-                }));
+                let compressionRatio = null;
+                let utilizationPercent = null;
+                let compressedData = applianceData;
+                
+                if (capacityData) {
+                    compressionRatio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized).toFixed(2) : 'N/A';
+                    utilizationPercent = ((capacityData.utilized / capacityData.reserved) * 100).toFixed(1);
+                    
+                    // Calculate compressed values
+                    compressedData = applianceData.map(a => ({
+                        ...a,
+                        compressedGB: totalRecordBytesGB > 0 ? (a.recordBytesGB / compressionRatio).toFixed(2) : 0
+                    }));
+                } else {
+                    // No capacity data - use raw record bytes
+                    compressedData = applianceData.map(a => ({
+                        ...a,
+                        compressedGB: a.recordBytesGB.toFixed(2)
+                    }));
+                }
                 
                 // Update KPIs
-                document.getElementById('compressionRatio').textContent = compressionRatio;
+                if (compressionRatio) {
+                    document.getElementById('compressionRatio').textContent = compressionRatio;
+                    document.getElementById('compressionRatioSubtext').textContent = '1 GB stored : ' + compressionRatio + ' GB ingested';
+                } else {
+                    document.getElementById('compressionRatio').textContent = 'N/A';
+                    document.getElementById('compressionRatioSubtext').textContent = 'Add capacity data to calculate';
+                }
+                
                 document.getElementById('totalRecordBytes').textContent = `${totalRecordBytesGB} GB`;
-                document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
+                
+                if (utilizationPercent) {
+                    document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
+                    document.getElementById('capacityUtilizationSubtext').textContent = 'Of reserved capacity';
+                } else {
+                    document.getElementById('capacityUtilization').textContent = 'N/A';
+                    document.getElementById('capacityUtilizationSubtext').textContent = 'Add capacity data to calculate';
+                }
+                
+                // Update chart title based on whether we have capacity data
+                const stackedChartTitle = document.getElementById('stackedChartTitle');
+                const barChartTitle = document.getElementById('barChartTitle');
+                if (capacityData) {
+                    stackedChartTitle.textContent = 'Capacity Consumption by Sensor';
+                    barChartTitle.textContent = 'Utilization by Sensor';
+                } else {
+                    stackedChartTitle.textContent = 'Record Bytes by Sensor';
+                    barChartTitle.textContent = 'Record Bytes by Sensor';
+                }
                 
                 // Render charts
-                renderStackedBarChart(compressedData, capacityData.reserved);
+                renderStackedBarChart(compressedData, capacityData ? capacityData.reserved : null);
                 renderSensorBarChart(compressedData);
                 renderDataTable(compressedData, compressionRatio);
                 
@@ -2005,7 +2095,6 @@
             }
             
             const consumed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0);
-            const remaining = Math.max(0, reservedCapacity - consumed);
             
             const datasets = data
                 .filter(d => parseFloat(d.compressedGB) > 0)
@@ -2015,11 +2104,15 @@
                     backgroundColor: EH_COLORS[i % EH_COLORS.length]
                 }));
             
-            datasets.push({
-                label: 'Remaining Capacity',
-                data: [remaining],
-                backgroundColor: '#898a8d'
-            });
+            // Only add remaining capacity if reservedCapacity is provided
+            if (reservedCapacity !== null) {
+                const remaining = Math.max(0, reservedCapacity - consumed);
+                datasets.push({
+                    label: 'Remaining Capacity',
+                    data: [remaining],
+                    backgroundColor: '#898a8d'
+                });
+            }
             
             crsState.chartInstances.stacked = new Chart(ctx, {
                 type: 'bar',
@@ -2031,7 +2124,7 @@
                     scales: {
                         x: {
                             stacked: true,
-                            title: { display: true, text: 'Capacity (GB)' }
+                            title: { display: true, text: reservedCapacity !== null ? 'Capacity (GB)' : 'Record Bytes (GB)' }
                         },
                         y: { stacked: true, display: false }
                     },
@@ -2098,6 +2191,16 @@
             const tbody = document.getElementById('crsDataTableBody');
             tbody.innerHTML = '';
             
+            // Update table header based on whether we have compression data
+            const tableHeader = document.querySelector('#crsDataTable thead tr');
+            const hasCompression = compressionRatio !== null;
+            tableHeader.innerHTML = `
+                <th>Sensor Name</th>
+                <th>Platform</th>
+                <th>Record Bytes (GB)</th>
+                ${hasCompression ? '<th>After Compression (GB)</th>' : ''}
+            `;
+            
             const sortedData = [...data].sort((a, b) => parseFloat(b.compressedGB) - parseFloat(a.compressedGB));
             
             sortedData.forEach(d => {
@@ -2106,7 +2209,7 @@
                     <td>${d.name}</td>
                     <td>${d.model}</td>
                     <td>${d.recordBytesGB}</td>
-                    <td>${d.compressedGB}</td>
+                    ${hasCompression ? `<td>${d.compressedGB}</td>` : ''}
                 `;
                 tbody.appendChild(row);
             });
@@ -2120,7 +2223,7 @@
             totalRow.innerHTML = `
                 <td colspan="2">TOTAL</td>
                 <td>${totalRecordBytes}</td>
-                <td>${totalCompressed}</td>
+                ${hasCompression ? `<td>${totalCompressed}</td>` : ''}
             `;
             tbody.appendChild(totalRow);
         }
@@ -2131,6 +2234,7 @@
                 document.querySelectorAll('.crs-period-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 crsState.selectedPeriod = btn.dataset.period;
+                updateCapacityInputOptions();
             });
         });
 
