@@ -374,19 +374,29 @@
             <div class="space-y-2" id="moduleSelection" style="display: none;">
                 <h2 class="text-lg font-semibold mb-3" style="color: var(--text-primary);">Tools</h2>
                 
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="analysis-priorities">
+                    <div class="font-semibold">Analysis Priorities</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Coming soon</div>
+                </button>
+
+                <a href="nodemap.html" target="_blank" rel="noopener noreferrer" class="module-btn w-full text-left px-4 py-3 rounded flex items-center justify-between" style="display: block; text-decoration: none;">
+                    <div>
+                        <div class="font-semibold">Appliance Node Map</div>
+                        <div class="text-xs" style="color: var(--text-muted);">Visualize topology</div>
+                    </div>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                </a>
+
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="audit-logs">
+                    <div class="font-semibold">Audit Log Analyzer</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Analyze user activity and operation trends</div>
+                </button>
+
                 <button class="module-btn active w-full text-left px-4 py-3 rounded" data-module="dashboards">
                     <div class="font-semibold">Dashboard Manager</div>
                     <div class="text-xs" style="color: var(--text-muted);">Manage ownership & sharing</div>
-                </button>
-
-                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="crs-usage">
-                    <div class="font-semibold">Records Report</div>
-                    <div class="text-xs" style="color: var(--text-muted);">Capacity & compression analysis</div>
-                </button>
-
-                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="audit-logs">
-                    <div class="font-semibold">Audit Logs</div>
-                    <div class="text-xs" style="color: var(--text-muted);">Coming soon</div>
                 </button>
 
                 <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="detections">
@@ -399,25 +409,15 @@
                     <div class="text-xs" style="color: var(--text-muted);">Coming soon</div>
                 </button>
 
-                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="analysis-priorities">
-                    <div class="font-semibold">Analysis Priorities</div>
-                    <div class="text-xs" style="color: var(--text-muted);">Coming soon</div>
-                </button>
-
                 <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="localities">
                     <div class="font-semibold">Network Localities Manager</div>
                     <div class="text-xs" style="color: var(--text-muted);">Manage network locality entries</div>
                 </button>
 
-                <a href="nodemap.html" target="_blank" rel="noopener noreferrer" class="module-btn w-full text-left px-4 py-3 rounded flex items-center justify-between" style="display: block; text-decoration: none;">
-                    <div>
-                        <div class="font-semibold">Appliance Node Map</div>
-                        <div class="text-xs" style="color: var(--text-muted);">Visualize topology</div>
-                    </div>
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                </a>
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="crs-usage">
+                    <div class="font-semibold">Records Report</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Capacity & compression analysis</div>
+                </button>
             </div>
         </aside>
 
@@ -565,9 +565,18 @@
                             <button id="loadAuditLog" class="btn-primary w-full px-4 py-3 rounded font-semibold">
                                 Load Audit Log
                             </button>
-                            <button id="exportAuditLogCsv" class="btn-secondary w-full px-4 py-3 rounded font-semibold" disabled>
-                                Export to CSV
+                            <button id="stopAuditLogLoad" class="btn-danger w-full px-4 py-3 rounded font-semibold" style="display: none;">
+                                Stop Loading
                             </button>
+                            <div id="exportAuditLogSection" style="display: none;">
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Export Operation Type</label>
+                                <select id="exportOperationType" class="w-full px-3 py-2 border rounded mb-2" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                    <option value="all">All Operations</option>
+                                </select>
+                                <button id="exportAuditLogCsv" class="btn-secondary w-full px-4 py-3 rounded font-semibold">
+                                    Export to CSV
+                                </button>
+                            </div>
                         </div>
                         <div id="auditLogLoadingStatus" class="mt-4 text-sm" style="color: var(--text-muted); display: none;">
                             <div class="flex items-center">
@@ -1523,7 +1532,7 @@
             // Update ribbon module title
             const moduleTitles = {
                 'dashboards': 'Dashboard Manager',
-                'audit-logs': 'Audit Logs',
+                'audit-logs': 'Audit Log Analyzer',
                 'detections': 'Detections',
                 'devices': 'Device Manager',
                 'analysis-priorities': 'Analysis Priorities',
@@ -1576,7 +1585,7 @@
                 sessionStorage.setItem('eh_config', JSON.stringify(config));
                 window.apiClient = api;
 
-                showStatus('Ã¢Å“â€œ Connected successfully', false);
+                showStatus('✓ Connected successfully', false);
                 document.getElementById('moduleSelection').style.display = 'block';
                 showConnectedState();
                 
@@ -2933,6 +2942,8 @@
             rawData: [],
             operations: {},
             dateRange: [],
+            actualDateRange: [], // Actual dates that have data
+            shouldStop: false,
             charts: {
                 eventTypes: null,
                 loginPerDay: null,
@@ -2950,6 +2961,7 @@
             }
 
             const loadBtn = document.getElementById('loadAuditLog');
+            const stopBtn = document.getElementById('stopAuditLogLoad');
             const loadingStatus = document.getElementById('auditLogLoadingStatus');
             const loadingText = document.getElementById('auditLogLoadingText');
             const batchSize = parseInt(document.getElementById('auditLogBatchSize').value);
@@ -2957,8 +2969,10 @@
 
             try {
                 loadBtn.disabled = true;
-                loadBtn.textContent = 'Loading...';
+                loadBtn.style.display = 'none';
+                stopBtn.style.display = 'block';
                 loadingStatus.style.display = 'block';
+                auditLogState.shouldStop = false;
                 
                 // Build date range
                 auditLogState.dateRange = [];
@@ -2978,7 +2992,7 @@
                 let hasMore = true;
                 let totalFetched = 0;
 
-                while (hasMore) {
+                while (hasMore && !auditLogState.shouldStop) {
                     loadingText.textContent = `Loading audit log entries... (${totalFetched} fetched)`;
                     
                     const batch = await window.apiClient.getAuditLog(batchSize, offset);
@@ -2998,34 +3012,50 @@
                     offset += batchSize;
                 }
 
+                if (auditLogState.shouldStop) {
+                    showAuditLogStatus(`Loading stopped by user. Loaded ${auditLogState.rawData.length} entries.`, 'warning');
+                }
+
                 loadingText.textContent = 'Processing audit log data...';
 
                 // Process the data
                 processAuditLogData(cutoffDate);
+
+                // Populate operation type dropdown
+                populateOperationTypeDropdown();
 
                 // Generate charts
                 loadingText.textContent = 'Generating charts...';
                 generateAuditLogCharts();
 
                 // Show status
-                showAuditLogStatus(`Successfully loaded ${auditLogState.rawData.length} audit log entries`, 'success');
+                if (!auditLogState.shouldStop) {
+                    showAuditLogStatus(`Successfully loaded ${auditLogState.rawData.length} audit log entries`, 'success');
+                }
                 
-                // Show charts
+                // Show charts and export
                 document.getElementById('auditLogChartsContainer').style.display = 'block';
-                document.getElementById('exportAuditLogCsv').disabled = false;
+                document.getElementById('exportAuditLogSection').style.display = 'block';
 
             } catch (error) {
                 console.error('Error loading audit log:', error);
                 showAuditLogStatus(`Error loading audit log: ${error.message}`, 'error');
             } finally {
                 loadBtn.disabled = false;
-                loadBtn.textContent = 'Load Audit Log';
+                loadBtn.style.display = 'block';
+                stopBtn.style.display = 'none';
                 loadingStatus.style.display = 'none';
             }
         }
 
+        function stopAuditLogLoad() {
+            auditLogState.shouldStop = true;
+            document.getElementById('auditLogLoadingText').textContent = 'Stopping...';
+        }
+
         function processAuditLogData(cutoffDate) {
             auditLogState.operations = {};
+            const datesWithData = new Set();
 
             for (const item of auditLogState.rawData) {
                 const entry = { ...item.body };
@@ -3038,6 +3068,9 @@
                 
                 // Filter by date range
                 if (dateStr < cutoffDate) continue;
+
+                // Track dates that have data
+                datesWithData.add(dateStr);
 
                 // Normalize operation names
                 let operation = entry.operation;
@@ -3054,6 +3087,25 @@
                 }
                 auditLogState.operations[operation].push(entry);
             }
+
+            // Build actual date range (only dates with data)
+            auditLogState.actualDateRange = Array.from(datesWithData).sort();
+        }
+
+        function populateOperationTypeDropdown() {
+            const select = document.getElementById('exportOperationType');
+            select.innerHTML = '<option value="all">All Operations</option>';
+            
+            // Sort operations alphabetically
+            const sortedOps = Object.keys(auditLogState.operations).sort();
+            
+            sortedOps.forEach(op => {
+                const count = auditLogState.operations[op].length;
+                const option = document.createElement('option');
+                option.value = op;
+                option.textContent = `${op} (${count} entries)`;
+                select.appendChild(option);
+            });
         }
 
         function generateAuditLogCharts() {
@@ -3136,7 +3188,7 @@
             const ctx = document.getElementById('chartLoginPerDay');
             
             const loginsByDay = {};
-            auditLogState.dateRange.forEach(date => {
+            auditLogState.actualDateRange.forEach(date => {
                 loginsByDay[date] = 0;
             });
 
@@ -3267,11 +3319,45 @@
                 });
             });
 
-            // Fill in missing dates with 0
-            Object.keys(userActivity).forEach(user => {
-                auditLogState.dateRange.forEach(date => {
-                    if (!userActivity[user][date]) {
-                        userActivity[user][date] = 0;
+            // Calculate total activity per user
+            const userTotals = {};
+            Object.entries(userActivity).forEach(([user, activity]) => {
+                userTotals[user] = Object.values(activity).reduce((sum, count) => sum + count, 0);
+            });
+
+            // Sort users by total activity and take top 10
+            const sortedUsers = Object.entries(userTotals)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10)
+                .map(([user]) => user);
+
+            // Aggregate remaining users into "Other"
+            const topUserActivity = {};
+            const otherActivity = {};
+            
+            Object.entries(userActivity).forEach(([user, activity]) => {
+                if (sortedUsers.includes(user)) {
+                    topUserActivity[user] = activity;
+                } else {
+                    Object.entries(activity).forEach(([date, count]) => {
+                        if (!otherActivity[date]) {
+                            otherActivity[date] = 0;
+                        }
+                        otherActivity[date] += count;
+                    });
+                }
+            });
+
+            // Add "Other" if there are users beyond top 10
+            if (Object.keys(otherActivity).length > 0) {
+                topUserActivity['Other'] = otherActivity;
+            }
+
+            // Fill in missing dates with 0 for all users
+            Object.keys(topUserActivity).forEach(user => {
+                auditLogState.actualDateRange.forEach(date => {
+                    if (!topUserActivity[user][date]) {
+                        topUserActivity[user][date] = 0;
                     }
                 });
             });
@@ -3280,8 +3366,8 @@
             const datasets = [];
             let colorIndex = 0;
             
-            Object.entries(userActivity).forEach(([user, activity]) => {
-                const data = auditLogState.dateRange.map(date => activity[date]);
+            Object.entries(topUserActivity).forEach(([user, activity]) => {
+                const data = auditLogState.actualDateRange.map(date => activity[date]);
                 
                 datasets.push({
                     label: user,
@@ -3297,7 +3383,7 @@
             auditLogState.charts.activityByUser = new Chart(ctx, {
                 type: 'bar',
                 data: {
-                    labels: auditLogState.dateRange,
+                    labels: auditLogState.actualDateRange,
                     datasets: datasets
                 },
                 options: {
@@ -3336,11 +3422,32 @@
                 return;
             }
 
+            const operationType = document.getElementById('exportOperationType').value;
+            let dataToExport = [];
+
+            if (operationType === 'all') {
+                dataToExport = auditLogState.rawData;
+            } else {
+                // Filter by operation type
+                const operationEntries = auditLogState.operations[operationType];
+                if (!operationEntries || operationEntries.length === 0) {
+                    alert(`No entries found for operation type: ${operationType}`);
+                    return;
+                }
+                
+                // Map back to raw data format
+                dataToExport = operationEntries.map(entry => ({
+                    id: entry.id,
+                    occur_time: entry.time,
+                    body: entry
+                }));
+            }
+
             // Prepare CSV data
             const headers = ['ID', 'Date/Time', 'Operation', 'User', 'Details'];
             const rows = [headers];
 
-            auditLogState.rawData.forEach(item => {
+            dataToExport.forEach(item => {
                 const entry = item.body;
                 const dateObj = new Date(item.occur_time);
                 const dateTime = formatDateTime(dateObj);
@@ -3364,15 +3471,22 @@
             const link = document.createElement('a');
             const url = URL.createObjectURL(blob);
             
+            const filename = operationType === 'all' 
+                ? `audit_log_all_${formatDate(new Date())}.csv`
+                : `audit_log_${operationType.replace(/\s+/g, '_')}_${formatDate(new Date())}.csv`;
+            
             link.setAttribute('href', url);
-            link.setAttribute('download', `audit_log_${formatDate(new Date())}.csv`);
+            link.setAttribute('download', filename);
             link.style.visibility = 'hidden';
             
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
 
-            showAuditLogStatus('CSV export completed', 'success');
+            const statusMsg = operationType === 'all' 
+                ? `CSV export completed (${dataToExport.length} entries)`
+                : `CSV export completed for ${operationType} (${dataToExport.length} entries)`;
+            showAuditLogStatus(statusMsg, 'success');
         }
 
         function showAuditLogStatus(message, type = 'success') {
@@ -3417,6 +3531,7 @@
 
         // Event listeners for Audit Log module
         document.getElementById('loadAuditLog').addEventListener('click', loadAuditLog);
+        document.getElementById('stopAuditLogLoad').addEventListener('click', stopAuditLogLoad);
         document.getElementById('exportAuditLogCsv').addEventListener('click', exportAuditLogCsv);
 
         // Event listeners for Network Localities module
