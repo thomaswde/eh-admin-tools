@@ -280,13 +280,16 @@ class ExtraHopAPI {
                 const url = `${this.baseUrl}${endpoint.startsWith('/api/v1') ? endpoint.substring(7) : endpoint}`;
                 console.log('Enterprise API request:', { url, method: options.method, endpoint });
                 
+                const headers = {
+                    'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    ...options.headers
+                };
+
                 const response = await fetch(url, {
                     method: options.method || 'GET',
-                    headers: {
-                        'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
+                    headers,
                     body: options.body
                 });
 
@@ -343,6 +346,30 @@ class ExtraHopAPI {
     }
 
     async updateDashboard(dashboardId, body) {
+        // For Enterprise connections, try method override if PATCH is blocked by CORS
+        if (this.config.type === 'enterprise') {
+            try {
+                return this.request(`/dashboards/${dashboardId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(body)
+                });
+            } catch (error) {
+                if (error.message.includes('CORS') || error.message.includes('preflight')) {
+                    console.warn('PATCH blocked by CORS, trying POST with method override...');
+                    // Try POST with X-HTTP-Method-Override header as fallback
+                    return this.request(`/dashboards/${dashboardId}`, {
+                        method: 'POST',
+                        headers: {
+                            'X-HTTP-Method-Override': 'PATCH'
+                        },
+                        body: JSON.stringify(body)
+                    });
+                }
+                throw error;
+            }
+        }
+        
+        // For 360 connections, use normal PATCH
         return this.request(`/dashboards/${dashboardId}`, {
             method: 'PATCH',
             body: JSON.stringify(body)
@@ -350,6 +377,30 @@ class ExtraHopAPI {
     }
 
     async updateDashboardSharing(dashboardId, body) {
+        // For Enterprise connections, try method override if PATCH is blocked by CORS
+        if (this.config.type === 'enterprise') {
+            try {
+                return this.request(`/dashboards/${dashboardId}/sharing`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(body)
+                });
+            } catch (error) {
+                if (error.message.includes('CORS') || error.message.includes('preflight')) {
+                    console.warn('PATCH blocked by CORS for sharing, trying POST with method override...');
+                    // Try POST with X-HTTP-Method-Override header as fallback
+                    return this.request(`/dashboards/${dashboardId}/sharing`, {
+                        method: 'POST',
+                        headers: {
+                            'X-HTTP-Method-Override': 'PATCH'
+                        },
+                        body: JSON.stringify(body)
+                    });
+                }
+                throw error;
+            }
+        }
+        
+        // For 360 connections, use normal PATCH
         return this.request(`/dashboards/${dashboardId}/sharing`, {
             method: 'PATCH',
             body: JSON.stringify(body)
