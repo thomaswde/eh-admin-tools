@@ -327,7 +327,7 @@
                         <label class="flex items-center cursor-pointer">
                             <input type="checkbox" id="useAwsProxy" checked class="mr-2">
                             <span class="text-sm" style="color: var(--text-secondary);">Use AWS Proxy</span>
-                            <span class="ml-2 text-xs" style="color: var(--text-muted);" title="The proxy allows API requests without configuring CORS on your tenant. Contact support to configure CORS if you want to make direct API calls.">Ã¢â€žÂ¹Ã¯Â¸Â</span>
+                            <span class="ml-2 text-xs" style="color: var(--text-muted);" title="The proxy allows API requests without configuring CORS on your tenant. Contact support to configure CORS if you want to make direct API calls.">ℹ️</span>
                         </label>
                         <p class="text-xs mt-1 ml-6" style="color: var(--text-muted);">Unchecking requires CORS configuration on tenant</p>
                     </div>
@@ -394,7 +394,7 @@
                     <div class="text-xs" style="color: var(--text-muted);">Analyze user activity and operation trends</div>
                 </button>
 
-                <button class="module-btn active w-full text-left px-4 py-3 rounded" data-module="dashboards">
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="dashboards">
                     <div class="font-semibold">Dashboard Manager</div>
                     <div class="text-xs" style="color: var(--text-muted);">Manage ownership & sharing</div>
                 </button>
@@ -428,33 +428,38 @@
                 <div class="max-w-2xl mx-auto text-center py-20">
                     <h2 class="text-3xl font-bold mb-4" style="color: var(--sapphire);">Welcome to ExtraHop API Tools</h2>
                     <p class="text-lg mb-8" style="color: var(--text-secondary);">
-                        Connect to your ExtraHop instance to get started with powerful API-driven admin utilities.
+                        A collection of web-based utilities for ExtraHop administrators to streamline common API-driven workflows.
                     </p>
                     <div class="space-y-4 text-left" style="color: var(--text-muted);">
                         <div class="flex items-start">
                             <svg class="w-6 h-6 mr-3 flex-shrink-0" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                             </svg>
                             <div>
-                                <strong>Bulk Dashboard Management</strong> - Change ownership, modify sharing, and delete dashboards at scale
+                                <strong>Client-Side Processing</strong> - All operations run in your browser. No data is sent to third-party servers beyond your ExtraHop instance.
                             </div>
                         </div>
                         <div class="flex items-start">
                             <svg class="w-6 h-6 mr-3 flex-shrink-0" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
                             </svg>
                             <div>
-                                <strong>Session-Based Storage</strong> - Credentials stored in browser session storage, cleared when you close the tab. For RevealX 360, credentials are transmitted through AWS Lambda proxy to reach the cloud API.
+                                <strong>Session-Based Security</strong> - API credentials are stored only in browser session storage and cleared when you close the tab.
                             </div>
                         </div>
                         <div class="flex items-start">
                             <svg class="w-6 h-6 mr-3 flex-shrink-0" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
                             </svg>
                             <div>
-                                <strong>More Coming Soon</strong> - Audit logs, detections, devices, and more utilities in development
+                                <strong>Multiple Tools Available</strong> - Access various administrative utilities from the sidebar menu after connecting to your ExtraHop instance.
                             </div>
                         </div>
+                    </div>
+                    <div class="mt-8 p-4 rounded-lg" style="background-color: var(--bg-subtle); border-left: 4px solid var(--cyan);">
+                        <p class="text-sm text-left" style="color: var(--text-secondary);">
+                            <strong>Getting Started:</strong> Configure your connection above, then select a tool from the sidebar to begin. Each tool includes instructions and controls for its specific functionality.
+                        </p>
                     </div>
                 </div>
             </div>
