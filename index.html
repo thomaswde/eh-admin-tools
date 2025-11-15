@@ -253,8 +253,11 @@
                 document.querySelectorAll('.module-btn[data-module]').forEach(btn => {
                     btn.addEventListener('click', (e) => {
                         const module = e.currentTarget.dataset.module;
+                        console.log('Module button clicked:', module, 'Connected:', window.auth.isConnected);
                         if (window.auth.isConnected) {
                             this.switchModule(module);
+                        } else {
+                            console.warn('Not connected to ExtraHop instance');
                         }
                     });
                 });
@@ -344,8 +347,17 @@
             }
 
             async switchModule(moduleKey) {
+                console.log('switchModule called:', moduleKey, 'current:', this.currentModule);
+                
+                // Don't switch if already on this module
+                if (this.currentModule === moduleKey) {
+                    console.log('Already on this module, skipping');
+                    return;
+                }
+
                 // Deactivate current module
                 if (this.currentModule && this.modules[this.currentModule]) {
+                    console.log('Deactivating current module:', this.currentModule);
                     this.modules[this.currentModule].deactivate();
                 }
 
@@ -357,6 +369,7 @@
 
                 // Activate new module
                 if (this.modules[moduleKey]) {
+                    console.log('Activating new module:', moduleKey);
                     this.currentModule = moduleKey;
                     
                     // Mark button as active
@@ -368,6 +381,7 @@
                     
                     // Activate module
                     this.modules[moduleKey].activate();
+                    console.log('Module activated successfully');
                 } else {
                     console.warn(`Module ${moduleKey} not found`);
                 }
