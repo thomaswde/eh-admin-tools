@@ -17,48 +17,37 @@ class AuditLog {
 
         const loadBtn = document.getElementById('loadAuditLog');
         const stopBtn = document.getElementById('stopAuditLogLoad');
+        const loadingStatus = document.getElementById('auditLogLoadingStatus');
+        const loadingText = document.getElementById('auditLogLoadingText');
+        const batchSize = parseInt(document.getElementById('auditLogBatchSize').value);
+        const lookbackDays = parseInt(document.getElementById('auditLogLookback').value);
         
         try {
             this.state.shouldStop = false;
+            loadBtn.disabled = true;
             loadBtn.style.display = 'none';
-            stopBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'block';
+            loadingStatus.style.display = 'block';
             
-            document.getElementById('auditLogLoading').style.display = 'block';
             document.getElementById('auditLogChartsContainer').style.display = 'none';
 
             // Clear previous data
             this.state.rawData = [];
             this.state.operations = {};
             
-            // Fetch audit log data in batches
-            await this.fetchAuditLogData();
+            // Calculate cutoff date
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - lookbackDays);
+            cutoffDate.setHours(0, 0, 0, 0);
             
-            if (!this.state.shouldStop && this.state.rawData.length > 0) {
-                this.processData();
-                this.generateCharts();
+            // Fetch audit log data in batches
+            let offset = 0;
+            let hasMore = true;
+            let totalFetched = 0;
+
+            while (hasMore && !this.state.shouldStop) {
+                loadingText.textContent = `Loading audit log entries... (${totalFetched} fetched)`;
                 
-                document.getElementById('auditLogChartsContainer').style.display = 'block';
-                document.getElementById('exportAuditLogSection').style.display = 'block';
-                
-                this.showStatus(`Loaded ${this.state.rawData.length} audit log entries`, 'success');
-            }
-
-        } catch (error) {
-            this.showStatus('Error loading audit log: ' + error.message, 'error');
-        } finally {
-            document.getElementById('auditLogLoading').style.display = 'none';
-            loadBtn.style.display = 'inline-block';
-            stopBtn.style.display = 'none';
-        }
-    }
-
-    async fetchAuditLogData() {
-        const batchSize = 1000;
-        let offset = 0;
-        let hasMore = true;
-
-        while (hasMore && !this.state.shouldStop) {
-            try {
                 const batch = await window.apiClient.getAuditLog(batchSize, offset);
                 
                 if (!batch || batch.length === 0) {
@@ -66,27 +55,51 @@ class AuditLog {
                     break;
                 }
 
-                this.state.rawData.push(...batch);
+                // Filter by date
+                for (const item of batch) {
+                    const itemDate = new Date(item.occur_time);
+                    if (itemDate >= cutoffDate) {
+                        this.state.rawData.push(item);
+                    }
+                }
+
+                totalFetched += batch.length;
                 offset += batchSize;
 
-                // Update loading status
-                document.querySelector('#auditLogLoading p').textContent = 
-                    `Loaded ${this.state.rawData.length} entries...`;
-
-                // Stop if we get fewer than expected (reached the end)
                 if (batch.length < batchSize) {
                     hasMore = false;
                 }
 
-                // Small delay to prevent overwhelming the API
-                await new Promise(resolve => setTimeout(resolve, 100));
-
-            } catch (error) {
-                console.error('Error fetching audit log batch:', error);
-                hasMore = false;
+                // Small delay to prevent overwhelming
+                await new Promise(resolve => setTimeout(resolve, 50));
             }
+
+            if (this.state.shouldStop) {
+                this.showStatus(`Loading stopped by user. Loaded ${this.state.rawData.length} entries.`, 'warning');
+            }
+
+            loadingText.textContent = 'Processing audit log data...';
+
+            // Process the data
+            this.processData();
+            this.generateCharts();
+            
+            if (!this.state.shouldStop) {
+                document.getElementById('auditLogChartsContainer').style.display = 'block';
+                document.getElementById('exportAuditLogSection').style.display = 'block';
+                this.showStatus(`Successfully loaded ${this.state.rawData.length} audit log entries`, 'success');
+            }
+
+        } catch (error) {
+            this.showStatus('Error loading audit log: ' + error.message, 'error');
+        } finally {
+            loadBtn.disabled = false;
+            loadBtn.style.display = 'block';
+            stopBtn.style.display = 'none';
+            loadingStatus.style.display = 'none';
         }
     }
+
 
     processData() {
         // Group entries by operation type
@@ -448,8 +461,7 @@ class AuditLog {
 
     stop() {
         this.state.shouldStop = true;
-        document.getElementById('loadAuditLog').style.display = 'inline-block';
-        document.getElementById('stopAuditLogLoad').style.display = 'none';
+        document.getElementById('auditLogLoadingText').textContent = 'Stopping...';
     }
 
     setupEventListeners() {

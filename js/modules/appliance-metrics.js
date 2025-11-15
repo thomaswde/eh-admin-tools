@@ -251,36 +251,84 @@ class ApplianceMetrics {
                 <!-- Time Period Selection -->
                 <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
                     <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Time Period</h3>
-                    <div class="grid grid-cols-2 gap-3">
-                        <button class="crs-period-btn px-4 py-2 border rounded" data-period="1">
-                            Last 1 Day
+                    <div class="space-y-3">
+                        <button class="crs-period-btn w-full text-left px-4 py-3 rounded border active" data-period="yesterday">
+                            <div class="font-semibold">Yesterday</div>
+                            <div class="text-xs" style="color: var(--text-muted);">Previous day's data</div>
                         </button>
-                        <button class="crs-period-btn px-4 py-2 border rounded" data-period="7">
-                            Last 7 Days
+                        <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="week">
+                            <div class="font-semibold">Last 7 Days</div>
+                            <div class="text-xs" style="color: var(--text-muted);">Weekly trend analysis</div>
                         </button>
-                        <button class="crs-period-btn px-4 py-2 border rounded" data-period="30">
-                            Last 30 Days
-                        </button>
-                        <button class="crs-period-btn px-4 py-2 border rounded" data-period="90">
-                            Last 90 Days
+                        <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="month">
+                            <div class="font-semibold">Last 30 Days</div>
+                            <div class="text-xs" style="color: var(--text-muted);">Monthly overview</div>
                         </button>
                     </div>
                 </div>
 
-                <!-- Metric Type Selection -->
+                <!-- Capacity Data Input -->
                 <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Metric Type</h3>
-                    <div class="space-y-3">
-                        <button class="capacity-input-btn w-full px-4 py-2 border rounded text-left" data-type="capacity">
-                            <div class="font-semibold">Capacity Utilization</div>
-                            <div class="text-xs" style="color: var(--text-muted);">Disk usage by appliance</div>
-                        </button>
-                        <button class="capacity-input-btn w-full px-4 py-2 border rounded text-left" data-type="records">
-                            <div class="font-semibold">Record Bytes</div>
-                            <div class="text-xs" style="color: var(--text-muted);">Data throughput by appliance</div>
-                        </button>
+                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Data (Optional)</h3>
+                    <p class="text-sm mb-4" style="color: var(--text-muted);">Provide capacity data to calculate compression ratios. Leave blank to view raw record bytes only.</p>
+                    
+                    <!-- Input Method Toggle -->
+                    <div class="mb-4">
+                        <div class="flex gap-2">
+                            <button id="manualInputBtn" class="capacity-input-btn flex-1 px-3 py-2 border rounded text-sm active">
+                                Manual Input
+                            </button>
+                            <button id="csvInputBtn" class="capacity-input-btn flex-1 px-3 py-2 border rounded text-sm">
+                                CSV Upload
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Manual Input Fields -->
+                    <div id="manualCapacityInput" class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Reserved Capacity (GB)</label>
+                            <input type="number" id="reservedCapacity" placeholder="e.g., 1500" class="w-full px-3 py-2 rounded border">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Utilized Capacity (GB)</label>
+                            <input type="number" id="utilizedCapacity" placeholder="e.g., 817" class="w-full px-3 py-2 rounded border">
+                            <p class="text-xs mt-1" style="color: var(--text-muted);">From your data lake (BigQuery/LogScale/Elastic)</p>
+                        </div>
+                    </div>
+
+                    <!-- CSV Upload Fields -->
+                    <div id="csvCapacityInput" class="space-y-3" style="display: none;">
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Upload Usage CSV</label>
+                            <input type="file" id="csvFileInput" accept=".csv" class="w-full px-3 py-2 rounded border">
+                            <p class="text-xs mt-1" style="color: var(--text-muted);">CSV with "Summary Date UTC", "Utilized", and "Reserved" columns</p>
+                        </div>
+                        <div id="csvPreview" style="display: none;">
+                            <p class="text-sm font-medium mb-2" style="color: var(--text-secondary);">Parsed Data:</p>
+                            <div class="p-3 rounded text-xs" style="background-color: var(--bg-subtle);">
+                                <div id="csvSummary"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CRS Trend Analysis Tool Link -->
+                    <div class="mt-4 pt-4" style="border-top: 1px solid var(--border-color);">
+                        <a href="https://thomaswde.github.io/crs-report/" target="_blank" rel="noopener noreferrer" class="btn-primary w-full px-4 py-2 rounded font-semibold flex items-center justify-center gap-2" style="display: flex;">
+                            <span>Open CRS Trend Analysis Tool</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                        </a>
                     </div>
                 </div>
+            </div>
+
+            <!-- Generate Report Button -->
+            <div class="mb-6">
+                <button id="generateCrsReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
+                    Generate Report
+                </button>
             </div>
 
             <!-- Loading State -->
@@ -291,22 +339,22 @@ class ApplianceMetrics {
 
             <!-- Results Section -->
             <div id="crsResults" style="display: none;">
-                <!-- Summary Stats -->
-                <div class="mb-6 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Summary</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div class="text-center">
-                            <div class="text-2xl font-bold" style="color: var(--cyan);" id="totalAppliances">-</div>
-                            <div class="text-sm" style="color: var(--text-muted);">Total Appliances</div>
-                        </div>
-                        <div class="text-center">
-                            <div class="text-2xl font-bold" style="color: var(--sapphire);" id="totalCapacity">-</div>
-                            <div class="text-sm" style="color: var(--text-muted);">Total Capacity</div>
-                        </div>
-                        <div class="text-center">
-                            <div class="text-2xl font-bold" style="color: var(--tangerine);" id="compressionRatio">-</div>
-                            <div class="text-sm" style="color: var(--text-muted);">Compression Ratio</div>
-                        </div>
+                <!-- KPI Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                    <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--cyan);">
+                        <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Compression Ratio</div>
+                        <div id="compressionRatio" class="text-4xl font-bold" style="color: var(--cyan);">-</div>
+                        <div id="compressionRatioSubtext" class="text-xs mt-2" style="color: var(--text-muted);">1 GB stored : X GB ingested</div>
+                    </div>
+                    <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--magenta);">
+                        <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Total Record Bytes</div>
+                        <div id="totalRecordBytes" class="text-4xl font-bold" style="color: var(--magenta);">-</div>
+                        <div class="text-xs mt-2" style="color: var(--text-muted);">From all EDA appliances</div>
+                    </div>
+                    <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
+                        <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Capacity Utilization</div>
+                        <div id="capacityUtilization" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
+                        <div id="capacityUtilizationSubtext" class="text-xs mt-2" style="color: var(--text-muted);">Of reserved capacity</div>
                     </div>
                 </div>
 
@@ -330,14 +378,15 @@ class ApplianceMetrics {
 
                     <!-- Data Table -->
                     <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Data</h3>
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Breakdown</h3>
                         <div class="table-container rounded-lg overflow-hidden">
-                            <table>
+                            <table id="crsDataTable">
                                 <thead>
                                     <tr>
-                                        <th>Appliance</th>
-                                        <th>Type</th>
-                                        <th>Usage (GB)</th>
+                                        <th>Sensor Name</th>
+                                        <th>Platform</th>
+                                        <th>Record Bytes (GB)</th>
+                                        <th>After Compression (GB)</th>
                                     </tr>
                                 </thead>
                                 <tbody id="crsDataTableBody">
