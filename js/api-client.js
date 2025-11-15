@@ -287,17 +287,30 @@ class ExtraHopAPI {
                 const url = `${this.baseUrl}${endpoint.startsWith('/api/v1') ? endpoint.substring(7) : endpoint}`;
                 console.log('Enterprise API request:', { url, method: options.method, endpoint });
                 
+                // For Enterprise: Tunnel PATCH/DELETE through POST to avoid CORS preflight
+                const method = options.method || 'GET';
+                let actualMethod = method;
+                let actualBody = options.body;
                 const headers = {
                     'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
                     'Content-Type': 'application/json',
                     'Accept': 'application/json',
                     ...options.headers
                 };
+                
+                // Convert PATCH/DELETE to POST with method tunneling
+                if (['PATCH', 'DELETE', 'PUT'].includes(method)) {
+                    console.log(`Tunneling ${method} through POST to avoid CORS preflight`);
+                    actualMethod = 'POST';
+                    headers['X-HTTP-Method-Override'] = method;
+                }
+                
+                console.log('Final request:', { method: actualMethod, headers, hasBody: !!actualBody });
 
                 const response = await fetch(url, {
-                    method: options.method || 'GET',
+                    method: actualMethod,
                     headers,
-                    body: options.body
+                    body: actualBody
                 });
                 
                 console.log('Enterprise response:', { 
