@@ -278,6 +278,7 @@ class ExtraHopAPI {
             } else {
                 // Enterprise: Direct API call
                 const url = `${this.baseUrl}${endpoint.startsWith('/api/v1') ? endpoint.substring(7) : endpoint}`;
+                console.log('Enterprise API request:', { url, method: options.method, endpoint });
                 
                 const response = await fetch(url, {
                     method: options.method || 'GET',
