@@ -356,32 +356,42 @@ class ExtraHopAPI {
     }
 
     async deleteDashboard(dashboardId) {
+        // For Enterprise connections, or 360 connections without proxy, use direct API call
+        if (this.config.type === 'enterprise' || this.config.useProxy === false) {
+            try {
+                await this.request(`/dashboards/${dashboardId}`, {
+                    method: 'DELETE'
+                });
+                return true;
+            } catch (error) {
+                console.error('Delete dashboard error:', error);
+                return false;
+            }
+        }
+
+        // For 360 connections with proxy enabled
         const proxyRequest = {
             deploymentType: this.config.type,
             method: 'DELETE',
-            endpoint: `/dashboards/${dashboardId}`
+            endpoint: `/api/v1/dashboards/${dashboardId}`,
+            tenant: this.config.tenant,
+            accessToken: this.accessToken
         };
 
-        if (this.config.type === '360') {
-            proxyRequest.tenant = this.config.tenant;
-            proxyRequest.accessToken = this.accessToken;
-        } else {
-            proxyRequest.host = this.config.host;
-            proxyRequest.apiKey = this.config.apiKey;
+        try {
+            const response = await fetch(this.proxyUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(proxyRequest)
+            });
+            
+            return response.ok;
+        } catch (error) {
+            console.error('Delete dashboard proxy error:', error);
+            return false;
         }
-
-        // Need to prepend /api/v1 manually here since deleteDashboard bypasses request()
-        proxyRequest.endpoint = '/api/v1' + proxyRequest.endpoint;
-
-        const response = await fetch(this.proxyUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(proxyRequest)
-        });
-        
-        return response.ok;
     }
 
     async getUsers() {
