@@ -272,13 +272,13 @@ class ApplianceMetrics {
                     <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Data (Optional)</h3>
                     <p class="text-sm mb-4" style="color: var(--text-muted);">Provide capacity data to calculate compression ratios. Leave blank to view raw record bytes only.</p>
                     
-                    <!-- Input Method Toggle -->
-                    <div class="mb-4">
-                        <div class="flex gap-2">
-                            <button id="manualInputBtn" class="capacity-input-btn flex-1 px-3 py-2 border rounded text-sm active">
-                                Manual Input
+                    <!-- Input Method Selection -->
+                    <div id="capacityInputSection" class="mb-4">
+                        <div class="flex gap-3 mb-4">
+                            <button class="capacity-input-btn flex-1 px-4 py-2 rounded border active" data-input="manual">
+                                Manual Entry
                             </button>
-                            <button id="csvInputBtn" class="capacity-input-btn flex-1 px-3 py-2 border rounded text-sm">
+                            <button class="capacity-input-btn flex-1 px-4 py-2 rounded border" data-input="csv">
                                 CSV Upload
                             </button>
                         </div>

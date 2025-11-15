@@ -468,7 +468,7 @@ class DashboardManager {
             <!-- Change Owner Modal -->
             <div id="changeOwnerModal" class="modal">
                 <div class="modal-content">
-                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Change Dashboard Owner</h3>
+                    <h3 class="text-xl font-bold mb-4" style="color: var(--sapphire);">Change Dashboard Owner</h3>
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">New Owner</label>
@@ -476,16 +476,18 @@ class DashboardManager {
                                 <option value="">Select a user...</option>
                             </select>
                         </div>
-                        <div>
-                            <label class="flex items-center">
-                                <input type="checkbox" id="grantEditAccess" class="mr-2">
-                                <span class="text-sm" style="color: var(--text-secondary);">Grant edit access to previous owner</span>
-                            </label>
+                        <div class="flex items-center">
+                            <input type="checkbox" id="grantEditAccess" class="mr-2">
+                            <label for="grantEditAccess" class="text-sm" style="color: var(--text-secondary);">Grant previous owner edit access</label>
                         </div>
-                    </div>
-                    <div class="flex justify-end gap-3 mt-6">
-                        <button id="cancelChangeOwner" class="btn-secondary px-4 py-2 rounded">Cancel</button>
-                        <button id="confirmChangeOwner" class="btn-primary px-4 py-2 rounded">Change Owner</button>
+                        <div class="flex gap-3 mt-6">
+                            <button id="confirmChangeOwner" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
+                                Change Owner
+                            </button>
+                            <button id="cancelChangeOwner" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
+                                Cancel
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -493,24 +495,26 @@ class DashboardManager {
             <!-- Modify Sharing Modal -->
             <div id="modifySharingModal" class="modal">
                 <div class="modal-content">
-                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Modify Dashboard Sharing</h3>
+                    <h3 class="text-xl font-bold mb-4" style="color: var(--sapphire);">Modify Dashboard Sharing</h3>
                     <div class="space-y-4">
-                        <div>
-                            <label class="flex items-center">
-                                <input type="checkbox" id="shareWithAll" class="mr-2">
-                                <span class="text-sm" style="color: var(--text-secondary);">Share with all users (read-only)</span>
-                            </label>
+                        <div class="flex items-center">
+                            <input type="checkbox" id="shareWithAll" class="mr-2">
+                            <label for="shareWithAll" class="text-sm" style="color: var(--text-secondary);">Share with all users (viewer access)</label>
                         </div>
                         <div>
                             <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Additional Editors</label>
-                            <select id="additionalEditorsSelect" multiple class="w-full px-3 py-2 rounded border" style="height: 120px;">
+                            <select id="additionalEditorsSelect" multiple class="w-full px-3 py-2 rounded border" size="6">
                             </select>
                             <p class="text-xs mt-1" style="color: var(--text-muted);">Hold Ctrl/Cmd to select multiple users</p>
                         </div>
-                    </div>
-                    <div class="flex justify-end gap-3 mt-6">
-                        <button id="cancelModifySharing" class="btn-secondary px-4 py-2 rounded">Cancel</button>
-                        <button id="confirmModifySharing" class="btn-primary px-4 py-2 rounded">Update Sharing</button>
+                        <div class="flex gap-3 mt-6">
+                            <button id="confirmModifySharing" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
+                                Update Sharing
+                            </button>
+                            <button id="cancelModifySharing" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
+                                Cancel
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -518,11 +522,20 @@ class DashboardManager {
             <!-- Delete Confirmation Modal -->
             <div id="deleteConfirmModal" class="modal">
                 <div class="modal-content">
-                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Confirm Deletion</h3>
-                    <p style="color: var(--text-secondary);">Are you sure you want to delete <span id="deleteCount"></span>? This action cannot be undone.</p>
-                    <div class="flex justify-end gap-3 mt-6">
-                        <button id="cancelDelete" class="btn-secondary px-4 py-2 rounded">Cancel</button>
-                        <button id="confirmDelete" class="btn-danger px-4 py-2 rounded">Delete</button>
+                    <h3 class="text-xl font-bold mb-4" style="color: #ef4444;">Confirm Deletion</h3>
+                    <p class="mb-6" style="color: var(--text-secondary);">
+                        Are you sure you want to delete <strong id="deleteCount"></strong>?
+                    </p>
+                    <p class="mb-6 text-sm" style="color: var(--text-muted);">
+                        This action cannot be undone.
+                    </p>
+                    <div class="flex gap-3">
+                        <button id="confirmDelete" class="btn-danger flex-1 px-4 py-2 rounded font-semibold">
+                            Delete
+                        </button>
+                        <button id="cancelDelete" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
+                            Cancel
+                        </button>
                     </div>
                 </div>
             </div>
