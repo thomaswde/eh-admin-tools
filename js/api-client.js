@@ -197,6 +197,13 @@ class ExtraHopAPI {
         if (!endpoint.startsWith('/api/v1') && !endpoint.startsWith('/oauth2')) {
             endpoint = '/api/v1' + endpoint;
         }
+        
+        console.log('API Request Details:', { 
+            originalEndpoint: arguments[0], 
+            processedEndpoint: endpoint, 
+            method: options.method,
+            type: this.config.type 
+        });
 
         const makeRequest = async () => {
             if (this.config.type === '360') {
@@ -346,30 +353,6 @@ class ExtraHopAPI {
     }
 
     async updateDashboard(dashboardId, body) {
-        // For Enterprise connections, try method override if PATCH is blocked by CORS
-        if (this.config.type === 'enterprise') {
-            try {
-                return this.request(`/dashboards/${dashboardId}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify(body)
-                });
-            } catch (error) {
-                if (error.message.includes('CORS') || error.message.includes('preflight')) {
-                    console.warn('PATCH blocked by CORS, trying POST with method override...');
-                    // Try POST with X-HTTP-Method-Override header as fallback
-                    return this.request(`/dashboards/${dashboardId}`, {
-                        method: 'POST',
-                        headers: {
-                            'X-HTTP-Method-Override': 'PATCH'
-                        },
-                        body: JSON.stringify(body)
-                    });
-                }
-                throw error;
-            }
-        }
-        
-        // For 360 connections, use normal PATCH
         return this.request(`/dashboards/${dashboardId}`, {
             method: 'PATCH',
             body: JSON.stringify(body)
@@ -377,30 +360,6 @@ class ExtraHopAPI {
     }
 
     async updateDashboardSharing(dashboardId, body) {
-        // For Enterprise connections, try method override if PATCH is blocked by CORS
-        if (this.config.type === 'enterprise') {
-            try {
-                return this.request(`/dashboards/${dashboardId}/sharing`, {
-                    method: 'PATCH',
-                    body: JSON.stringify(body)
-                });
-            } catch (error) {
-                if (error.message.includes('CORS') || error.message.includes('preflight')) {
-                    console.warn('PATCH blocked by CORS for sharing, trying POST with method override...');
-                    // Try POST with X-HTTP-Method-Override header as fallback
-                    return this.request(`/dashboards/${dashboardId}/sharing`, {
-                        method: 'POST',
-                        headers: {
-                            'X-HTTP-Method-Override': 'PATCH'
-                        },
-                        body: JSON.stringify(body)
-                    });
-                }
-                throw error;
-            }
-        }
-        
-        // For 360 connections, use normal PATCH
         return this.request(`/dashboards/${dashboardId}/sharing`, {
             method: 'PATCH',
             body: JSON.stringify(body)
@@ -408,42 +367,33 @@ class ExtraHopAPI {
     }
 
     async deleteDashboard(dashboardId) {
-        // For Enterprise connections, or 360 connections without proxy, use direct API call
-        if (this.config.type === 'enterprise' || this.config.useProxy === false) {
-            try {
-                await this.request(`/dashboards/${dashboardId}`, {
-                    method: 'DELETE'
-                });
-                return true;
-            } catch (error) {
-                console.error('Delete dashboard error:', error);
-                return false;
-            }
-        }
-
-        // For 360 connections with proxy enabled
+        // Original behavior: ALWAYS use proxy for dashboard deletion (both 360 and Enterprise)
         const proxyRequest = {
             deploymentType: this.config.type,
             method: 'DELETE',
-            endpoint: `/api/v1/dashboards/${dashboardId}`,
-            tenant: this.config.tenant,
-            accessToken: this.accessToken
+            endpoint: `/dashboards/${dashboardId}`
         };
 
-        try {
-            const response = await fetch(this.proxyUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(proxyRequest)
-            });
-            
-            return response.ok;
-        } catch (error) {
-            console.error('Delete dashboard proxy error:', error);
-            return false;
+        if (this.config.type === '360') {
+            proxyRequest.tenant = this.config.tenant;
+            proxyRequest.accessToken = this.accessToken;
+        } else {
+            proxyRequest.host = this.config.host;
+            proxyRequest.apiKey = this.config.apiKey;
         }
+
+        // Need to prepend /api/v1 manually here since deleteDashboard bypasses request()
+        proxyRequest.endpoint = '/api/v1' + proxyRequest.endpoint;
+
+        const response = await fetch(this.proxyUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(proxyRequest)
+        });
+        
+        return response.ok;
     }
 
     async getUsers() {
