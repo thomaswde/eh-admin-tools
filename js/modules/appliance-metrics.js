@@ -1,100 +1,297 @@
 class ApplianceMetrics {
     constructor() {
         this.state = {
-            chartInstances: { stacked: null, bar: null },
-            appliances: [],
-            selectedPeriod: 1,
-            isCapacity: true
+            selectedPeriod: 'yesterday',
+            inputMethod: 'manual',
+            csvData: null,
+            chartInstances: {}
+        };
+        
+        // Model capacity mapping
+        this.CRS_CAPACITIES = {
+            'EDA1100V_TRACE': 20,
+            'EDA1100V': 20,
+            'EDA1200': 20,
+            'EDA4200': 100,
+            'EDA6100V_TRACE': 200,
+            'EDA6100V': 200,
+            'EDA6200': 200,
+            'EDA8200V': 500,
+            'EDA8200': 500,
+            'EDA9200': 750,
+            'EDA9300': 750,
+            'EDA10200': 1000,
+            'EDA10300': 1000
+        };
+        
+        // ExtraHop brand colors for charts
+        this.EH_COLORS = ['#ec0089', '#00aaef', '#f05918', '#dae343', '#7f2854', '#261f63'];
+    }
+
+    // Update capacity input options based on selected period
+    updateCapacityInputOptions() {
+        const isMultiDay = this.state.selectedPeriod !== 'yesterday';
+        const capacityInputSection = document.getElementById('capacityInputSection');
+        
+        if (isMultiDay) {
+            // For multi-day periods, hide the button section entirely and force CSV mode
+            capacityInputSection.style.display = 'none';
+            this.state.inputMethod = 'csv';
+            document.getElementById('manualCapacityInput').style.display = 'none';
+            document.getElementById('csvCapacityInput').style.display = 'block';
+        } else {
+            // For single day, show button section
+            capacityInputSection.style.display = 'block';
+            
+            const manualBtn = document.querySelector('.capacity-input-btn[data-input="manual"]');
+            const csvBtn = document.querySelector('.capacity-input-btn[data-input="csv"]');
+            
+            // Restore previous selection or default to manual
+            if (this.state.inputMethod === 'manual') {
+                manualBtn.classList.add('active');
+                csvBtn.classList.remove('active');
+                document.getElementById('manualCapacityInput').style.display = 'block';
+                document.getElementById('csvCapacityInput').style.display = 'none';
+            } else {
+                manualBtn.classList.remove('active');
+                csvBtn.classList.add('active');
+                document.getElementById('manualCapacityInput').style.display = 'none';
+                document.getElementById('csvCapacityInput').style.display = 'block';
+            }
+        }
+    }
+
+    bytesToGB(bytes) {
+        return Math.round(bytes / (1024 ** 3));
+    }
+
+    getDateUnixTimes(dateStr) {
+        const date = new Date(dateStr);
+        const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+        const endOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+        return {
+            from: Math.floor(startOfDay.getTime()),
+            until: Math.floor(endOfDay.getTime())
         };
     }
 
-    async loadData(dateRange) {
-        const appliances = await window.apiClient.getAppliances();
-        
-        let totalBytes = 0;
-        const applianceData = [];
-        const isCapacity = this.state.isCapacity;
-
-        const to = Math.floor(Date.now() / 1000);
-        const from = to - (dateRange * 24 * 60 * 60);
-
-        for (const appliance of appliances) {
-            let metric = isCapacity ? 'node:disk_used_bytes' : 'node:compressed_rx_bytes';
-            let totalMetric = 'appliance:system_record_bytes';
-
-            if (appliance.record_type === 'ECA' || appliance.record_type === 'ExtraHop Command Appliance') {
-                metric = isCapacity ? 'node:disk_used_bytes' : 'node:compressed_tx_bytes';
-                totalMetric = 'appliance:system_record_bytes';
-            }
-
-            const metricRequest = {
-                metric_category: 'node',
-                metric_specs: [{ name: metric }],
-                from: from * 1000,
-                until: to * 1000,
-                limit: 1,
-                node_ids: [appliance.node_id]
-            };
-
-            try {
-                const metricResponse = await window.apiClient.request('/metrics/total', {
-                    method: 'POST',
-                    body: JSON.stringify(metricRequest)
-                });
-
-                let bytesValue = 0;
-                if (metricResponse.stats && metricResponse.stats.length > 0) {
-                    bytesValue = metricResponse.stats[0].values.reduce((sum, val) => sum + val.value, 0);
-                }
-
-                applianceData.push({
-                    name: appliance.display_name,
-                    bytes: bytesValue,
-                    type: appliance.record_type
-                });
-
-                totalBytes += bytesValue;
-            } catch (error) {
-                console.error(`Failed to fetch metrics for ${appliance.display_name}:`, error);
-            }
-        }
-
-        return { applianceData, totalBytes };
+    getYesterday() {
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        return yesterday.toISOString().split('T')[0];
     }
 
-    async fetchCRSData(dateRange) {
-        if (!window.auth.isConnected) {
-            alert('Please connect to your ExtraHop instance first');
-            return;
+    getDateRange(period) {
+        const end = new Date();
+        end.setDate(end.getDate() - 1); // Yesterday
+        const start = new Date(end);
+        
+        if (period === 'week') {
+            start.setDate(start.getDate() - 6);
+        } else if (period === 'month') {
+            start.setDate(start.getDate() - 29);
         }
+        
+        return {
+            start: start.toISOString().split('T')[0],
+            end: end.toISOString().split('T')[0]
+        };
+    }
 
+    // Parse CSV data
+    parseCSV(csvText) {
+        const lines = csvText.trim().split('\n');
+        const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+        
+        // Find column indices
+        const dateIdx = headers.findIndex(h => h.includes('Date') || h.includes('date'));
+        const utilizedIdx = headers.findIndex(h => h.includes('Utilized') || h.includes('utilized'));
+        const reservedIdx = headers.findIndex(h => h.includes('Reserved') || h.includes('reserved'));
+        
+        if (dateIdx === -1 || utilizedIdx === -1 || reservedIdx === -1) {
+            throw new Error('CSV must contain "Date", "Utilized", and "Reserved" columns');
+        }
+        
+        const data = [];
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            
+            const values = line.split(',').map(v => v.replace(/"/g, '').trim());
+            data.push({
+                date: values[dateIdx],
+                utilized: parseFloat(values[utilizedIdx]),
+                reserved: parseFloat(values[reservedIdx])
+            });
+        }
+        
+        return data;
+    }
+
+    // Get capacity data based on input method
+    getCapacityData() {
+        if (this.state.inputMethod === 'manual') {
+            const reserved = parseFloat(document.getElementById('reservedCapacity').value);
+            const utilized = parseFloat(document.getElementById('utilizedCapacity').value);
+            
+            // Return null if neither value is provided (optional capacity data)
+            if (!reserved && !utilized) {
+                return null;
+            }
+            
+            // If one is provided but not the other, that's an error
+            if (!reserved || !utilized) {
+                throw new Error('Please enter both reserved and utilized capacity values, or leave both blank');
+            }
+            
+            return { reserved, utilized };
+        } else {
+            // CSV mode - capacity data is optional
+            if (!this.state.csvData || this.state.csvData.length === 0) {
+                return null; // No CSV = no capacity data, which is fine
+            }
+            
+            // Sort by date to get most recent
+            const sortedData = [...this.state.csvData].sort((a, b) => 
+                new Date(b.date) - new Date(a.date)
+            );
+            
+            // Use reserved from most recent day (may have changed over time)
+            // Use average utilized across the period
+            const avgUtilized = this.state.csvData.reduce((sum, d) => sum + d.utilized, 0) / this.state.csvData.length;
+            const mostRecentReserved = sortedData[0].reserved;
+            
+            return {
+                reserved: mostRecentReserved,
+                utilized: avgUtilized,
+                isAveraged: true // Flag to show in UI
+            };
+        }
+    }
+
+    // Fetch appliances and metrics
+    async fetchCRSData(dateRange) {
+        const appliances = await window.apiClient.getAppliances();
+        
+        // Filter for EDA discover appliances only
+        const edaAppliances = appliances.filter(a => 
+            a.platform === 'discover' && 
+            a.license_platform && 
+            a.license_platform.includes('EDA')
+        );
+        
+        const results = [];
+        
+        for (const appliance of edaAppliances) {
+            try {
+                const timeRange = this.getDateUnixTimes(dateRange.start);
+                const metricPayload = {
+                    metric_category: 'appliance',
+                    metric_specs: [{ name: 'system_record_bytes' }],
+                    from: timeRange.from,
+                    until: timeRange.until,
+                    limit: 1,
+                    appliance_ids: [appliance.id]
+                };
+                
+                const metricResponse = await window.apiClient.request('/metrics/total', {
+                    method: 'POST',
+                    body: JSON.stringify(metricPayload)
+                });
+                const recordBytes = metricResponse.stats?.[0]?.values?.[0] || 0;
+                
+                results.push({
+                    name: appliance.display_name,
+                    model: appliance.license_platform,
+                    recordBytes: recordBytes,
+                    recordBytesGB: this.bytesToGB(recordBytes),
+                    capacity: this.CRS_CAPACITIES[appliance.license_platform] || 0
+                });
+            } catch (error) {
+                console.error(`Error fetching metrics for ${appliance.display_name}:`, error);
+                results.push({
+                    name: appliance.display_name,
+                    model: appliance.license_platform,
+                    recordBytes: 0,
+                    recordBytesGB: 0,
+                    capacity: this.CRS_CAPACITIES[appliance.license_platform] || 0
+                });
+            }
+        }
+        
+        return results;
+    }
+
+    // Generate report
+    async generateCRSReport() {
         document.getElementById('crsLoading').style.display = 'block';
         document.getElementById('crsResults').style.display = 'none';
-
+        
         try {
-            const { applianceData, totalBytes } = await this.loadData(dateRange);
+            const dateRange = this.getDateRange(this.state.selectedPeriod);
+            const capacityData = this.getCapacityData(); // Can be null
+            const applianceData = await this.fetchCRSData(dateRange);
             
-            // Calculate compression ratio and render charts
-            const compressionRatio = totalBytes > 0 ? (totalBytes / 1000000).toFixed(2) : '0.00';
+            // Calculate totals
+            const totalRecordBytesGB = applianceData.reduce((sum, a) => sum + a.recordBytesGB, 0);
             
-            this.renderCharts(applianceData);
-            this.renderDataTable(applianceData, compressionRatio);
+            let compressionRatio = null;
+            let utilizationPercent = null;
+            let compressedData = applianceData;
+            
+            if (capacityData) {
+                compressionRatio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized).toFixed(2) : 'N/A';
+                utilizationPercent = ((capacityData.utilized / capacityData.reserved) * 100).toFixed(1);
+                
+                // Calculate compressed values
+                compressedData = applianceData.map(a => ({
+                    ...a,
+                    compressedGB: totalRecordBytesGB > 0 ? (a.recordBytesGB / compressionRatio).toFixed(2) : 0
+                }));
+            } else {
+                // No capacity data - show raw record bytes
+                compressedData = applianceData.map(a => ({
+                    ...a,
+                    compressedGB: a.recordBytesGB.toFixed(2)
+                }));
+            }
+            
+            // Update KPIs
+            document.getElementById('compressionRatio').textContent = compressionRatio || 'N/A';
+            document.getElementById('totalRecordBytes').textContent = totalRecordBytesGB.toFixed(1) + ' GB';
+            document.getElementById('capacityUtilization').textContent = utilizationPercent ? utilizationPercent + '%' : 'N/A';
+            
+            // Update KPI subtexts
+            if (compressionRatio) {
+                document.getElementById('compressionRatioSubtext').textContent = 
+                    capacityData && capacityData.isAveraged 
+                        ? `1 GB stored : ${compressionRatio} GB ingested (avg)` 
+                        : `1 GB stored : ${compressionRatio} GB ingested`;
+            }
+            
+            if (utilizationPercent) {
+                document.getElementById('capacityUtilizationSubtext').textContent = 
+                    capacityData && capacityData.isAveraged 
+                        ? `Of reserved capacity (avg)` 
+                        : `Of reserved capacity`;
+            }
+            
+            // Generate charts
+            this.renderStackedBarChart(compressedData, capacityData ? capacityData.reserved : null);
+            this.renderSensorBarChart(compressedData);
+            this.renderDataTable(compressedData, capacityData !== null);
             
             document.getElementById('crsLoading').style.display = 'none';
             document.getElementById('crsResults').style.display = 'block';
-
+            
         } catch (error) {
-            alert('Error fetching data: ' + error.message);
+            alert('Error generating report: ' + error.message);
             document.getElementById('crsLoading').style.display = 'none';
         }
     }
 
-    renderCharts(data) {
-        this.renderStackedBarChart(data);
-        this.renderSensorBarChart(data);
-    }
-
-    renderStackedBarChart(data) {
+    // Render stacked horizontal bar chart
+    renderStackedBarChart(data, reservedCapacity) {
         const canvas = document.getElementById('stackedBarChart');
         const ctx = canvas.getContext('2d');
         
@@ -102,40 +299,52 @@ class ApplianceMetrics {
         if (this.state.chartInstances.stacked) {
             this.state.chartInstances.stacked.destroy();
         }
-
-        const datasets = data.map((item, index) => ({
-            label: item.name,
-            data: [item.bytes],
-            backgroundColor: `hsl(${(index * 360) / data.length}, 70%, 50%)`,
-            borderColor: `hsl(${(index * 360) / data.length}, 70%, 40%)`,
-            borderWidth: 1
-        }));
-
+        
+        const consumed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0);
+        
+        const datasets = data
+            .filter(d => parseFloat(d.compressedGB) > 0)
+            .map((d, i) => ({
+                label: d.name,
+                data: [parseFloat(d.compressedGB)],
+                backgroundColor: this.EH_COLORS[i % this.EH_COLORS.length]
+            }));
+        
+        // Only add remaining capacity if reservedCapacity is provided
+        if (reservedCapacity !== null) {
+            const remaining = Math.max(0, reservedCapacity - consumed);
+            datasets.push({
+                label: 'Remaining Capacity',
+                data: [remaining],
+                backgroundColor: '#898a8d'
+            });
+        }
+        
         this.state.chartInstances.stacked = new Chart(ctx, {
             type: 'bar',
             data: { labels: ['Capacity'], datasets },
             options: {
+                indexAxis: 'y',
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    x: { stacked: true },
+                    x: {
+                        stacked: true,
+                        title: { display: true, text: reservedCapacity !== null ? 'Capacity (GB)' : 'Record Bytes (GB)' }
+                    },
                     y: { 
                         stacked: true,
-                        beginAtZero: true,
-                        ticks: {
-                            callback: function(value) {
-                                return (value / 1e9).toFixed(1) + ' GB';
-                            }
-                        }
+                        display: false
                     }
                 },
                 plugins: {
-                    legend: { position: 'top' }
+                    legend: { position: 'bottom' }
                 }
             }
         });
     }
 
+    // Render vertical bar chart
     renderSensorBarChart(data) {
         const canvas = document.getElementById('sensorBarChart');
         const ctx = canvas.getContext('2d');
@@ -143,20 +352,19 @@ class ApplianceMetrics {
         if (this.state.chartInstances.bar) {
             this.state.chartInstances.bar.destroy();
         }
-
-        const labels = data.map(item => item.name);
-        const values = data.map(item => item.bytes);
-
+        
+        const sortedData = [...data].sort((a, b) => parseFloat(b.compressedGB) - parseFloat(a.compressedGB));
+        const labels = sortedData.map(d => d.name);
+        const values = sortedData.map(d => parseFloat(d.compressedGB));
+        
         this.state.chartInstances.bar = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels,
                 datasets: [{
-                    label: this.state.isCapacity ? 'Capacity Used (GB)' : 'Record Bytes (GB)',
+                    label: 'Utilization (GB)',
                     data: values,
-                    backgroundColor: 'rgba(54, 162, 235, 0.6)',
-                    borderColor: 'rgba(54, 162, 235, 1)',
-                    borderWidth: 1
+                    backgroundColor: '#7f2854'
                 }]
             },
             options: {
@@ -165,11 +373,7 @@ class ApplianceMetrics {
                 scales: {
                     y: {
                         beginAtZero: true,
-                        ticks: {
-                            callback: function(value) {
-                                return (value / 1e9).toFixed(1) + ' GB';
-                            }
-                        }
+                        title: { display: true, text: 'Utilization (GB)' }
                     }
                 },
                 plugins: {
@@ -179,64 +383,102 @@ class ApplianceMetrics {
         });
     }
 
-    renderDataTable(data, compressionRatio) {
-        const tableBody = document.getElementById('crsDataTableBody');
-        tableBody.innerHTML = '';
-
+    // Render data table
+    renderDataTable(data, hasCompression) {
+        const tbody = document.getElementById('crsDataTableBody');
+        tbody.innerHTML = '';
+        
+        // Add column header if needed
+        const thead = document.getElementById('crsDataTable').querySelector('thead tr');
+        const existingHeaders = thead.children.length;
+        if (hasCompression && existingHeaders === 3) {
+            const th = document.createElement('th');
+            th.textContent = 'After Compression (GB)';
+            thead.appendChild(th);
+        } else if (!hasCompression && existingHeaders === 4) {
+            thead.removeChild(thead.lastElementChild);
+        }
+        
         data.forEach(item => {
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td class="px-4 py-2">${item.name}</td>
-                <td class="px-4 py-2">${item.type}</td>
-                <td class="px-4 py-2">${(item.bytes / 1e9).toFixed(2)} GB</td>
+                <td>${item.name}</td>
+                <td>${item.model}</td>
+                <td>${item.recordBytesGB}</td>
+                ${hasCompression ? `<td>${item.compressedGB}</td>` : ''}
             `;
-            tableBody.appendChild(row);
+            tbody.appendChild(row);
         });
-
-        document.getElementById('compressionRatio').textContent = compressionRatio + ' MB';
+        
+        // Add total row
+        const totalRow = document.createElement('tr');
+        totalRow.style.fontWeight = 'bold';
+        totalRow.style.borderTop = '2px solid var(--border-color)';
+        const totalRecordBytes = data.reduce((sum, d) => sum + d.recordBytesGB, 0);
+        const totalCompressed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0).toFixed(2);
+        totalRow.innerHTML = `
+            <td colspan="2">TOTAL</td>
+            <td>${totalRecordBytes}</td>
+            ${hasCompression ? `<td>${totalCompressed}</td>` : ''}
+        `;
+        tbody.appendChild(totalRow);
     }
 
     setupEventListeners() {
         // Period selection buttons
         document.querySelectorAll('.crs-period-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const period = parseInt(e.target.dataset.period);
-                this.state.selectedPeriod = period;
-                
-                // Update button states
+            btn.addEventListener('click', () => {
                 document.querySelectorAll('.crs-period-btn').forEach(b => b.classList.remove('active'));
-                e.target.classList.add('active');
-                
-                // Fetch new data
-                this.fetchCRSData(period);
+                btn.classList.add('active');
+                this.state.selectedPeriod = btn.dataset.period;
+                this.updateCapacityInputOptions();
             });
         });
 
-        // Capacity input type buttons
+        // Capacity input method buttons
         document.querySelectorAll('.capacity-input-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const isCapacity = e.target.dataset.type === 'capacity';
-                this.state.isCapacity = isCapacity;
-                
-                // Update button states
+            btn.addEventListener('click', () => {
                 document.querySelectorAll('.capacity-input-btn').forEach(b => b.classList.remove('active'));
-                e.target.classList.add('active');
+                btn.classList.add('active');
+                this.state.inputMethod = btn.dataset.input;
                 
-                // Update chart titles
-                const stackedChartTitle = document.getElementById('stackedChartTitle');
-                const barChartTitle = document.getElementById('barChartTitle');
-                if (isCapacity) {
-                    stackedChartTitle.textContent = 'Capacity Consumption by Sensor';
-                    barChartTitle.textContent = 'Utilization by Sensor';
+                if (this.state.inputMethod === 'manual') {
+                    document.getElementById('manualCapacityInput').style.display = 'block';
+                    document.getElementById('csvCapacityInput').style.display = 'none';
                 } else {
-                    stackedChartTitle.textContent = 'Record Bytes by Sensor';
-                    barChartTitle.textContent = 'Record Bytes by Sensor';
+                    document.getElementById('manualCapacityInput').style.display = 'none';
+                    document.getElementById('csvCapacityInput').style.display = 'block';
                 }
-                
-                // Fetch new data
-                this.fetchCRSData(this.state.selectedPeriod);
             });
         });
+
+        // CSV file upload
+        document.getElementById('csvFileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    this.state.csvData = this.parseCSV(event.target.result);
+                    
+                    const summary = document.getElementById('csvSummary');
+                    summary.innerHTML = `
+                        <strong>${this.state.csvData.length} records loaded</strong><br>
+                        Date range: ${this.state.csvData[this.state.csvData.length - 1].date} to ${this.state.csvData[0].date}<br>
+                        Avg Utilized: ${(this.state.csvData.reduce((s, d) => s + d.utilized, 0) / this.state.csvData.length).toFixed(1)} GB<br>
+                        Avg Reserved: ${(this.state.csvData.reduce((s, d) => s + d.reserved, 0) / this.state.csvData.length).toFixed(1)} GB
+                    `;
+                    document.getElementById('csvPreview').style.display = 'block';
+                } catch (error) {
+                    alert(`Error parsing CSV: ${error.message}`);
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        // Generate report button
+        document.getElementById('generateCrsReport').addEventListener('click', () => this.generateCRSReport());
     }
 
     getTemplate() {
@@ -386,7 +628,6 @@ class ApplianceMetrics {
                                         <th>Sensor Name</th>
                                         <th>Platform</th>
                                         <th>Record Bytes (GB)</th>
-                                        <th>After Compression (GB)</th>
                                     </tr>
                                 </thead>
                                 <tbody id="crsDataTableBody">
@@ -405,14 +646,17 @@ class ApplianceMetrics {
         this.setupEventListeners();
         
         // Set module title
-        document.getElementById('ribbonModuleTitle').textContent = 'Appliance Metrics';
+        document.getElementById('ribbonModuleTitle').textContent = 'Records Report';
         
         // Set default active states
         setTimeout(() => {
-            const periodBtn = document.querySelector('.crs-period-btn[data-period="1"]');
-            const capacityBtn = document.querySelector('.capacity-input-btn[data-type="capacity"]');
+            const periodBtn = document.querySelector('.crs-period-btn[data-period="yesterday"]');
+            const capacityBtn = document.querySelector('.capacity-input-btn[data-input="manual"]');
             if (periodBtn) periodBtn.classList.add('active');
             if (capacityBtn) capacityBtn.classList.add('active');
+            
+            // Initialize capacity input options
+            this.updateCapacityInputOptions();
         }, 100);
     }
 
