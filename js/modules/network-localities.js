@@ -247,6 +247,75 @@ class NetworkLocalities {
         });
     }
 
+    getTemplate() {
+        return `
+            <div class="mb-6">
+                <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Network Localities Manager</h2>
+                <p class="mt-2" style="color: var(--text-muted);">Manage network locality entries for flow monitoring</p>
+            </div>
+
+            <!-- Controls -->
+            <div class="mb-6 space-y-4">
+                <div class="flex flex-wrap gap-4">
+                    <button id="loadLocalities" class="btn-primary px-6 py-2 rounded font-semibold">
+                        Load Network Localities
+                    </button>
+                    <button id="addLocalityRow" class="btn-secondary px-6 py-2 rounded font-semibold">
+                        Add New Locality
+                    </button>
+                    <button id="saveLocalityChanges" class="btn-primary px-6 py-2 rounded font-semibold">
+                        Save Changes
+                    </button>
+                </div>
+
+                <!-- CSV Upload -->
+                <div class="flex flex-wrap gap-4 items-center">
+                    <label class="btn-secondary px-6 py-2 rounded font-semibold cursor-pointer">
+                        Upload CSV
+                        <input type="file" id="localityCsvInput" accept=".csv" class="hidden">
+                    </label>
+                    <span class="text-sm" style="color: var(--text-muted);">
+                        CSV format: name, description, vlan_ids, subnets
+                    </span>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div id="localitiesLoading" class="text-center py-20" style="display: none;">
+                <div class="spinner mx-auto mb-4"></div>
+                <p style="color: var(--text-muted);">Loading network localities...</p>
+            </div>
+
+            <!-- Network Localities Table -->
+            <div id="localitiesTableContainer" class="table-container rounded-lg overflow-hidden" style="display: none;">
+                <table id="localitiesTable">
+                    <thead>
+                        <tr>
+                            <th width="200">Name</th>
+                            <th width="300">Description</th>
+                            <th width="150">VLAN IDs</th>
+                            <th>Subnets</th>
+                            <th width="100">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="localitiesTableBody">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Actions -->
+            <div id="localitiesActions" class="mt-6 flex gap-3" style="display: none;">
+                <button id="addLocalityRow2" class="btn-secondary px-4 py-2 rounded">
+                    Add Row
+                </button>
+                <button id="saveLocalityChanges2" class="btn-primary px-4 py-2 rounded font-semibold">
+                    Save All Changes
+                </button>
+            </div>
+        `;
+    }
+
     activate() {
         // Setup event listeners when module is activated
         this.setupEventListeners();

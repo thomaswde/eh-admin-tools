@@ -396,6 +396,139 @@ class DashboardManager {
         document.getElementById('confirmDelete').addEventListener('click', () => this.confirmDelete());
     }
 
+    getTemplate() {
+        return `
+            <div class="mb-6">
+                <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Dashboard Manager</h2>
+                <p class="mt-2" style="color: var(--text-muted);">Manage dashboard ownership, sharing, and deletion at scale</p>
+            </div>
+
+            <!-- Controls -->
+            <div class="mb-6 space-y-4">
+                <div class="flex flex-wrap gap-4">
+                    <input type="text" id="searchDashboards" placeholder="Search dashboards..." class="flex-1 min-w-[200px] px-4 py-2 rounded border">
+                    <input type="text" id="filterOwner" placeholder="Filter by owner..." class="flex-1 min-w-[200px] px-4 py-2 rounded border">
+                    <button id="loadDashboardsBtn" class="btn-primary px-6 py-2 rounded font-semibold">
+                        Load Dashboards
+                    </button>
+                </div>
+
+                <!-- Bulk Actions -->
+                <div id="bulkActions" class="flex flex-wrap gap-3" style="display: none;">
+                    <button id="bulkChangeOwnerBtn" class="btn-secondary px-4 py-2 rounded font-semibold">
+                        Change Owner
+                    </button>
+                    <button id="bulkShareBtn" class="btn-secondary px-4 py-2 rounded font-semibold">
+                        Modify Sharing
+                    </button>
+                    <button id="bulkDeleteBtn" class="btn-danger px-4 py-2 rounded font-semibold">
+                        Delete Selected
+                    </button>
+                    <span id="selectedCount" class="px-4 py-2 font-semibold" style="color: var(--text-secondary);"></span>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div id="dashboardsLoading" class="text-center py-20" style="display: none;">
+                <div class="spinner mx-auto mb-4"></div>
+                <p style="color: var(--text-muted);">Loading dashboards...</p>
+            </div>
+
+            <!-- Dashboard Table -->
+            <div id="dashboardsTableContainer" class="table-container rounded-lg overflow-hidden" style="display: none;">
+                <table id="dashboardsTable">
+                    <thead>
+                        <tr>
+                            <th width="40">
+                                <input type="checkbox" id="selectAll">
+                            </th>
+                            <th>Dashboard Name</th>
+                            <th width="150">Owner</th>
+                            <th width="100">Shared</th>
+                            <th width="200">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dashboardsTableBody">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            <div id="paginationContainer" class="mt-6 flex justify-between items-center" style="display: none;">
+                <div style="color: var(--text-secondary);">
+                    <span id="paginationInfo"></span>
+                </div>
+                <div class="flex gap-2">
+                    <button id="prevPageBtn" class="btn-secondary px-4 py-2 rounded">Previous</button>
+                    <button id="nextPageBtn" class="btn-secondary px-4 py-2 rounded">Next</button>
+                </div>
+            </div>
+
+            <!-- Change Owner Modal -->
+            <div id="changeOwnerModal" class="modal">
+                <div class="modal-content">
+                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Change Dashboard Owner</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">New Owner</label>
+                            <select id="newOwnerSelect" class="w-full px-3 py-2 rounded border">
+                                <option value="">Select a user...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="flex items-center">
+                                <input type="checkbox" id="grantEditAccess" class="mr-2">
+                                <span class="text-sm" style="color: var(--text-secondary);">Grant edit access to previous owner</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-3 mt-6">
+                        <button id="cancelChangeOwner" class="btn-secondary px-4 py-2 rounded">Cancel</button>
+                        <button id="confirmChangeOwner" class="btn-primary px-4 py-2 rounded">Change Owner</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modify Sharing Modal -->
+            <div id="modifySharingModal" class="modal">
+                <div class="modal-content">
+                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Modify Dashboard Sharing</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="flex items-center">
+                                <input type="checkbox" id="shareWithAll" class="mr-2">
+                                <span class="text-sm" style="color: var(--text-secondary);">Share with all users (read-only)</span>
+                            </label>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Additional Editors</label>
+                            <select id="additionalEditorsSelect" multiple class="w-full px-3 py-2 rounded border" style="height: 120px;">
+                            </select>
+                            <p class="text-xs mt-1" style="color: var(--text-muted);">Hold Ctrl/Cmd to select multiple users</p>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-3 mt-6">
+                        <button id="cancelModifySharing" class="btn-secondary px-4 py-2 rounded">Cancel</button>
+                        <button id="confirmModifySharing" class="btn-primary px-4 py-2 rounded">Update Sharing</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Delete Confirmation Modal -->
+            <div id="deleteConfirmModal" class="modal">
+                <div class="modal-content">
+                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Confirm Deletion</h3>
+                    <p style="color: var(--text-secondary);">Are you sure you want to delete <span id="deleteCount"></span>? This action cannot be undone.</p>
+                    <div class="flex justify-end gap-3 mt-6">
+                        <button id="cancelDelete" class="btn-secondary px-4 py-2 rounded">Cancel</button>
+                        <button id="confirmDelete" class="btn-danger px-4 py-2 rounded">Delete</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     activate() {
         // Setup event listeners when module is activated
         this.setupEventListeners();

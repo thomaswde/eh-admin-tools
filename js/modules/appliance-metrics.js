@@ -239,6 +239,118 @@ class ApplianceMetrics {
         });
     }
 
+    getTemplate() {
+        return `
+            <div class="mb-6">
+                <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Records Report</h2>
+                <p class="mt-2" style="color: var(--text-muted);">Analyze record storage capacity and compression ratios</p>
+            </div>
+
+            <!-- Configuration Section -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <!-- Time Period Selection -->
+                <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Time Period</h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button class="crs-period-btn px-4 py-2 border rounded" data-period="1">
+                            Last 1 Day
+                        </button>
+                        <button class="crs-period-btn px-4 py-2 border rounded" data-period="7">
+                            Last 7 Days
+                        </button>
+                        <button class="crs-period-btn px-4 py-2 border rounded" data-period="30">
+                            Last 30 Days
+                        </button>
+                        <button class="crs-period-btn px-4 py-2 border rounded" data-period="90">
+                            Last 90 Days
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Metric Type Selection -->
+                <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Metric Type</h3>
+                    <div class="space-y-3">
+                        <button class="capacity-input-btn w-full px-4 py-2 border rounded text-left" data-type="capacity">
+                            <div class="font-semibold">Capacity Utilization</div>
+                            <div class="text-xs" style="color: var(--text-muted);">Disk usage by appliance</div>
+                        </button>
+                        <button class="capacity-input-btn w-full px-4 py-2 border rounded text-left" data-type="records">
+                            <div class="font-semibold">Record Bytes</div>
+                            <div class="text-xs" style="color: var(--text-muted);">Data throughput by appliance</div>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div id="crsLoading" class="text-center py-20" style="display: none;">
+                <div class="spinner mx-auto mb-4"></div>
+                <p style="color: var(--text-muted);">Fetching appliance data and calculating metrics...</p>
+            </div>
+
+            <!-- Results Section -->
+            <div id="crsResults" style="display: none;">
+                <!-- Summary Stats -->
+                <div class="mb-6 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Summary</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="text-center">
+                            <div class="text-2xl font-bold" style="color: var(--cyan);" id="totalAppliances">-</div>
+                            <div class="text-sm" style="color: var(--text-muted);">Total Appliances</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-2xl font-bold" style="color: var(--sapphire);" id="totalCapacity">-</div>
+                            <div class="text-sm" style="color: var(--text-muted);">Total Capacity</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-2xl font-bold" style="color: var(--tangerine);" id="compressionRatio">-</div>
+                            <div class="text-sm" style="color: var(--text-muted);">Compression Ratio</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts -->
+                <div class="space-y-6">
+                    <!-- Stacked Bar Chart -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 id="stackedChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Consumption by Sensor</h3>
+                        <div style="position: relative; height: 150px;">
+                            <canvas id="stackedBarChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Bar Chart -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 id="barChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Utilization by Sensor</h3>
+                        <div style="position: relative; height: 400px;">
+                            <canvas id="sensorBarChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Data Table -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Data</h3>
+                        <div class="table-container rounded-lg overflow-hidden">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Appliance</th>
+                                        <th>Type</th>
+                                        <th>Usage (GB)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="crsDataTableBody">
+                                    <!-- Populated dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     activate() {
         // Setup event listeners when module is activated
         this.setupEventListeners();
@@ -247,8 +359,12 @@ class ApplianceMetrics {
         document.getElementById('ribbonModuleTitle').textContent = 'Appliance Metrics';
         
         // Set default active states
-        document.querySelector('.crs-period-btn[data-period="1"]').classList.add('active');
-        document.querySelector('.capacity-input-btn[data-type="capacity"]').classList.add('active');
+        setTimeout(() => {
+            const periodBtn = document.querySelector('.crs-period-btn[data-period="1"]');
+            const capacityBtn = document.querySelector('.capacity-input-btn[data-type="capacity"]');
+            if (periodBtn) periodBtn.classList.add('active');
+            if (capacityBtn) capacityBtn.classList.add('active');
+        }, 100);
     }
 
     deactivate() {

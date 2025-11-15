@@ -376,16 +376,11 @@
             async loadModuleContent(moduleKey) {
                 const mainContent = document.getElementById('mainContent');
                 
-                try {
-                    const response = await fetch(`modules/${moduleKey}.html`);
-                    if (response.ok) {
-                        const html = await response.text();
-                        mainContent.innerHTML = html;
-                    } else {
-                        throw new Error('Module content not found');
-                    }
-                } catch (error) {
-                    // Fallback to inline module content
+                // Get template from module if it has one
+                if (this.modules[moduleKey] && this.modules[moduleKey].getTemplate) {
+                    mainContent.innerHTML = this.modules[moduleKey].getTemplate();
+                } else {
+                    // Fallback to basic content
                     mainContent.innerHTML = this.getModuleContentFallback(moduleKey);
                 }
             }

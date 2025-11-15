@@ -463,6 +463,114 @@ class AuditLog {
         document.getElementById('exportAuditLogCsv').addEventListener('click', () => this.exportCsv());
     }
 
+    getTemplate() {
+        return `
+            <div class="mb-6">
+                <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Audit Log Analysis</h2>
+                <p class="mt-2" style="color: var(--text-muted);">Analyze audit log entries, user activity, and operation trends</p>
+            </div>
+
+            <!-- Configuration Section -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                <!-- Settings -->
+                <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Settings</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Lookback Period (Days)</label>
+                            <input type="number" id="auditLogLookback" value="90" min="1" max="90" 
+                                class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                            <p class="text-xs mt-1" style="color: var(--text-muted);">Maximum 90 days (ExtraHop audit log retention)</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Batch Size</label>
+                            <input type="number" id="auditLogBatchSize" value="100" min="10" max="1000" 
+                                class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                            <p class="text-xs mt-1" style="color: var(--text-muted);">Number of entries to fetch per request</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                    <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Actions</h3>
+                    <div class="space-y-3">
+                        <button id="loadAuditLog" class="btn-primary w-full px-4 py-3 rounded font-semibold">
+                            Load Audit Log
+                        </button>
+                        <button id="stopAuditLogLoad" class="btn-danger w-full px-4 py-3 rounded font-semibold" style="display: none;">
+                            Stop Loading
+                        </button>
+                        <div id="exportAuditLogSection" style="display: none;">
+                            <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Export Operation Type</label>
+                            <select id="exportOperationType" class="w-full px-3 py-2 border rounded mb-2" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                <option value="all">All Operations</option>
+                            </select>
+                            <button id="exportAuditLogCsv" class="btn-secondary w-full px-4 py-3 rounded font-semibold">
+                                Export to CSV
+                            </button>
+                        </div>
+                    </div>
+                    <div id="auditLogLoadingStatus" class="mt-4 text-sm" style="color: var(--text-muted); display: none;">
+                        <div class="flex items-center">
+                            <div class="animate-spin mr-2" style="width: 16px; height: 16px; border: 2px solid var(--cyan); border-top-color: transparent; border-radius: 50%;"></div>
+                            <span id="auditLogLoadingText">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Status Display -->
+            <div id="auditLogStatus" style="display: none;" class="mb-6">
+                <div class="p-4 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                    <div class="text-sm font-semibold" style="color: var(--text-primary);" id="auditLogStatusText"></div>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div id="auditLogLoading" class="text-center py-20" style="display: none;">
+                <div class="spinner mx-auto mb-4"></div>
+                <p style="color: var(--text-muted);">Loading audit log data...</p>
+            </div>
+
+            <!-- Charts Container -->
+            <div id="auditLogChartsContainer" style="display: none;">
+                
+                <!-- Chart 1: Logs per Event Type -->
+                <div class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                    <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Logs per Event Type</h3>
+                    <div style="position: relative; height: 500px;">
+                        <canvas id="chartEventTypes"></canvas>
+                    </div>
+                </div>
+
+                <!-- Chart 2: Login Events per Day -->
+                <div id="chartLoginPerDayContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                    <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Login Events per Day (All Users)</h3>
+                    <div style="position: relative; height: 400px;">
+                        <canvas id="chartLoginPerDay"></canvas>
+                    </div>
+                </div>
+
+                <!-- Chart 3: Total Login Events by Username -->
+                <div id="chartLoginByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                    <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Total Login Events by Username</h3>
+                    <div style="position: relative; height: 500px;">
+                        <canvas id="chartLoginByUser"></canvas>
+                    </div>
+                </div>
+
+                <!-- Chart 4: All Activity per Day by User -->
+                <div id="chartActivityByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                    <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">All Activity per Day Broken Down by User</h3>
+                    <div style="position: relative; height: 500px;">
+                        <canvas id="chartActivityByUser"></canvas>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     activate() {
         // Setup event listeners when module is activated
         this.setupEventListeners();
