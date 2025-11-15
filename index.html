@@ -327,7 +327,7 @@
                         <label class="flex items-center cursor-pointer">
                             <input type="checkbox" id="useAwsProxy" checked class="mr-2">
                             <span class="text-sm" style="color: var(--text-secondary);">Use AWS Proxy</span>
-                            <span class="ml-2 text-xs" style="color: var(--text-muted);" title="The proxy allows API requests without configuring CORS on your tenant. Contact support to configure CORS if you want to make direct API calls.">â„¹ï¸</span>
+                            <span class="ml-2 text-xs" style="color: var(--text-muted);" title="The proxy allows API requests without configuring CORS on your tenant. Contact support to configure CORS if you want to make direct API calls.">Ã¢â€žÂ¹Ã¯Â¸Â</span>
                         </label>
                         <p class="text-xs mt-1 ml-6" style="color: var(--text-muted);">Unchecking requires CORS configuration on tenant</p>
                     </div>
@@ -530,10 +530,96 @@
             </div>
 
             <!-- Placeholder Modules -->
+            <!-- Audit Logs Module -->
             <div id="audit-logsModule" class="module-content" style="display: none;">
-                <div class="text-center py-20">
-                    <h2 class="text-2xl font-bold mb-4" style="color: var(--sapphire);">Audit Logs</h2>
-                    <p style="color: var(--text-muted);">This module is coming soon</p>
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Audit Log Analysis</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Analyze audit log entries, user activity, and operation trends</p>
+                </div>
+
+                <!-- Configuration Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <!-- Settings -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Settings</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Lookback Period (Days)</label>
+                                <input type="number" id="auditLogLookback" value="90" min="1" max="90" 
+                                    class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">Maximum 90 days (ExtraHop audit log retention)</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Batch Size</label>
+                                <input type="number" id="auditLogBatchSize" value="100" min="10" max="1000" 
+                                    class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">Number of entries to fetch per request</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Actions</h3>
+                        <div class="space-y-3">
+                            <button id="loadAuditLog" class="btn-primary w-full px-4 py-3 rounded font-semibold">
+                                Load Audit Log
+                            </button>
+                            <button id="exportAuditLogCsv" class="btn-secondary w-full px-4 py-3 rounded font-semibold" disabled>
+                                Export to CSV
+                            </button>
+                        </div>
+                        <div id="auditLogLoadingStatus" class="mt-4 text-sm" style="color: var(--text-muted); display: none;">
+                            <div class="flex items-center">
+                                <div class="animate-spin mr-2" style="width: 16px; height: 16px; border: 2px solid var(--cyan); border-top-color: transparent; border-radius: 50%;"></div>
+                                <span id="auditLogLoadingText">Loading...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Display -->
+                <div id="auditLogStatus" style="display: none;" class="mb-6">
+                    <div class="p-4 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <div class="text-sm font-semibold" style="color: var(--text-primary);" id="auditLogStatusText"></div>
+                    </div>
+                </div>
+
+                <!-- Charts Container -->
+                <div id="auditLogChartsContainer" style="display: none;">
+                    
+                    <!-- Chart 1: Logs per Event Type -->
+                    <div class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Logs per Event Type</h3>
+                        <div style="position: relative; height: 500px;">
+                            <canvas id="chartEventTypes"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 2: Login Events per Day -->
+                    <div id="chartLoginPerDayContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Login Events per Day (All Users)</h3>
+                        <div style="position: relative; height: 400px;">
+                            <canvas id="chartLoginPerDay"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 3: Total Login Events by Username -->
+                    <div id="chartLoginByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Total Login Events by Username</h3>
+                        <div style="position: relative; height: 500px;">
+                            <canvas id="chartLoginByUser"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 4: All Activity per Day by User -->
+                    <div id="chartActivityByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">All Activity per Day Broken Down by User</h3>
+                        <div style="position: relative; height: 500px;">
+                            <canvas id="chartActivityByUser"></canvas>
+                        </div>
+                    </div>
+
                 </div>
             </div>
 
@@ -1306,6 +1392,10 @@
             async getAppliances() {
                 return this.request('/appliances');
             }
+
+            async getAuditLog(limit = 100, offset = 0) {
+                return this.request(`/auditlog?limit=${limit}&offset=${offset}`);
+            }
         }
 
         // UI Functions
@@ -1486,7 +1576,7 @@
                 sessionStorage.setItem('eh_config', JSON.stringify(config));
                 window.apiClient = api;
 
-                showStatus('âœ“ Connected successfully', false);
+                showStatus('Ã¢Å“â€œ Connected successfully', false);
                 document.getElementById('moduleSelection').style.display = 'block';
                 showConnectedState();
                 
@@ -1497,7 +1587,7 @@
                 }, 2000);
 
             } catch (error) {
-                showStatus('âœ— ' + error.message, true);
+                showStatus('Ã¢Å“â€” ' + error.message, true);
                 connectBtn.textContent = 'Connect';
                 connectBtn.disabled = false;
             }
@@ -2837,6 +2927,497 @@
             div.textContent = text;
             return div.innerHTML;
         }
+
+        // Audit Log Analysis Module
+        const auditLogState = {
+            rawData: [],
+            operations: {},
+            dateRange: [],
+            charts: {
+                eventTypes: null,
+                loginPerDay: null,
+                loginByUser: null,
+                activityByUser: null
+            }
+        };
+
+        const ehColors = ['#7f2854', '#261f63', '#ec0089', '#00aaef', '#f05918', '#dae343'];
+
+        async function loadAuditLog() {
+            if (!state.connected) {
+                alert('Please connect to your ExtraHop instance first');
+                return;
+            }
+
+            const loadBtn = document.getElementById('loadAuditLog');
+            const loadingStatus = document.getElementById('auditLogLoadingStatus');
+            const loadingText = document.getElementById('auditLogLoadingText');
+            const batchSize = parseInt(document.getElementById('auditLogBatchSize').value);
+            const lookbackDays = parseInt(document.getElementById('auditLogLookback').value);
+
+            try {
+                loadBtn.disabled = true;
+                loadBtn.textContent = 'Loading...';
+                loadingStatus.style.display = 'block';
+                
+                // Build date range
+                auditLogState.dateRange = [];
+                const today = new Date();
+                for (let i = 0; i < lookbackDays; i++) {
+                    const date = new Date(today);
+                    date.setDate(date.getDate() - i);
+                    auditLogState.dateRange.push(formatDate(date));
+                }
+                auditLogState.dateRange.reverse();
+
+                const cutoffDate = auditLogState.dateRange[0];
+
+                // Fetch audit log in batches
+                auditLogState.rawData = [];
+                let offset = 0;
+                let hasMore = true;
+                let totalFetched = 0;
+
+                while (hasMore) {
+                    loadingText.textContent = `Loading audit log entries... (${totalFetched} fetched)`;
+                    
+                    const batch = await window.apiClient.getAuditLog(batchSize, offset);
+                    
+                    if (!batch || batch.length === 0) {
+                        hasMore = false;
+                        break;
+                    }
+
+                    auditLogState.rawData.push(...batch);
+                    totalFetched += batch.length;
+                    
+                    if (batch.length < batchSize) {
+                        hasMore = false;
+                    }
+                    
+                    offset += batchSize;
+                }
+
+                loadingText.textContent = 'Processing audit log data...';
+
+                // Process the data
+                processAuditLogData(cutoffDate);
+
+                // Generate charts
+                loadingText.textContent = 'Generating charts...';
+                generateAuditLogCharts();
+
+                // Show status
+                showAuditLogStatus(`Successfully loaded ${auditLogState.rawData.length} audit log entries`, 'success');
+                
+                // Show charts
+                document.getElementById('auditLogChartsContainer').style.display = 'block';
+                document.getElementById('exportAuditLogCsv').disabled = false;
+
+            } catch (error) {
+                console.error('Error loading audit log:', error);
+                showAuditLogStatus(`Error loading audit log: ${error.message}`, 'error');
+            } finally {
+                loadBtn.disabled = false;
+                loadBtn.textContent = 'Load Audit Log';
+                loadingStatus.style.display = 'none';
+            }
+        }
+
+        function processAuditLogData(cutoffDate) {
+            auditLogState.operations = {};
+
+            for (const item of auditLogState.rawData) {
+                const entry = { ...item.body };
+                entry.id = item.id;
+                entry.time = item.occur_time;
+                
+                const dateObj = new Date(entry.time);
+                const dateStr = formatDate(dateObj);
+                entry.datetime = formatDateTime(dateObj);
+                
+                // Filter by date range
+                if (dateStr < cutoffDate) continue;
+
+                // Normalize operation names
+                let operation = entry.operation;
+                if (operation.startsWith('Remove fngr-')) {
+                    operation = 'Remove Node';
+                } else if (operation.startsWith('Disable node')) {
+                    operation = 'Disable Node';
+                } else if (operation.startsWith('Enable node')) {
+                    operation = 'Enable Node';
+                }
+
+                if (!auditLogState.operations[operation]) {
+                    auditLogState.operations[operation] = [];
+                }
+                auditLogState.operations[operation].push(entry);
+            }
+        }
+
+        function generateAuditLogCharts() {
+            // Destroy existing charts
+            Object.keys(auditLogState.charts).forEach(key => {
+                if (auditLogState.charts[key]) {
+                    auditLogState.charts[key].destroy();
+                    auditLogState.charts[key] = null;
+                }
+            });
+
+            // Chart 1: Logs per Event Type
+            generateEventTypesChart();
+
+            // Chart 2, 3, 4: Login-specific charts (only if Login events exist)
+            if (auditLogState.operations['Login']) {
+                generateLoginPerDayChart();
+                generateLoginByUserChart();
+                document.getElementById('chartLoginPerDayContainer').style.display = 'block';
+                document.getElementById('chartLoginByUserContainer').style.display = 'block';
+            } else {
+                document.getElementById('chartLoginPerDayContainer').style.display = 'none';
+                document.getElementById('chartLoginByUserContainer').style.display = 'none';
+            }
+
+            // Chart 5: All Activity per Day by User
+            generateActivityByUserChart();
+            document.getElementById('chartActivityByUserContainer').style.display = 'block';
+        }
+
+        function generateEventTypesChart() {
+            const ctx = document.getElementById('chartEventTypes');
+            
+            // Sort operations by count
+            const sortedOps = Object.entries(auditLogState.operations)
+                .map(([name, entries]) => ({ name, count: entries.length }))
+                .sort((a, b) => a.count - b.count);
+
+            const labels = sortedOps.map(op => op.name);
+            const data = sortedOps.map(op => op.count);
+
+            auditLogState.charts.eventTypes = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Number of Log Entries',
+                        data: data,
+                        backgroundColor: ehColors[0],
+                        borderColor: ehColors[0],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        title: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Events'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateLoginPerDayChart() {
+            const ctx = document.getElementById('chartLoginPerDay');
+            
+            const loginsByDay = {};
+            auditLogState.dateRange.forEach(date => {
+                loginsByDay[date] = 0;
+            });
+
+            auditLogState.operations['Login'].forEach(log => {
+                const dateObj = new Date(log.time);
+                const dateStr = formatDate(dateObj);
+                if (dateStr in loginsByDay) {
+                    loginsByDay[dateStr]++;
+                }
+            });
+
+            const labels = Object.keys(loginsByDay);
+            const data = Object.values(loginsByDay);
+
+            auditLogState.charts.loginPerDay = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Login Events',
+                        data: data,
+                        backgroundColor: ehColors[0],
+                        borderColor: ehColors[0],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Logins'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateLoginByUserChart() {
+            const ctx = document.getElementById('chartLoginByUser');
+            
+            const loginsByUser = {};
+            auditLogState.operations['Login'].forEach(log => {
+                const user = log.user || 'unknown';
+                loginsByUser[user] = (loginsByUser[user] || 0) + 1;
+            });
+
+            // Sort by count
+            const sortedUsers = Object.entries(loginsByUser)
+                .map(([user, count]) => ({ user, count }))
+                .sort((a, b) => a.count - b.count);
+
+            const labels = sortedUsers.map(u => u.user === 'unknown' ? 'API' : u.user);
+            const data = sortedUsers.map(u => u.count);
+
+            auditLogState.charts.loginByUser = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Login Count',
+                        data: data,
+                        backgroundColor: ehColors.slice(0, data.length),
+                        borderColor: ehColors.slice(0, data.length),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Logins'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateActivityByUserChart() {
+            const ctx = document.getElementById('chartActivityByUser');
+            
+            // Build user activity by day
+            const userActivity = {};
+            
+            Object.values(auditLogState.operations).forEach(logs => {
+                logs.forEach(log => {
+                    if (!log.user) return;
+                    
+                    const user = log.user === 'unknown' ? 'API' : log.user;
+                    const dateObj = new Date(log.time);
+                    const dateStr = formatDate(dateObj);
+                    
+                    if (!userActivity[user]) {
+                        userActivity[user] = {};
+                    }
+                    
+                    if (!userActivity[user][dateStr]) {
+                        userActivity[user][dateStr] = 0;
+                    }
+                    
+                    userActivity[user][dateStr]++;
+                });
+            });
+
+            // Fill in missing dates with 0
+            Object.keys(userActivity).forEach(user => {
+                auditLogState.dateRange.forEach(date => {
+                    if (!userActivity[user][date]) {
+                        userActivity[user][date] = 0;
+                    }
+                });
+            });
+
+            // Create datasets for stacked bar chart
+            const datasets = [];
+            let colorIndex = 0;
+            
+            Object.entries(userActivity).forEach(([user, activity]) => {
+                const data = auditLogState.dateRange.map(date => activity[date]);
+                
+                datasets.push({
+                    label: user,
+                    data: data,
+                    backgroundColor: ehColors[colorIndex % ehColors.length],
+                    borderColor: ehColors[colorIndex % ehColors.length],
+                    borderWidth: 1
+                });
+                
+                colorIndex++;
+            });
+
+            auditLogState.charts.activityByUser = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: auditLogState.dateRange,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        }
+                    },
+                    scales: {
+                        x: {
+                            stacked: true,
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Events'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function exportAuditLogCsv() {
+            if (auditLogState.rawData.length === 0) {
+                alert('No audit log data to export');
+                return;
+            }
+
+            // Prepare CSV data
+            const headers = ['ID', 'Date/Time', 'Operation', 'User', 'Details'];
+            const rows = [headers];
+
+            auditLogState.rawData.forEach(item => {
+                const entry = item.body;
+                const dateObj = new Date(item.occur_time);
+                const dateTime = formatDateTime(dateObj);
+                
+                const details = JSON.stringify(entry).replace(/"/g, '""');
+                
+                rows.push([
+                    item.id,
+                    dateTime,
+                    entry.operation || '',
+                    entry.user || 'unknown',
+                    `"${details}"`
+                ]);
+            });
+
+            // Convert to CSV string
+            const csvContent = rows.map(row => row.join(',')).join('\n');
+
+            // Download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            
+            link.setAttribute('href', url);
+            link.setAttribute('download', `audit_log_${formatDate(new Date())}.csv`);
+            link.style.visibility = 'hidden';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            showAuditLogStatus('CSV export completed', 'success');
+        }
+
+        function showAuditLogStatus(message, type = 'success') {
+            const statusDiv = document.getElementById('auditLogStatus');
+            const statusText = document.getElementById('auditLogStatusText');
+            
+            statusDiv.style.display = 'block';
+            statusText.textContent = message;
+            
+            const colors = {
+                success: { bg: '#dcfce7', border: '#166534', text: '#166534' },
+                warning: { bg: '#fef3c7', border: '#92400e', text: '#92400e' },
+                error: { bg: '#fee2e2', border: '#dc2626', text: '#dc2626' }
+            };
+            
+            const color = colors[type] || colors.success;
+            statusDiv.querySelector('div').style.backgroundColor = color.bg;
+            statusDiv.querySelector('div').style.borderColor = color.border;
+            statusText.style.color = color.text;
+            
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        function formatDate(date) {
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = String(date.getFullYear()).slice(-2);
+            return `${month}-${day}-${year}`;
+        }
+
+        function formatDateTime(date) {
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = String(date.getFullYear()).slice(-2);
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return `${month}-${day}-${year} ${hours}:${minutes}:${seconds}`;
+        }
+
+        // Event listeners for Audit Log module
+        document.getElementById('loadAuditLog').addEventListener('click', loadAuditLog);
+        document.getElementById('exportAuditLogCsv').addEventListener('click', exportAuditLogCsv);
 
         // Event listeners for Network Localities module
         document.getElementById('loadLocalities').addEventListener('click', loadNetworkLocalities);
