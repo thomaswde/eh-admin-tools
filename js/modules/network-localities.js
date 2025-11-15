@@ -1,0 +1,267 @@
+class NetworkLocalities {
+    constructor() {
+        this.state = {
+            localities: [],
+            isLoading: false
+        };
+    }
+
+    async load() {
+        if (!window.auth.isConnected) {
+            alert('Please connect to your ExtraHop instance first');
+            return;
+        }
+
+        if (this.state.isLoading) return;
+
+        const btn = document.getElementById('loadLocalities');
+        const originalText = btn.textContent;
+        
+        try {
+            this.state.isLoading = true;
+            btn.textContent = 'Loading...';
+            btn.disabled = true;
+
+            const response = await window.apiClient.request('/networklocalities');
+            this.state.localities = response;
+            this.render();
+
+        } catch (error) {
+            alert('Error loading network localities: ' + error.message);
+        } finally {
+            this.state.isLoading = false;
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    render() {
+        const tbody = document.getElementById('localitiesTableBody');
+        tbody.innerHTML = '';
+
+        this.state.localities.forEach(locality => {
+            const row = this.createLocalityRow(locality);
+            tbody.appendChild(row);
+        });
+
+        this.showLocalitiesTable();
+    }
+
+    createLocalityRow(locality = null) {
+        const row = document.createElement('tr');
+        const isNew = !locality;
+        
+        if (isNew) {
+            locality = { name: '', description: '', vlan_ids: '', subnets: '' };
+        }
+
+        row.innerHTML = `
+            <td>
+                <input type="text" value="${locality.name || ''}" class="w-full px-2 py-1 border rounded" data-field="name">
+            </td>
+            <td>
+                <input type="text" value="${locality.description || ''}" class="w-full px-2 py-1 border rounded" data-field="description">
+            </td>
+            <td>
+                <input type="text" value="${locality.vlan_ids || ''}" class="w-full px-2 py-1 border rounded" data-field="vlan_ids" placeholder="1,2,3">
+            </td>
+            <td>
+                <input type="text" value="${locality.subnets || ''}" class="w-full px-2 py-1 border rounded" data-field="subnets" placeholder="192.168.1.0/24,10.0.0.0/8">
+            </td>
+            <td>
+                <button class="btn-danger px-3 py-1 rounded text-sm delete-locality-btn" data-id="${locality.id || ''}">
+                    Delete
+                </button>
+            </td>
+        `;
+
+        return row;
+    }
+
+    addRow() {
+        const tbody = document.getElementById('localitiesTableBody');
+        const newRow = this.createLocalityRow();
+        tbody.appendChild(newRow);
+    }
+
+    showLocalitiesTable() {
+        document.getElementById('localitiesLoading').style.display = 'none';
+        document.getElementById('localitiesTableContainer').style.display = 'block';
+        document.getElementById('localitiesActions').style.display = 'block';
+    }
+
+    async saveChanges() {
+        const rows = document.querySelectorAll('#localitiesTableBody tr');
+        const changes = [];
+
+        for (const row of rows) {
+            const inputs = row.querySelectorAll('input[data-field]');
+            const data = {};
+            
+            inputs.forEach(input => {
+                const field = input.getAttribute('data-field');
+                let value = input.value.trim();
+                
+                if (field === 'vlan_ids') {
+                    data[field] = value ? value.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id)) : [];
+                } else if (field === 'subnets') {
+                    data[field] = value ? value.split(',').map(subnet => subnet.trim()).filter(subnet => subnet) : [];
+                } else {
+                    data[field] = value;
+                }
+            });
+
+            if (data.name) {
+                const deleteBtn = row.querySelector('.delete-locality-btn');
+                const id = deleteBtn.getAttribute('data-id');
+                
+                if (id) {
+                    data.id = parseInt(id);
+                }
+                
+                changes.push(data);
+            }
+        }
+
+        if (changes.length === 0) {
+            alert('No valid localities to save');
+            return;
+        }
+
+        const saveBtn = document.getElementById('saveLocalityChanges');
+        const originalText = saveBtn.textContent;
+
+        try {
+            saveBtn.textContent = 'Saving...';
+            saveBtn.disabled = true;
+
+            // Delete localities that are no longer in the table
+            for (const locality of this.state.localities) {
+                if (!changes.find(c => c.id === locality.id)) {
+                    try {
+                        await window.apiClient.request(`/networklocalities/${locality.id}`, { method: 'DELETE' });
+                    } catch (error) {
+                        console.error(`Failed to delete locality ${locality.id}:`, error);
+                    }
+                }
+            }
+
+            // Create or update localities
+            for (const change of changes) {
+                try {
+                    if (change.id) {
+                        // Update existing
+                        const { id, ...updateData } = change;
+                        await window.apiClient.request(`/networklocalities/${id}`, {
+                            method: 'PATCH',
+                            body: JSON.stringify(updateData)
+                        });
+                    } else {
+                        // Create new
+                        const response = await window.apiClient.request('/networklocalities', {
+                            method: 'POST',
+                            body: JSON.stringify(change)
+                        });
+                    }
+                } catch (error) {
+                    console.error(`Failed to save locality ${change.name}:`, error);
+                }
+            }
+
+            alert('Network localities saved successfully');
+            this.load(); // Reload to get fresh data
+
+        } catch (error) {
+            alert('Error saving changes: ' + error.message);
+        } finally {
+            saveBtn.textContent = originalText;
+            saveBtn.disabled = false;
+        }
+    }
+
+    handleCsvUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const csv = e.target.result;
+                const lines = csv.split('\n');
+                const tbody = document.getElementById('localitiesTableBody');
+                
+                // Clear existing rows
+                tbody.innerHTML = '';
+
+                // Parse CSV (skip header)
+                for (let i = 1; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
+
+                    const [name, description, vlans, subnets] = line.split(',').map(field => field.trim().replace(/"/g, ''));
+                    
+                    if (name) {
+                        const locality = {
+                            name: name,
+                            description: description || '',
+                            vlan_ids: vlans || '',
+                            subnets: subnets || ''
+                        };
+                        
+                        const row = this.createLocalityRow(locality);
+                        tbody.appendChild(row);
+                    }
+                }
+
+                this.showLocalitiesTable();
+
+            } catch (error) {
+                alert('Error parsing CSV: ' + error.message);
+            }
+        };
+
+        reader.readAsText(file);
+    }
+
+    setupEventListeners() {
+        // Load button
+        document.getElementById('loadLocalities').addEventListener('click', () => this.load());
+        
+        // Add row button
+        document.getElementById('addLocalityRow').addEventListener('click', () => this.addRow());
+        
+        // Save changes button
+        document.getElementById('saveLocalityChanges').addEventListener('click', () => this.saveChanges());
+        
+        // CSV upload
+        document.getElementById('localityCsvInput').addEventListener('change', (e) => this.handleCsvUpload(e));
+        
+        // Delete button event delegation
+        document.getElementById('localitiesTableBody').addEventListener('click', (e) => {
+            if (e.target.classList.contains('delete-locality-btn')) {
+                const row = e.target.closest('tr');
+                if (confirm('Are you sure you want to delete this locality?')) {
+                    row.remove();
+                }
+            }
+        });
+    }
+
+    activate() {
+        // Setup event listeners when module is activated
+        this.setupEventListeners();
+        
+        // Set module title
+        document.getElementById('ribbonModuleTitle').textContent = 'Network Localities';
+    }
+
+    deactivate() {
+        // Clean up when switching modules
+        this.state.localities = [];
+        document.getElementById('localitiesTableContainer').style.display = 'none';
+        document.getElementById('localitiesActions').style.display = 'none';
+    }
+}
+
+// Export for global use
+window.NetworkLocalities = NetworkLocalities;
