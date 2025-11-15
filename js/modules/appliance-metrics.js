@@ -184,14 +184,15 @@ class ApplianceMetrics {
         
         for (const appliance of edaAppliances) {
             try {
-                const timeRange = this.getDateUnixTimes(dateRange.start);
+                const times = this.getDateUnixTimes(dateRange.end); // Use end date for single day query
                 const metricPayload = {
-                    metric_category: 'appliance',
-                    metric_specs: [{ name: 'system_record_bytes' }],
-                    from: timeRange.from,
-                    until: timeRange.until,
-                    limit: 1,
-                    appliance_ids: [appliance.id]
+                    cycle: 'auto',
+                    from: times.from,
+                    until: times.until,
+                    metric_category: 'capture',
+                    metric_specs: [{ name: 'record_bytes' }],
+                    object_ids: [appliance.id],
+                    object_type: 'system'
                 };
                 
                 const metricResponse = await window.apiClient.request('/metrics/total', {
