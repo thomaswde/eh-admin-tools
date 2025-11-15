@@ -299,6 +299,13 @@ class ExtraHopAPI {
                     headers,
                     body: options.body
                 });
+                
+                console.log('Enterprise response:', { 
+                    status: response.status, 
+                    statusText: response.statusText,
+                    method: options.method,
+                    url 
+                });
 
                 // Check for success status codes (2xx)
                 if (response.status < 200 || response.status >= 300) {
