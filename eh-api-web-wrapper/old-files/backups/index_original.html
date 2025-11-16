@@ -1,0 +1,3550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ExtraHop API Tools</title>
+    <link rel="icon" href="favicon.png" type="image/png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f9fafb;
+            --bg-card: #ffffff;
+            --bg-input: #ffffff;
+            --bg-hover: #f3f4f6;
+            --bg-subtle: #f3f4f6;
+            --text-primary: #261f63;
+            --text-secondary: #4b5563;
+            --text-muted: #6b7280;
+            --border-color: #e5e7eb;
+            --sapphire: #261f63;
+            --plum: #7f2854;
+            --magenta: #ec0089;
+            --cyan: #00aaef;
+            --tangerine: #f05918;
+            --lime: #dae343;
+            --ribbon-height: 60px;
+        }
+
+        .dark-theme {
+            --bg-primary: #1f1f1f;
+            --bg-secondary: #313131;
+            --bg-card: #424242;
+            --bg-input: #424242;
+            --bg-hover: #535353;
+            --bg-subtle: #424242;
+            --text-primary: #f3f4f6;
+            --text-secondary: #d1d5db;
+            --text-muted: #9ca3af;
+            --border-color: #4b5563;
+        }
+
+        body {
+            font-family: 'Source Sans 3', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            padding-top: var(--ribbon-height);
+        }
+
+        /* Fixed Top Ribbon */
+        .top-ribbon {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: var(--ribbon-height);
+            background-color: var(--bg-card);
+            border-bottom: 2px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            z-index: 100;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .ribbon-logo {
+            height: 40px;
+            width: auto;
+        }
+
+        .ribbon-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-left: 16px;
+        }
+
+        .ribbon-module-title {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--sapphire);
+        }
+
+        .content-wrapper {
+            min-height: calc(100vh - var(--ribbon-height));
+        }
+
+        aside { 
+            background-color: var(--bg-secondary); 
+            border-color: var(--border-color); 
+        }
+
+        .module-btn {
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+
+        .module-btn:hover {
+            background-color: var(--bg-hover);
+            border-left-color: var(--cyan);
+        }
+
+        .module-btn.active {
+            background-color: var(--bg-hover);
+            border-left-color: var(--cyan);
+            font-weight: 600;
+        }
+
+        .btn-primary {
+            background-color: var(--cyan);
+            color: white;
+            transition: all 0.2s;
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--bg-hover);
+        }
+
+        .btn-danger {
+            background-color: #ef4444;
+            color: white;
+            transition: all 0.2s;
+        }
+
+        .btn-danger:hover {
+            background-color: #dc2626;
+        }
+
+        input[type="text"], 
+        input[type="password"],
+        select {
+            background-color: var(--bg-input);
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+
+        input[type="checkbox"] {
+            accent-color: var(--cyan);
+        }
+
+        .table-container {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+        }
+
+        table {
+            width: 100%;
+        }
+
+        th {
+            background-color: var(--bg-subtle);
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-align: left;
+            padding: 12px;
+            border-bottom: 2px solid var(--border-color);
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        tr:hover {
+            background-color: var(--bg-hover);
+        }
+
+        .badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background-color: #dcfce7;
+            color: #166534;
+        }
+
+        .badge-warning {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .crs-period-btn, .capacity-input-btn {
+            transition: all 0.2s;
+            border-color: var(--border-color);
+            background-color: var(--bg-card);
+        }
+
+        .crs-period-btn:hover, .capacity-input-btn:hover {
+            background-color: var(--bg-hover);
+        }
+
+        .crs-period-btn.active, .capacity-input-btn.active {
+            border-color: var(--cyan);
+            background-color: var(--bg-hover);
+            font-weight: 600;
+        }
+
+        .modal-content {
+            background-color: var(--bg-card);
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .spinner {
+            border: 3px solid var(--bg-subtle);
+            border-top: 3px solid var(--cyan);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-secondary); }
+        ::-webkit-scrollbar-thumb { background: #9ca3af; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+    </style>
+</head>
+<body>
+    <!-- Fixed Top Ribbon -->
+    <div class="top-ribbon">
+        <img src="eh_logo.png" alt="ExtraHop" class="ribbon-logo">
+        <span class="ribbon-title">API Tools</span>
+        <span id="ribbonModuleTitle" class="ribbon-module-title"></span>
+    </div>
+
+    <div class="content-wrapper flex flex-col lg:flex-row min-h-screen">
+        <!-- Sidebar -->
+        <aside class="w-full lg:w-80 border-r p-6 space-y-6 lg:fixed lg:h-full lg:overflow-y-auto">
+
+            <!-- API Configuration -->
+            <div id="apiConfigSection" class="space-y-4">
+                <!-- Collapsed Connected State -->
+                <div id="connectedState" class="hidden">
+                    <div class="flex items-center justify-between p-3 rounded cursor-pointer" style="background-color: var(--bg-subtle);" onclick="toggleApiConfig()">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-2" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                            <span class="font-semibold" style="color: var(--text-primary);">Connected</span>
+                        </div>
+                        <svg id="expandIcon" class="w-5 h-5 transition-transform" style="color: var(--text-secondary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </div>
+                    <p class="text-xs mt-2 text-center" style="color: var(--text-muted);" id="connectedInfo"></p>
+                </div>
+
+                <!-- Expanded Config Form -->
+                <div id="configForm">
+                    <h2 class="text-lg font-semibold" style="color: var(--text-primary);">API Configuration</h2>
+                
+                <!-- Deployment Type -->
+                <div>
+                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Deployment Type</label>
+                    <select id="deploymentType" class="w-full px-3 py-2 rounded border">
+                        <option value="360">RevealX 360 (Cloud)</option>
+                        <option value="enterprise">RevealX Enterprise (Self-Hosted)</option>
+                    </select>
+                </div>
+
+                <!-- 360 Config -->
+                <div id="config360" class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Tenant Name</label>
+                        <input type="text" id="tenantName" placeholder="e.g., extrahop-se" class="w-full px-3 py-2 rounded border">
+                        <p class="text-xs mt-1" style="color: var(--text-muted);">From: tenant.api.cloud.extrahop.com</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API ID</label>
+                        <input type="text" id="apiId" class="w-full px-3 py-2 rounded border">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Secret</label>
+                        <input type="password" id="apiSecret" class="w-full px-3 py-2 rounded border">
+                    </div>
+                    <div class="mb-4">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="checkbox" id="useAwsProxy" checked class="mr-2">
+                            <span class="text-sm" style="color: var(--text-secondary);">Use AWS Proxy</span>
+                            <span class="ml-2 text-xs" style="color: var(--text-muted);" title="The proxy allows API requests without configuring CORS on your tenant. Contact support to configure CORS if you want to make direct API calls.">ℹ️</span>
+                        </label>
+                        <p class="text-xs mt-1 ml-6" style="color: var(--text-muted);">Unchecking requires CORS configuration on tenant</p>
+                    </div>
+                </div>
+
+                <!-- Enterprise Config -->
+                <div id="configEnterprise" class="space-y-3" style="display: none;">
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Hostname or IP</label>
+                        <input type="text" id="enterpriseHost" placeholder="e.g., extrahop.company.com" class="w-full px-3 py-2 rounded border">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Key</label>
+                        <input type="password" id="enterpriseApiKey" class="w-full px-3 py-2 rounded border">
+                    </div>
+                    <div class="mb-4 p-3 rounded" style="background-color: var(--bg-subtle);">
+                        <p class="text-xs mb-2" style="color: var(--text-muted);">
+                            <strong>Note:</strong> Web-based API requests require CORS to be configured on your RevealX Enterprise appliance.
+                        </p>
+                        <a href="https://docs.extrahop.com/current/rest-api-guide/#:~:text=Configure%20cross%2Dorigin%20resource%20sharing%20(CORS)" 
+                           target="_blank" 
+                           rel="noopener noreferrer" 
+                           class="text-xs flex items-center gap-1" 
+                           style="color: var(--cyan);">
+                            <span>Configure CORS on RevealX Enterprise</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                        </a>
+                    </div>
+                </div>
+
+                <button id="connectBtn" class="btn-primary w-full px-4 py-2 rounded font-semibold">
+                    Connect
+                </button>
+
+                <div id="connectionStatus" class="text-sm text-center" style="display: none;">
+                    <span id="statusText"></span>
+                </div>
+                </div> <!-- End configForm -->
+            </div> <!-- End apiConfigSection -->
+
+            <!-- Module Selection -->
+            <div class="space-y-2" id="moduleSelection" style="display: none;">
+                <h2 class="text-lg font-semibold mb-3" style="color: var(--text-primary);">Tools</h2>
+                
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="analysis-priorities">
+                    <div class="font-semibold">Analysis Priorities</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Coming soon</div>
+                </button>
+
+                <a href="nodemap.html" target="_blank" rel="noopener noreferrer" class="module-btn w-full text-left px-4 py-3 rounded flex items-center justify-between" style="display: block; text-decoration: none;">
+                    <div>
+                        <div class="font-semibold">Appliance Node Map</div>
+                        <div class="text-xs" style="color: var(--text-muted);">Visualize topology</div>
+                    </div>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                </a>
+
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="audit-logs">
+                    <div class="font-semibold">Audit Log Analyzer</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Analyze user activity and operation trends</div>
+                </button>
+
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="dashboards">
+                    <div class="font-semibold">Dashboard Manager</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Manage ownership & sharing</div>
+                </button>
+
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="detections">
+                    <div class="font-semibold">Detections</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Coming soon</div>
+                </button>
+
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="devices">
+                    <div class="font-semibold">Device Manager</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Coming soon</div>
+                </button>
+
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="localities">
+                    <div class="font-semibold">Network Localities Manager</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Manage network locality entries</div>
+                </button>
+
+                <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="crs-usage">
+                    <div class="font-semibold">Records Report</div>
+                    <div class="text-xs" style="color: var(--text-muted);">Capacity & compression analysis</div>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 lg:ml-80 p-6">
+            <!-- Welcome Screen -->
+            <div id="welcomeScreen">
+                <div class="max-w-2xl mx-auto text-center py-20">
+                    <h2 class="text-3xl font-bold mb-4" style="color: var(--sapphire);">Welcome to ExtraHop API Tools</h2>
+                    <p class="text-lg mb-8" style="color: var(--text-secondary);">
+                        A collection of web-based utilities for ExtraHop administrators to streamline common API-driven workflows.
+                    </p>
+                    <div class="space-y-4 text-left" style="color: var(--text-muted);">
+                        <div class="flex items-start">
+                            <svg class="w-6 h-6 mr-3 flex-shrink-0" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                            </svg>
+                            <div>
+                                <strong>Client-Side Processing</strong> - All operations run in your browser. No data is sent to third-party servers beyond your ExtraHop instance.
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <svg class="w-6 h-6 mr-3 flex-shrink-0" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                            </svg>
+                            <div>
+                                <strong>Session-Based Security</strong> - API credentials are stored only in browser session storage and cleared when you close the tab.
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <svg class="w-6 h-6 mr-3 flex-shrink-0" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
+                            </svg>
+                            <div>
+                                <strong>Multiple Tools Available</strong> - Access various administrative utilities from the sidebar menu after connecting to your ExtraHop instance.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-8 p-4 rounded-lg" style="background-color: var(--bg-subtle); border-left: 4px solid var(--cyan);">
+                        <p class="text-sm text-left" style="color: var(--text-secondary);">
+                            <strong>Getting Started:</strong> Configure your connection above, then select a tool from the sidebar to begin. Each tool includes instructions and controls for its specific functionality.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard Manager Module -->
+            <div id="dashboardsModule" class="module-content" style="display: none;">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Dashboard Manager</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Manage dashboard ownership, sharing, and deletion at scale</p>
+                </div>
+
+                <!-- Controls -->
+                <div class="mb-6 space-y-4">
+                    <div class="flex flex-wrap gap-4">
+                        <input type="text" id="searchDashboards" placeholder="Search dashboards..." class="flex-1 min-w-[200px] px-4 py-2 rounded border">
+                        <input type="text" id="filterOwner" placeholder="Filter by owner..." class="flex-1 min-w-[200px] px-4 py-2 rounded border">
+                        <button id="loadDashboardsBtn" class="btn-primary px-6 py-2 rounded font-semibold">
+                            Load Dashboards
+                        </button>
+                    </div>
+
+                    <!-- Bulk Actions -->
+                    <div id="bulkActions" class="flex flex-wrap gap-3" style="display: none;">
+                        <button id="bulkChangeOwnerBtn" class="btn-secondary px-4 py-2 rounded font-semibold">
+                            Change Owner
+                        </button>
+                        <button id="bulkShareBtn" class="btn-secondary px-4 py-2 rounded font-semibold">
+                            Modify Sharing
+                        </button>
+                        <button id="bulkDeleteBtn" class="btn-danger px-4 py-2 rounded font-semibold">
+                            Delete Selected
+                        </button>
+                        <span id="selectedCount" class="px-4 py-2 font-semibold" style="color: var(--text-secondary);"></span>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div id="dashboardsLoading" class="text-center py-20" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p style="color: var(--text-muted);">Loading dashboards...</p>
+                </div>
+
+                <!-- Dashboard Table -->
+                <div id="dashboardsTableContainer" class="table-container rounded-lg overflow-hidden" style="display: none;">
+                    <table id="dashboardsTable">
+                        <thead>
+                            <tr>
+                                <th width="40">
+                                    <input type="checkbox" id="selectAll">
+                                </th>
+                                <th>Dashboard Name</th>
+                                <th width="150">Owner</th>
+                                <th width="100">Shared</th>
+                                <th width="200">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dashboardsTableBody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div id="paginationContainer" class="mt-6 flex justify-between items-center" style="display: none;">
+                    <div style="color: var(--text-secondary);">
+                        <span id="paginationInfo"></span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="prevPageBtn" class="btn-secondary px-4 py-2 rounded">Previous</button>
+                        <button id="nextPageBtn" class="btn-secondary px-4 py-2 rounded">Next</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Placeholder Modules -->
+            <!-- Audit Logs Module -->
+            <div id="audit-logsModule" class="module-content" style="display: none;">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Audit Log Analysis</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Analyze audit log entries, user activity, and operation trends</p>
+                </div>
+
+                <!-- Configuration Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <!-- Settings -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Settings</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Lookback Period (Days)</label>
+                                <input type="number" id="auditLogLookback" value="90" min="1" max="90" 
+                                    class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">Maximum 90 days (ExtraHop audit log retention)</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Batch Size</label>
+                                <input type="number" id="auditLogBatchSize" value="100" min="10" max="1000" 
+                                    class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">Number of entries to fetch per request</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Actions</h3>
+                        <div class="space-y-3">
+                            <button id="loadAuditLog" class="btn-primary w-full px-4 py-3 rounded font-semibold">
+                                Load Audit Log
+                            </button>
+                            <button id="stopAuditLogLoad" class="btn-danger w-full px-4 py-3 rounded font-semibold" style="display: none;">
+                                Stop Loading
+                            </button>
+                            <div id="exportAuditLogSection" style="display: none;">
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Export Operation Type</label>
+                                <select id="exportOperationType" class="w-full px-3 py-2 border rounded mb-2" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                    <option value="all">All Operations</option>
+                                </select>
+                                <button id="exportAuditLogCsv" class="btn-secondary w-full px-4 py-3 rounded font-semibold">
+                                    Export to CSV
+                                </button>
+                            </div>
+                        </div>
+                        <div id="auditLogLoadingStatus" class="mt-4 text-sm" style="color: var(--text-muted); display: none;">
+                            <div class="flex items-center">
+                                <div class="animate-spin mr-2" style="width: 16px; height: 16px; border: 2px solid var(--cyan); border-top-color: transparent; border-radius: 50%;"></div>
+                                <span id="auditLogLoadingText">Loading...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Display -->
+                <div id="auditLogStatus" style="display: none;" class="mb-6">
+                    <div class="p-4 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <div class="text-sm font-semibold" style="color: var(--text-primary);" id="auditLogStatusText"></div>
+                    </div>
+                </div>
+
+                <!-- Charts Container -->
+                <div id="auditLogChartsContainer" style="display: none;">
+                    
+                    <!-- Chart 1: Logs per Event Type -->
+                    <div class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Logs per Event Type</h3>
+                        <div style="position: relative; height: 500px;">
+                            <canvas id="chartEventTypes"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 2: Login Events per Day -->
+                    <div id="chartLoginPerDayContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Login Events per Day (All Users)</h3>
+                        <div style="position: relative; height: 400px;">
+                            <canvas id="chartLoginPerDay"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 3: Total Login Events by Username -->
+                    <div id="chartLoginByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Total Login Events by Username</h3>
+                        <div style="position: relative; height: 500px;">
+                            <canvas id="chartLoginByUser"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 4: All Activity per Day by User -->
+                    <div id="chartActivityByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">All Activity per Day Broken Down by User</h3>
+                        <div style="position: relative; height: 500px;">
+                            <canvas id="chartActivityByUser"></canvas>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <div id="detectionsModule" class="module-content" style="display: none;">
+                <div class="text-center py-20">
+                    <h2 class="text-2xl font-bold mb-4" style="color: var(--sapphire);">Detections</h2>
+                    <p style="color: var(--text-muted);">This module is coming soon</p>
+                </div>
+            </div>
+
+            <div id="devicesModule" class="module-content" style="display: none;">
+                <div class="text-center py-20">
+                    <h2 class="text-2xl font-bold mb-4" style="color: var(--sapphire);">Device Manager</h2>
+                    <p style="color: var(--text-muted);">This module is coming soon</p>
+                </div>
+            </div>
+
+            <div id="analysis-prioritiesModule" class="module-content" style="display: none;">
+                <div class="text-center py-20">
+                    <h2 class="text-2xl font-bold mb-4" style="color: var(--sapphire);">Analysis Priorities</h2>
+                    <p style="color: var(--text-muted);">This module is coming soon</p>
+                </div>
+            </div>
+
+            <!-- Records Report Module -->
+            <div id="crs-usageModule" class="module-content" style="display: none;">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Records Report</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Analyze record storage capacity and compression ratios</p>
+                </div>
+
+                <!-- Configuration Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <!-- Time Period Selection -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Time Period</h3>
+                        <div class="space-y-3">
+                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border active" data-period="yesterday">
+                                <div class="font-semibold">Yesterday</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Previous day's data</div>
+                            </button>
+                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="week">
+                                <div class="font-semibold">Last 7 Days</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Weekly trend analysis</div>
+                            </button>
+                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="month">
+                                <div class="font-semibold">Last 30 Days</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Monthly overview</div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Capacity Data Input -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Data (Optional)</h3>
+                        <p class="text-sm mb-4" style="color: var(--text-muted);">Provide capacity data to calculate compression ratios. Leave blank to view raw record bytes only.</p>
+                        
+                        <!-- Input Method Selection -->
+                        <div id="capacityInputSection" class="mb-4">
+                            <div class="flex gap-3 mb-4">
+                                <button class="capacity-input-btn flex-1 px-4 py-2 rounded border active" data-input="manual">
+                                    Manual Entry
+                                </button>
+                                <button class="capacity-input-btn flex-1 px-4 py-2 rounded border" data-input="csv">
+                                    CSV Upload
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Manual Input Fields -->
+                        <div id="manualCapacityInput" class="space-y-3">
+                            <div>
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Reserved Capacity (GB)</label>
+                                <input type="number" id="reservedCapacity" placeholder="e.g., 1500" class="w-full px-3 py-2 rounded border">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Utilized Capacity (GB)</label>
+                                <input type="number" id="utilizedCapacity" placeholder="e.g., 817" class="w-full px-3 py-2 rounded border">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">From your data lake (BigQuery/LogScale/Elastic)</p>
+                            </div>
+                        </div>
+
+                        <!-- CSV Upload Fields -->
+                        <div id="csvCapacityInput" class="space-y-3" style="display: none;">
+                            <div>
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Upload Usage CSV</label>
+                                <input type="file" id="csvFileInput" accept=".csv" class="w-full px-3 py-2 rounded border">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">CSV with "Summary Date UTC", "Utilized", and "Reserved" columns</p>
+                            </div>
+                            <div id="csvPreview" style="display: none;">
+                                <p class="text-sm font-medium mb-2" style="color: var(--text-secondary);">Parsed Data:</p>
+                                <div class="p-3 rounded text-xs" style="background-color: var(--bg-subtle);">
+                                    <div id="csvSummary"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- CRS Trend Analysis Tool Link -->
+                        <div class="mt-4 pt-4" style="border-top: 1px solid var(--border-color);">
+                            <a href="https://thomaswde.github.io/crs-report/" target="_blank" rel="noopener noreferrer" class="btn-primary w-full px-4 py-2 rounded font-semibold flex items-center justify-center gap-2" style="display: flex;">
+                                <span>Open CRS Trend Analysis Tool</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Generate Report Button -->
+                <div class="mb-6">
+                    <button id="generateCrsReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
+                        Generate Report
+                    </button>
+                </div>
+
+                <!-- Loading State -->
+                <div id="crsLoading" class="text-center py-20" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p style="color: var(--text-muted);">Fetching appliance data and calculating metrics...</p>
+                </div>
+
+                <!-- Results Section -->
+                <div id="crsResults" style="display: none;">
+                    <!-- KPI Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--cyan);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Compression Ratio</div>
+                            <div id="compressionRatio" class="text-4xl font-bold" style="color: var(--cyan);">-</div>
+                            <div id="compressionRatioSubtext" class="text-xs mt-2" style="color: var(--text-muted);">1 GB stored : X GB ingested</div>
+                        </div>
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--magenta);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Total Record Bytes</div>
+                            <div id="totalRecordBytes" class="text-4xl font-bold" style="color: var(--magenta);">-</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">From all EDA appliances</div>
+                        </div>
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Capacity Utilization</div>
+                            <div id="capacityUtilization" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
+                            <div id="capacityUtilizationSubtext" class="text-xs mt-2" style="color: var(--text-muted);">Of reserved capacity</div>
+                        </div>
+                    </div>
+
+                    <!-- Charts -->
+                    <div class="space-y-6">
+                        <!-- Stacked Bar Chart -->
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 id="stackedChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Consumption by Sensor</h3>
+                            <div style="position: relative; height: 150px;">
+                                <canvas id="stackedBarChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Bar Chart -->
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 id="barChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Utilization by Sensor</h3>
+                            <div style="position: relative; height: 400px;">
+                                <canvas id="sensorBarChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Data Table -->
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Breakdown</h3>
+                            <div class="table-container rounded-lg overflow-hidden">
+                                <table id="crsDataTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Sensor Name</th>
+                                            <th>Platform</th>
+                                            <th>Record Bytes (GB)</th>
+                                            <th>After Compression (GB)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="crsDataTableBody">
+                                        <!-- Populated dynamically -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Network Localities Manager Module -->
+            <div id="localitiesModule" class="module-content" style="display: none;">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Network Localities Manager</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Manage network locality entries to designate IP addresses and CIDR blocks as internal or external</p>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex flex-wrap gap-3 mb-6">
+                    <button id="loadLocalities" class="btn-primary px-6 py-2 rounded font-semibold">
+                        Load Existing Localities
+                    </button>
+                    <button id="addLocalityRow" class="btn-secondary px-6 py-2 rounded font-semibold" style="display: none;">
+                        + Add Row
+                    </button>
+                    <button id="saveLocalityChanges" class="btn-primary px-6 py-2 rounded font-semibold" style="display: none;">
+                        Save Changes
+                    </button>
+                    <label class="btn-secondary px-6 py-2 rounded font-semibold cursor-pointer" style="display: none;" id="uploadCsvLabel">
+                        Upload CSV
+                        <input type="file" id="localityCsvInput" accept=".csv" class="hidden">
+                    </label>
+                </div>
+
+                <!-- Status Messages -->
+                <div id="localityStatus" class="mb-4" style="display: none;">
+                    <div class="p-4 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <p id="localityStatusText" class="text-sm"></p>
+                    </div>
+                </div>
+
+                <!-- Loading Indicator -->
+                <div id="localitiesLoading" class="text-center py-12" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p style="color: var(--text-muted);">Loading network localities...</p>
+                </div>
+
+                <!-- Localities Table -->
+                <div id="localitiesTable" class="table-container rounded-lg overflow-x-auto" style="display: none;">
+                    <table id="localitiesDataTable" class="w-full">
+                        <thead>
+                            <tr>
+                                <th style="width: 20%;">Network Locality Name</th>
+                                <th style="width: 30%;">IP Addresses and CIDR Blocks</th>
+                                <th style="width: 15%;">Network Locality Type</th>
+                                <th style="width: 25%;">Description</th>
+                                <th style="width: 10%;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="localitiesTableBody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Change Owner Modal -->
+    <div id="changeOwnerModal" class="modal">
+        <div class="modal-content">
+            <h3 class="text-xl font-bold mb-4" style="color: var(--sapphire);">Change Dashboard Owner</h3>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">New Owner</label>
+                    <select id="newOwnerSelect" class="w-full px-3 py-2 rounded border">
+                        <option value="">Select a user...</option>
+                    </select>
+                </div>
+                <div class="flex items-center">
+                    <input type="checkbox" id="grantEditAccess" class="mr-2">
+                    <label for="grantEditAccess" class="text-sm" style="color: var(--text-secondary);">Grant previous owner edit access</label>
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button id="confirmChangeOwner" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
+                        Change Owner
+                    </button>
+                    <button id="cancelChangeOwner" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modify Sharing Modal -->
+    <div id="modifySharingModal" class="modal">
+        <div class="modal-content">
+            <h3 class="text-xl font-bold mb-4" style="color: var(--sapphire);">Modify Dashboard Sharing</h3>
+            <div class="space-y-4">
+                <div class="flex items-center">
+                    <input type="checkbox" id="shareWithAll" class="mr-2">
+                    <label for="shareWithAll" class="text-sm" style="color: var(--text-secondary);">Share with all users (viewer access)</label>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Additional Editors</label>
+                    <select id="additionalEditorsSelect" multiple class="w-full px-3 py-2 rounded border" size="6">
+                    </select>
+                    <p class="text-xs mt-1" style="color: var(--text-muted);">Hold Ctrl/Cmd to select multiple users</p>
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button id="confirmModifySharing" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
+                        Update Sharing
+                    </button>
+                    <button id="cancelModifySharing" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteConfirmModal" class="modal">
+        <div class="modal-content">
+            <h3 class="text-xl font-bold mb-4" style="color: #ef4444;">Confirm Deletion</h3>
+            <p class="mb-6" style="color: var(--text-secondary);">
+                Are you sure you want to delete <strong id="deleteCount"></strong>?
+            </p>
+            <p class="mb-6 text-sm" style="color: var(--text-muted);">
+                This action cannot be undone.
+            </p>
+            <div class="flex gap-3">
+                <button id="confirmDelete" class="btn-danger flex-1 px-4 py-2 rounded font-semibold">
+                    Delete
+                </button>
+                <button id="cancelDelete" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Details Modal -->
+    <div id="errorModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <h3 class="text-xl font-bold mb-4" style="color: #ef4444;">Connection Error</h3>
+            <div class="mb-4">
+                <p class="font-semibold mb-2" style="color: var(--text-primary);">Error Message:</p>
+                <p id="errorMessage" class="mb-4 p-3 rounded" style="background-color: var(--bg-subtle); color: var(--text-secondary);"></p>
+            </div>
+            <div class="mb-4">
+                <button id="toggleErrorDetails" class="btn-secondary px-4 py-2 rounded font-semibold mb-3">
+                    Show Technical Details
+                </button>
+                <div id="errorDetails" style="display: none;">
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Request URL:</p>
+                        <pre id="errorUrl" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Request Headers:</p>
+                        <pre id="errorHeaders" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Request Body:</p>
+                        <pre id="errorBody" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div class="mb-3">
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Response Status:</p>
+                        <pre id="errorStatus" class="p-3 rounded text-xs" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                    <div>
+                        <p class="font-semibold mb-1 text-sm" style="color: var(--text-secondary);">Response Body:</p>
+                        <pre id="errorResponse" class="p-3 rounded text-xs overflow-x-auto" style="background-color: var(--bg-subtle); color: var(--text-muted);"></pre>
+                    </div>
+                </div>
+            </div>
+            <button id="closeErrorModal" class="btn-primary w-full px-4 py-2 rounded font-semibold">
+                Close
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Global State
+        const state = {
+            apiConfig: null,
+            connected: false,
+            currentModule: 'dashboards',
+            dashboards: [],
+            allUsers: [],
+            filteredDashboards: [],
+            selectedDashboards: new Set(),
+            currentPage: 1,
+            itemsPerPage: 50
+        };
+
+        // Configuration - Lambda proxy URL (360 only)
+        const LAMBDA_PROXY_URL = 'https://mdpg23urni.execute-api.us-east-2.amazonaws.com/default/extrahop-api-wrapper-proxy';
+
+        // API Client (hybrid: Lambda for 360, direct for Enterprise)
+        class ExtraHopAPI {
+            constructor(config) {
+                this.config = config;
+                this.proxyUrl = LAMBDA_PROXY_URL;
+                
+                // For Enterprise, set up direct API URL
+                if (config.type === 'enterprise') {
+                    this.baseUrl = `https://${config.host}/api/v1`;
+                }
+            }
+
+            async authenticate() {
+                if (this.config.type === '360') {
+                    if (this.config.useProxy === false) {
+                        // Direct 360 API call (no proxy)
+                        const authUrl = `https://${this.config.tenant}.api.cloud.extrahop.com/oauth2/token`;
+                        const authPayload = new URLSearchParams({
+                            grant_type: 'client_credentials',
+                            client_id: this.config.apiId,
+                            client_secret: this.config.apiSecret
+                        });
+
+                        try {
+                            const response = await fetch(authUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/x-www-form-urlencoded'
+                                },
+                                body: authPayload
+                            });
+
+                            if (!response.ok) {
+                                const errorData = await response.json().catch(() => ({}));
+                                throw new Error(`Authentication failed: ${response.status} - ${errorData.error_description || response.statusText}`);
+                            }
+
+                            const data = await response.json();
+                            this.accessToken = data.access_token;
+                            sessionStorage.setItem('eh_access_token', data.access_token);
+                            return true;
+                        } catch (error) {
+                            throw new Error(`Direct 360 authentication failed: ${error.message}. Ensure CORS is configured on your tenant.`);
+                        }
+                    }
+                    
+                    // 360: Use Lambda proxy for OAuth
+                    const proxyRequest = {
+                        deploymentType: '360',
+                        tenant: this.config.tenant,
+                        apiId: this.config.apiId,
+                        apiSecret: this.config.apiSecret,
+                        method: 'POST',
+                        endpoint: '/oauth2/token'
+                    };
+
+                    try {
+                        const response = await fetch(this.proxyUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(proxyRequest)
+                        });
+
+                        const responseText = await response.text();
+                        let responseData;
+                        try {
+                            responseData = JSON.parse(responseText);
+                        } catch (e) {
+                            responseData = responseText;
+                        }
+
+                        if (!response.ok) {
+                            const errorDetails = {
+                                url: this.proxyUrl,
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(proxyRequest, null, 2),
+                                status: `${response.status} ${response.statusText}`,
+                                response: responseData
+                            };
+                            
+                            let errorMessage = 'Authentication failed. ';
+                            if (response.status === 401) {
+                                errorMessage += 'Invalid API ID or Secret (401 Unauthorized).';
+                            } else if (response.status === 403) {
+                                errorMessage += 'Access forbidden (403 Forbidden). Check API permissions.';
+                            } else if (response.status === 404) {
+                                errorMessage += 'Endpoint not found (404). Check tenant name.';
+                            } else if (response.status === 400) {
+                                errorMessage += `Bad request: ${responseData.error || 'Check configuration'}`;
+                            } else {
+                                errorMessage += `Server returned ${response.status} ${response.statusText}.`;
+                            }
+
+                            showErrorModal(errorMessage, errorDetails);
+                            throw new Error(errorMessage);
+                        }
+
+                        this.accessToken = responseData.access_token;
+                        sessionStorage.setItem('eh_access_token', responseData.access_token);
+                        return true;
+                    } catch (error) {
+                        if (error.message.includes('Authentication failed')) {
+                            throw error;
+                        }
+                        const errorDetails = {
+                            url: this.proxyUrl,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(proxyRequest, null, 2),
+                            status: 'Network Error',
+                            response: error.message
+                        };
+                        const errorMessage = `Network error: ${error.message}. Check Lambda proxy URL: ${this.proxyUrl}`;
+                        showErrorModal(errorMessage, errorDetails);
+                        throw new Error(errorMessage);
+                    }
+                } else {
+                    // Enterprise: Direct API call to test connection
+                    const requestUrl = `${this.baseUrl}/extrahop`;
+                    const requestHeaders = {
+                        'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
+                        'Accept': 'application/json'
+                    };
+
+                    try {
+                        const response = await fetch(requestUrl, {
+                            headers: requestHeaders
+                        });
+
+                        const responseText = await response.text();
+                        let responseData;
+                        try {
+                            responseData = JSON.parse(responseText);
+                        } catch (e) {
+                            responseData = responseText;
+                        }
+
+                        if (!response.ok) {
+                            const errorDetails = {
+                                url: requestUrl,
+                                headers: requestHeaders,
+                                body: 'N/A',
+                                status: `${response.status} ${response.statusText}`,
+                                response: responseData
+                            };
+                            
+                            let errorMessage = 'Authentication failed. ';
+                            if (response.status === 401) {
+                                errorMessage += 'Invalid API key (401 Unauthorized).';
+                            } else if (response.status === 403) {
+                                errorMessage += 'Access forbidden (403 Forbidden). Check API key permissions.';
+                            } else if (response.status === 404) {
+                                errorMessage += 'Endpoint not found (404). Check hostname.';
+                            } else if (response.status === 400) {
+                                errorMessage += `Bad request: ${responseData.error_message || 'Check configuration'}`;
+                            } else {
+                                errorMessage += `Server returned ${response.status} ${response.statusText}.`;
+                            }
+
+                            showErrorModal(errorMessage, errorDetails);
+                            throw new Error(errorMessage);
+                        }
+
+                        return true;
+                    } catch (error) {
+                        if (error.message.includes('Authentication failed')) {
+                            throw error;
+                        }
+                        const errorDetails = {
+                            url: requestUrl,
+                            headers: requestHeaders,
+                            body: 'N/A',
+                            status: 'Network Error',
+                            response: error.message
+                        };
+                        
+                        let errorMessage = `Network error: ${error.message}. `;
+                        if (error.message.includes('Failed to fetch')) {
+                            errorMessage += 'This is likely a CORS issue. For Enterprise instances, you need to either:\n' +
+                                '1. Enable CORS on your ExtraHop appliance for this domain\n' +
+                                '2. Use a browser extension version of this tool\n' +
+                                '3. Run locally with CORS disabled for testing';
+                        }
+                        
+                        showErrorModal(errorMessage, errorDetails);
+                        throw new Error(errorMessage);
+                    }
+                }
+            }
+
+            async request(endpoint, options = {}) {
+                // Ensure endpoint starts with /api/v1 unless it's the OAuth token endpoint
+                if (!endpoint.startsWith('/api/v1') && !endpoint.startsWith('/oauth2')) {
+                    endpoint = '/api/v1' + endpoint;
+                }
+
+                const makeRequest = async () => {
+                    if (this.config.type === '360') {
+                        if (this.config.useProxy === false) {
+                            // Direct 360 API call (no proxy)
+                            const url = `https://${this.config.tenant}.api.cloud.extrahop.com${endpoint}`;
+                            
+                            const response = await fetch(url, {
+                                method: options.method || 'GET',
+                                headers: {
+                                    'Authorization': `Bearer ${this.accessToken}`,
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/json'
+                                },
+                                body: options.body
+                            });
+
+                            if (response.status < 200 || response.status >= 300) {
+                                const error = await response.text();
+                                let errorMessage;
+                                try {
+                                    const errorJson = JSON.parse(error);
+                                    errorMessage = errorJson.error_message || error;
+                                } catch (e) {
+                                    errorMessage = error;
+                                }
+                                throw new Error(`API Error: ${response.status} - ${errorMessage}`);
+                            }
+
+                            if (response.status === 204) {
+                                return {};
+                            }
+
+                            const text = await response.text();
+                            return text ? JSON.parse(text) : {};
+                        }
+                        
+                        // 360: Use Lambda proxy
+                        const proxyRequest = {
+                            deploymentType: '360',
+                            tenant: this.config.tenant,
+                            accessToken: this.accessToken,
+                            method: options.method || 'GET',
+                            endpoint: endpoint
+                        };
+
+                        if (options.body) {
+                            proxyRequest.requestBody = JSON.parse(options.body);
+                        }
+
+                        const response = await fetch(this.proxyUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(proxyRequest)
+                        });
+
+                        // Check for success status codes (2xx)
+                        if (response.status < 200 || response.status >= 300) {
+                            const error = await response.text();
+                            let errorMessage;
+                            try {
+                                const errorJson = JSON.parse(error);
+                                errorMessage = errorJson.error_message || error;
+                            } catch (e) {
+                                errorMessage = error;
+                            }
+                            throw new Error(`API Error: ${response.status} - ${errorMessage}`);
+                        }
+
+                        // Handle different success responses
+                        if (response.status === 204) {
+                            return {};
+                        }
+
+                        const text = await response.text();
+                        return text ? JSON.parse(text) : {};
+                    } else {
+                        // Enterprise: Direct API call
+                        const url = `${this.baseUrl}${endpoint.startsWith('/api/v1') ? endpoint.substring(7) : endpoint}`;
+                        
+                        const response = await fetch(url, {
+                            method: options.method || 'GET',
+                            headers: {
+                                'Authorization': `ExtraHop apikey=${this.config.apiKey}`,
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json'
+                            },
+                            body: options.body
+                        });
+
+                        // Check for success status codes (2xx)
+                        if (response.status < 200 || response.status >= 300) {
+                            const error = await response.text();
+                            let errorMessage;
+                            try {
+                                const errorJson = JSON.parse(error);
+                                errorMessage = errorJson.error_message || error;
+                            } catch (e) {
+                                errorMessage = error;
+                            }
+                            throw new Error(`API Error: ${response.status} - ${errorMessage}`);
+                        }
+
+                        // Handle different success responses
+                        if (response.status === 204) {
+                            return {};
+                        }
+
+                        const text = await response.text();
+                        return text ? JSON.parse(text) : {};
+                    }
+                };
+
+                // Try the request, if 401 and 360, refresh token and retry once
+                try {
+                    return await makeRequest();
+                } catch (error) {
+                    if (error.message.includes('401') && this.config.type === '360') {
+                        console.log('Token expired, attempting refresh...');
+                        
+                        // Refresh the token
+                        const tempApi = new ExtraHopAPI(this.config);
+                        await tempApi.authenticate();
+                        this.accessToken = tempApi.accessToken;
+                        
+                        console.log('Token refreshed, retrying request...');
+                        
+                        // Retry once with new token
+                        return await makeRequest();
+                    }
+                    throw error;
+                }
+            }
+
+            async getDashboards() {
+                return this.request('/dashboards');
+            }
+
+            async getDashboardSharing(dashboardId) {
+                return this.request(`/dashboards/${dashboardId}/sharing`);
+            }
+
+            async updateDashboard(dashboardId, body) {
+                return this.request(`/dashboards/${dashboardId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(body)
+                });
+            }
+
+            async updateDashboardSharing(dashboardId, body) {
+                return this.request(`/dashboards/${dashboardId}/sharing`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(body)
+                });
+            }
+
+            async deleteDashboard(dashboardId) {
+                const proxyRequest = {
+                    deploymentType: this.config.type,
+                    method: 'DELETE',
+                    endpoint: `/dashboards/${dashboardId}`
+                };
+
+                if (this.config.type === '360') {
+                    proxyRequest.tenant = this.config.tenant;
+                    proxyRequest.accessToken = this.accessToken;
+                } else {
+                    proxyRequest.host = this.config.host;
+                    proxyRequest.apiKey = this.config.apiKey;
+                }
+
+                // Need to prepend /api/v1 manually here since deleteDashboard bypasses request()
+                proxyRequest.endpoint = '/api/v1' + proxyRequest.endpoint;
+
+                const response = await fetch(this.proxyUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(proxyRequest)
+                });
+                
+                return response.ok;
+            }
+
+            async getUsers() {
+                // For Enterprise, this endpoint may not be available
+                // For 360, users endpoint should work
+                try {
+                    return await this.request('/users');
+                } catch (e) {
+                    console.warn('Could not fetch users:', e);
+                    return [];
+                }
+            }
+
+            async getAppliances() {
+                return this.request('/appliances');
+            }
+
+            async getAuditLog(limit = 100, offset = 0) {
+                return this.request(`/auditlog?limit=${limit}&offset=${offset}`);
+            }
+        }
+
+        // UI Functions
+        function showStatus(message, isError = false) {
+            const statusDiv = document.getElementById('connectionStatus');
+            const statusText = document.getElementById('statusText');
+            statusDiv.style.display = 'block';
+            statusText.textContent = message;
+            statusText.style.color = isError ? '#ef4444' : 'var(--cyan)';
+        }
+
+        function toggleApiConfig() {
+            const configForm = document.getElementById('configForm');
+            const expandIcon = document.getElementById('expandIcon');
+            
+            if (configForm.style.display === 'none') {
+                configForm.style.display = 'block';
+                expandIcon.style.transform = 'rotate(0deg)';
+            } else {
+                configForm.style.display = 'none';
+                expandIcon.style.transform = 'rotate(-90deg)';
+            }
+        }
+
+        function showConnectedState() {
+            const connectedState = document.getElementById('connectedState');
+            const configForm = document.getElementById('configForm');
+            const connectedInfo = document.getElementById('connectedInfo');
+            
+            connectedState.classList.remove('hidden');
+            configForm.style.display = 'none';
+            
+            if (state.apiConfig.type === '360') {
+                connectedInfo.textContent = `RevealX 360: ${state.apiConfig.tenant}`;
+            } else {
+                connectedInfo.textContent = `RevealX Enterprise: ${state.apiConfig.host}`;
+            }
+            
+            document.getElementById('expandIcon').style.transform = 'rotate(-90deg)';
+        }
+
+        function hideConnectedState() {
+            const connectedState = document.getElementById('connectedState');
+            const configForm = document.getElementById('configForm');
+            
+            connectedState.classList.add('hidden');
+            configForm.style.display = 'block';
+        }
+
+        async function refreshAccessToken() {
+            if (!state.apiConfig || state.apiConfig.type !== '360') {
+                return false;
+            }
+
+            console.log('Access token expired, refreshing...');
+            
+            try {
+                const api = new ExtraHopAPI(state.apiConfig);
+                await api.authenticate();
+                
+                // Update the global API client with new token
+                window.apiClient.accessToken = api.accessToken;
+                
+                console.log('Access token refreshed successfully');
+                return true;
+            } catch (error) {
+                console.error('Failed to refresh access token:', error);
+                // Show error and ask user to reconnect
+                alert('Your session has expired. Please reconnect.');
+                hideConnectedState();
+                state.connected = false;
+                return false;
+            }
+        }
+
+        // Wrapper for API requests that handles token refresh
+        async function apiRequestWithRetry(apiMethod, ...args) {
+            try {
+                return await apiMethod(...args);
+            } catch (error) {
+                // Check if it's a 401 error (expired token)
+                if (error.message.includes('401') && state.apiConfig?.type === '360') {
+                    console.log('Detected 401, attempting token refresh...');
+                    const refreshed = await refreshAccessToken();
+                    
+                    if (refreshed) {
+                        // Retry the original request
+                        return await apiMethod(...args);
+                    }
+                }
+                // Re-throw if not a token issue or refresh failed
+                throw error;
+            }
+        }
+
+        function showErrorModal(message, details) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorUrl').textContent = details.url || 'N/A';
+            document.getElementById('errorHeaders').textContent = JSON.stringify(details.headers || {}, null, 2);
+            document.getElementById('errorBody').textContent = details.body || 'N/A';
+            document.getElementById('errorStatus').textContent = details.status || 'N/A';
+            document.getElementById('errorResponse').textContent = typeof details.response === 'object' 
+                ? JSON.stringify(details.response, null, 2) 
+                : details.response || 'N/A';
+            
+            document.getElementById('errorDetails').style.display = 'none';
+            document.getElementById('toggleErrorDetails').textContent = 'Show Technical Details';
+            showModal('errorModal');
+        }
+
+        function switchModule(moduleName) {
+            // Update sidebar
+            document.querySelectorAll('.module-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`[data-module="${moduleName}"]`)?.classList.add('active');
+
+            // Update content
+            document.querySelectorAll('.module-content').forEach(module => {
+                module.style.display = 'none';
+            });
+            document.getElementById('welcomeScreen').style.display = 'none';
+            document.getElementById(`${moduleName}Module`).style.display = 'block';
+
+            // Update ribbon module title
+            const moduleTitles = {
+                'dashboards': 'Dashboard Manager',
+                'audit-logs': 'Audit Log Analyzer',
+                'detections': 'Detections',
+                'devices': 'Device Manager',
+                'analysis-priorities': 'Analysis Priorities',
+                'localities': 'Network Localities Manager'
+            };
+            document.getElementById('ribbonModuleTitle').textContent = moduleTitles[moduleName] || '';
+
+            state.currentModule = moduleName;
+        }
+
+        async function handleConnect() {
+            const connectBtn = document.getElementById('connectBtn');
+            const deploymentType = document.getElementById('deploymentType').value;
+
+            try {
+                connectBtn.disabled = true;
+                connectBtn.textContent = 'Connecting...';
+
+                let config;
+                if (deploymentType === '360') {
+                    const useProxy = document.getElementById('useAwsProxy').checked;
+                    config = {
+                        type: '360',
+                        tenant: document.getElementById('tenantName').value.trim(),
+                        apiId: document.getElementById('apiId').value.trim(),
+                        apiSecret: document.getElementById('apiSecret').value.trim(),
+                        useProxy: useProxy
+                    };
+
+                    if (!config.tenant || !config.apiId || !config.apiSecret) {
+                        throw new Error('Please fill in all fields');
+                    }
+                } else {
+                    config = {
+                        type: 'enterprise',
+                        host: document.getElementById('enterpriseHost').value.trim(),
+                        apiKey: document.getElementById('enterpriseApiKey').value.trim()
+                    };
+
+                    if (!config.host || !config.apiKey) {
+                        throw new Error('Please fill in all fields');
+                    }
+                }
+
+                const api = new ExtraHopAPI(config);
+                await api.authenticate();
+
+                state.apiConfig = config;
+                state.connected = true;
+                sessionStorage.setItem('eh_config', JSON.stringify(config));
+                window.apiClient = api;
+
+                showStatus('✓ Connected successfully', false);
+                document.getElementById('moduleSelection').style.display = 'block';
+                showConnectedState();
+                
+                connectBtn.textContent = 'Connected';
+                setTimeout(() => {
+                    connectBtn.textContent = 'Reconnect';
+                    connectBtn.disabled = false;
+                }, 2000);
+
+            } catch (error) {
+                showStatus('Ã¢Å“â€” ' + error.message, true);
+                connectBtn.textContent = 'Connect';
+                connectBtn.disabled = false;
+            }
+        }
+
+        async function loadDashboards() {
+            if (!state.connected) {
+                alert('Please connect to your ExtraHop instance first');
+                return;
+            }
+
+            const loadBtn = document.getElementById('loadDashboardsBtn');
+            const loadingDiv = document.getElementById('dashboardsLoading');
+            const tableContainer = document.getElementById('dashboardsTableContainer');
+
+            try {
+                loadBtn.disabled = true;
+                loadBtn.textContent = 'Loading...';
+                loadingDiv.style.display = 'block';
+                tableContainer.style.display = 'none';
+
+                // Load dashboards
+                state.dashboards = await window.apiClient.getDashboards();
+                
+                // Load users for owner dropdown
+                state.allUsers = await window.apiClient.getUsers();
+
+                // Get unique owners from dashboards
+                const ownerSet = new Set();
+                state.dashboards.forEach(d => {
+                    if (d.owner) ownerSet.add(d.owner);
+                });
+
+                // Combine API users with owners found in dashboards
+                const userSet = new Set([...state.allUsers.map(u => u.username), ...ownerSet]);
+                state.allUsers = Array.from(userSet).sort().map(u => ({ username: u }));
+
+                // Populate user dropdowns
+                populateUserDropdowns();
+
+                // Load sharing info for each dashboard (in background)
+                loadDashboardSharing();
+
+                // Initial render
+                applyFilters();
+                renderDashboards();
+
+                loadingDiv.style.display = 'none';
+                tableContainer.style.display = 'block';
+                document.getElementById('paginationContainer').style.display = 'flex';
+
+            } catch (error) {
+                alert('Error loading dashboards: ' + error.message);
+                loadingDiv.style.display = 'none';
+            } finally {
+                loadBtn.textContent = 'Refresh';
+                loadBtn.disabled = false;
+            }
+        }
+
+        async function loadDashboardSharing() {
+            // Load sharing info for visible dashboards
+            const promises = state.dashboards.map(async (dashboard) => {
+                try {
+                    const sharing = await window.apiClient.getDashboardSharing(dashboard.id);
+                    dashboard.sharing = sharing;
+                } catch (e) {
+                    dashboard.sharing = { anyone: false, users: {}, groups: {} };
+                }
+            });
+
+            await Promise.all(promises);
+            renderDashboards(); // Re-render with sharing info
+        }
+
+        function populateUserDropdowns() {
+            const newOwnerSelect = document.getElementById('newOwnerSelect');
+            const additionalEditorsSelect = document.getElementById('additionalEditorsSelect');
+
+            // Clear existing options
+            newOwnerSelect.innerHTML = '<option value="">Select a user...</option>';
+            additionalEditorsSelect.innerHTML = '';
+
+            // Populate with users
+            state.allUsers.forEach(user => {
+                const option1 = document.createElement('option');
+                option1.value = user.username;
+                option1.textContent = user.username;
+                newOwnerSelect.appendChild(option1);
+
+                const option2 = document.createElement('option');
+                option2.value = user.username;
+                option2.textContent = user.username;
+                additionalEditorsSelect.appendChild(option2);
+            });
+        }
+
+        function applyFilters() {
+            const searchTerm = document.getElementById('searchDashboards').value.toLowerCase();
+            const ownerFilter = document.getElementById('filterOwner').value.toLowerCase();
+
+            state.filteredDashboards = state.dashboards.filter(dashboard => {
+                const nameMatch = !searchTerm || dashboard.name.toLowerCase().includes(searchTerm);
+                const ownerMatch = !ownerFilter || (dashboard.owner && dashboard.owner.toLowerCase().includes(ownerFilter));
+                return nameMatch && ownerMatch;
+            });
+
+            state.currentPage = 1;
+        }
+
+        function renderDashboards() {
+            const tbody = document.getElementById('dashboardsTableBody');
+            const start = (state.currentPage - 1) * state.itemsPerPage;
+            const end = start + state.itemsPerPage;
+            const pageData = state.filteredDashboards.slice(start, end);
+
+            tbody.innerHTML = '';
+
+            if (pageData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8" style="color: var(--text-muted);">No dashboards found</td></tr>';
+                return;
+            }
+
+            pageData.forEach(dashboard => {
+                const row = document.createElement('tr');
+                const isShared = dashboard.sharing?.anyone || 
+                                Object.keys(dashboard.sharing?.users || {}).length > 0 || 
+                                Object.keys(dashboard.sharing?.groups || {}).length > 0;
+
+                row.innerHTML = `
+                    <td>
+                        <input type="checkbox" class="dashboard-checkbox" data-id="${dashboard.id}" ${state.selectedDashboards.has(dashboard.id) ? 'checked' : ''}>
+                    </td>
+                    <td>
+                        <div class="font-semibold">${escapeHtml(dashboard.name)}</div>
+                    </td>
+                    <td>${escapeHtml(dashboard.owner || 'System')}</td>
+                    <td>
+                        ${isShared ? '<span class="badge badge-success">Yes</span>' : '<span class="badge badge-warning">Private</span>'}
+                    </td>
+                    <td>
+                        <div class="flex gap-2">
+                            <button class="btn-secondary px-3 py-1 rounded text-sm change-owner-btn" data-id="${dashboard.id}">
+                                Change Owner
+                            </button>
+                            <button class="btn-danger px-3 py-1 rounded text-sm delete-btn" data-id="${dashboard.id}">
+                                Delete
+                            </button>
+                        </div>
+                    </td>
+                `;
+
+                tbody.appendChild(row);
+            });
+
+            updatePagination();
+            updateBulkActions();
+        }
+
+        function updatePagination() {
+            const totalPages = Math.ceil(state.filteredDashboards.length / state.itemsPerPage);
+            const paginationInfo = document.getElementById('paginationInfo');
+            const prevBtn = document.getElementById('prevPageBtn');
+            const nextBtn = document.getElementById('nextPageBtn');
+
+            const start = (state.currentPage - 1) * state.itemsPerPage + 1;
+            const end = Math.min(start + state.itemsPerPage - 1, state.filteredDashboards.length);
+
+            paginationInfo.textContent = `Showing ${start}-${end} of ${state.filteredDashboards.length}`;
+
+            prevBtn.disabled = state.currentPage === 1;
+            nextBtn.disabled = state.currentPage >= totalPages;
+        }
+
+        function updateBulkActions() {
+            const bulkActions = document.getElementById('bulkActions');
+            const selectedCount = document.getElementById('selectedCount');
+
+            if (state.selectedDashboards.size > 0) {
+                bulkActions.style.display = 'flex';
+                selectedCount.textContent = `${state.selectedDashboards.size} selected`;
+            } else {
+                bulkActions.style.display = 'none';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Modal Functions
+        function showModal(modalId) {
+            document.getElementById(modalId).classList.add('show');
+        }
+
+        function hideModal(modalId) {
+            document.getElementById(modalId).classList.remove('show');
+        }
+
+        async function handleBulkChangeOwner() {
+            showModal('changeOwnerModal');
+        }
+
+        async function confirmChangeOwner() {
+            const newOwner = document.getElementById('newOwnerSelect').value;
+            const grantAccess = document.getElementById('grantEditAccess').checked;
+
+            if (!newOwner) {
+                alert('Please select a new owner');
+                return;
+            }
+
+            const dashboardIds = Array.from(state.selectedDashboards);
+            let successCount = 0;
+
+            try {
+                for (const id of dashboardIds) {
+                    const dashboard = state.dashboards.find(d => d.id === id);
+                    const oldOwner = dashboard.owner;
+
+                    await window.apiClient.updateDashboard(id, { owner: newOwner });
+
+                    if (grantAccess && oldOwner) {
+                        await window.apiClient.updateDashboardSharing(id, {
+                            users: { [oldOwner]: 'editor' }
+                        });
+                    }
+
+                    successCount++;
+                }
+
+                alert(`Successfully changed owner for ${successCount} dashboard(s)`);
+                hideModal('changeOwnerModal');
+                loadDashboards();
+            } catch (error) {
+                alert(`Error: ${error.message}. Changed ${successCount} of ${dashboardIds.length} dashboards.`);
+            }
+        }
+
+        async function handleBulkShare() {
+            showModal('modifySharingModal');
+        }
+
+        async function confirmModifySharing() {
+            const shareWithAll = document.getElementById('shareWithAll').checked;
+            const editorsSelect = document.getElementById('additionalEditorsSelect');
+            const selectedEditors = Array.from(editorsSelect.selectedOptions).map(opt => opt.value);
+
+            const dashboardIds = Array.from(state.selectedDashboards);
+            let successCount = 0;
+
+            try {
+                for (const id of dashboardIds) {
+                    const sharingPayload = {};
+
+                    if (shareWithAll) {
+                        sharingPayload.anyone = 'viewer';
+                    }
+
+                    if (selectedEditors.length > 0) {
+                        sharingPayload.users = {};
+                        selectedEditors.forEach(username => {
+                            sharingPayload.users[username] = 'editor';
+                        });
+                    }
+
+                    await window.apiClient.updateDashboardSharing(id, sharingPayload);
+                    successCount++;
+                }
+
+                alert(`Successfully updated sharing for ${successCount} dashboard(s)`);
+                hideModal('modifySharingModal');
+                loadDashboards();
+            } catch (error) {
+                alert(`Error: ${error.message}. Updated ${successCount} of ${dashboardIds.length} dashboards.`);
+            }
+        }
+
+        async function handleBulkDelete() {
+            const count = state.selectedDashboards.size;
+            document.getElementById('deleteCount').textContent = `${count} dashboard${count > 1 ? 's' : ''}`;
+            showModal('deleteConfirmModal');
+        }
+
+        async function confirmDelete() {
+            const dashboardIds = Array.from(state.selectedDashboards);
+            let successCount = 0;
+
+            try {
+                for (const id of dashboardIds) {
+                    const success = await window.apiClient.deleteDashboard(id);
+                    if (success) successCount++;
+                }
+
+                alert(`Successfully deleted ${successCount} dashboard(s)`);
+                hideModal('deleteConfirmModal');
+                state.selectedDashboards.clear();
+                loadDashboards();
+            } catch (error) {
+                alert(`Error: ${error.message}. Deleted ${successCount} of ${dashboardIds.length} dashboards.`);
+            }
+        }
+
+        // Event Listeners
+        document.getElementById('deploymentType').addEventListener('change', (e) => {
+            const is360 = e.target.value === '360';
+            document.getElementById('config360').style.display = is360 ? 'block' : 'none';
+            document.getElementById('configEnterprise').style.display = is360 ? 'none' : 'block';
+        });
+
+        document.getElementById('connectBtn').addEventListener('click', handleConnect);
+
+        document.querySelectorAll('.module-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const module = e.currentTarget.dataset.module;
+                if (state.connected) {
+                    switchModule(module);
+                }
+            });
+        });
+
+        document.getElementById('loadDashboardsBtn').addEventListener('click', loadDashboards);
+        document.getElementById('searchDashboards').addEventListener('input', () => {
+            applyFilters();
+            renderDashboards();
+        });
+        document.getElementById('filterOwner').addEventListener('input', () => {
+            applyFilters();
+            renderDashboards();
+        });
+
+        document.getElementById('selectAll').addEventListener('change', (e) => {
+            const checkboxes = document.querySelectorAll('.dashboard-checkbox');
+            checkboxes.forEach(cb => {
+                cb.checked = e.target.checked;
+                const id = parseInt(cb.dataset.id);
+                if (e.target.checked) {
+                    state.selectedDashboards.add(id);
+                } else {
+                    state.selectedDashboards.delete(id);
+                }
+            });
+            updateBulkActions();
+        });
+
+        document.getElementById('dashboardsTableBody').addEventListener('change', (e) => {
+            if (e.target.classList.contains('dashboard-checkbox')) {
+                const id = parseInt(e.target.dataset.id);
+                if (e.target.checked) {
+                    state.selectedDashboards.add(id);
+                } else {
+                    state.selectedDashboards.delete(id);
+                }
+                updateBulkActions();
+            }
+        });
+
+        document.getElementById('dashboardsTableBody').addEventListener('click', (e) => {
+            if (e.target.classList.contains('change-owner-btn')) {
+                const id = parseInt(e.target.dataset.id);
+                state.selectedDashboards.clear();
+                state.selectedDashboards.add(id);
+                handleBulkChangeOwner();
+            } else if (e.target.classList.contains('delete-btn')) {
+                const id = parseInt(e.target.dataset.id);
+                state.selectedDashboards.clear();
+                state.selectedDashboards.add(id);
+                handleBulkDelete();
+            }
+        });
+
+        document.getElementById('bulkChangeOwnerBtn').addEventListener('click', handleBulkChangeOwner);
+        document.getElementById('bulkShareBtn').addEventListener('click', handleBulkShare);
+        document.getElementById('bulkDeleteBtn').addEventListener('click', handleBulkDelete);
+
+        document.getElementById('prevPageBtn').addEventListener('click', () => {
+            if (state.currentPage > 1) {
+                state.currentPage--;
+                renderDashboards();
+            }
+        });
+
+        document.getElementById('nextPageBtn').addEventListener('click', () => {
+            const totalPages = Math.ceil(state.filteredDashboards.length / state.itemsPerPage);
+            if (state.currentPage < totalPages) {
+                state.currentPage++;
+                renderDashboards();
+            }
+        });
+
+        // Modal event listeners
+        document.getElementById('cancelChangeOwner').addEventListener('click', () => hideModal('changeOwnerModal'));
+        document.getElementById('confirmChangeOwner').addEventListener('click', confirmChangeOwner);
+
+        document.getElementById('cancelModifySharing').addEventListener('click', () => hideModal('modifySharingModal'));
+        document.getElementById('confirmModifySharing').addEventListener('click', confirmModifySharing);
+
+        document.getElementById('cancelDelete').addEventListener('click', () => hideModal('deleteConfirmModal'));
+        document.getElementById('confirmDelete').addEventListener('click', confirmDelete);
+
+        document.getElementById('closeErrorModal').addEventListener('click', () => hideModal('errorModal'));
+        document.getElementById('toggleErrorDetails').addEventListener('click', function() {
+            const detailsDiv = document.getElementById('errorDetails');
+            if (detailsDiv.style.display === 'none') {
+                detailsDiv.style.display = 'block';
+                this.textContent = 'Hide Technical Details';
+            } else {
+                detailsDiv.style.display = 'none';
+                this.textContent = 'Show Technical Details';
+            }
+        });
+
+        // Close modals on outside click
+        document.querySelectorAll('.modal').forEach(modal => {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.remove('show');
+                }
+            });
+        });
+
+        // Load saved config on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedConfig = sessionStorage.getItem('eh_config');
+            if (savedConfig) {
+                const config = JSON.parse(savedConfig);
+                if (config.type === '360') {
+                    document.getElementById('deploymentType').value = '360';
+                    document.getElementById('tenantName').value = config.tenant;
+                    document.getElementById('apiId').value = config.apiId;
+                    document.getElementById('apiSecret').value = config.apiSecret;
+                    // Restore proxy checkbox state (default to true if not set)
+                    document.getElementById('useAwsProxy').checked = config.useProxy !== false;
+                } else {
+                    document.getElementById('deploymentType').value = 'enterprise';
+                    document.getElementById('enterpriseHost').value = config.host;
+                    document.getElementById('enterpriseApiKey').value = config.apiKey;
+                    document.getElementById('config360').style.display = 'none';
+                    document.getElementById('configEnterprise').style.display = 'block';
+                }
+            }
+        });
+
+        // ==================== CRS USAGE REPORT MODULE ====================
+
+        const crsState = {
+            selectedPeriod: 'yesterday',
+            inputMethod: 'manual',
+            csvData: null,
+            chartInstances: {}
+        };
+
+        // Model capacity mapping
+        const CRS_CAPACITIES = {
+            'EDA1100V_TRACE': 20,
+            'EDA1100V': 20,
+            'EDA1200': 20,
+            'EDA4200': 100,
+            'EDA6100V_TRACE': 200,
+            'EDA6100V': 200,
+            'EDA6200': 200,
+            'EDA8200V': 500,
+            'EDA8200': 500,
+            'EDA9200': 750,
+            'EDA9300': 750,
+            'EDA10200': 1000,
+            'EDA10300': 1000
+        };
+
+        // ExtraHop brand colors for charts
+        const EH_COLORS = ['#ec0089', '#00aaef', '#f05918', '#dae343', '#7f2854', '#261f63'];
+
+        // Update capacity input options based on selected period
+        function updateCapacityInputOptions() {
+            const isMultiDay = crsState.selectedPeriod !== 'yesterday';
+            const capacityInputSection = document.getElementById('capacityInputSection');
+            
+            if (isMultiDay) {
+                // For multi-day periods, hide the button section entirely and force CSV mode
+                capacityInputSection.style.display = 'none';
+                crsState.inputMethod = 'csv';
+                document.getElementById('manualCapacityInput').style.display = 'none';
+                document.getElementById('csvCapacityInput').style.display = 'block';
+            } else {
+                // For single day, show button section
+                capacityInputSection.style.display = 'block';
+                
+                const manualBtn = document.querySelector('.capacity-input-btn[data-input="manual"]');
+                const csvBtn = document.querySelector('.capacity-input-btn[data-input="csv"]');
+                
+                // Restore previous selection or default to manual
+                if (crsState.inputMethod === 'manual') {
+                    manualBtn.classList.add('active');
+                    csvBtn.classList.remove('active');
+                    document.getElementById('manualCapacityInput').style.display = 'block';
+                    document.getElementById('csvCapacityInput').style.display = 'none';
+                } else {
+                    manualBtn.classList.remove('active');
+                    csvBtn.classList.add('active');
+                    document.getElementById('manualCapacityInput').style.display = 'none';
+                    document.getElementById('csvCapacityInput').style.display = 'block';
+                }
+            }
+        }
+
+        // Helper functions
+        function bytesToGB(bytes) {
+            return Math.round(bytes / (1024 ** 3));
+        }
+
+        function getDateUnixTimes(dateStr) {
+            const date = new Date(dateStr);
+            const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+            const endOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+            return {
+                from: Math.floor(startOfDay.getTime()),
+                until: Math.floor(endOfDay.getTime())
+            };
+        }
+
+        function getYesterday() {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            return yesterday.toISOString().split('T')[0];
+        }
+
+        function getDateRange(period) {
+            const end = new Date();
+            end.setDate(end.getDate() - 1); // Yesterday
+            const start = new Date(end);
+            
+            if (period === 'week') {
+                start.setDate(start.getDate() - 6);
+            } else if (period === 'month') {
+                start.setDate(start.getDate() - 29);
+            }
+            
+            return {
+                start: start.toISOString().split('T')[0],
+                end: end.toISOString().split('T')[0]
+            };
+        }
+
+        // Parse CSV data
+        function parseCSV(csvText) {
+            const lines = csvText.trim().split('\n');
+            const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+            
+            const dateIdx = headers.findIndex(h => h.includes('Summary Date'));
+            const utilizedIdx = headers.findIndex(h => h === 'Utilized');
+            const reservedIdx = headers.findIndex(h => h === 'Reserved');
+            
+            if (dateIdx === -1 || utilizedIdx === -1 || reservedIdx === -1) {
+                throw new Error('CSV must have "Summary Date UTC", "Utilized", and "Reserved" columns');
+            }
+            
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(v => v.replace(/"/g, '').trim());
+                if (values.length < 3) continue;
+                
+                data.push({
+                    date: values[dateIdx],
+                    utilized: parseFloat(values[utilizedIdx]),
+                    reserved: parseFloat(values[reservedIdx])
+                });
+            }
+            
+            return data;
+        }
+
+        // Get capacity data based on input method
+        function getCapacityData() {
+            if (crsState.inputMethod === 'manual') {
+                const reserved = parseFloat(document.getElementById('reservedCapacity').value);
+                const utilized = parseFloat(document.getElementById('utilizedCapacity').value);
+                
+                // Return null if neither value is provided (optional capacity data)
+                if (!reserved && !utilized) {
+                    return null;
+                }
+                
+                // If one is provided but not the other, that's an error
+                if (!reserved || !utilized) {
+                    throw new Error('Please enter both reserved and utilized capacity values, or leave both blank');
+                }
+                
+                return { reserved, utilized };
+            } else {
+                // CSV mode - capacity data is optional
+                if (!crsState.csvData || crsState.csvData.length === 0) {
+                    return null; // No CSV = no capacity data, which is fine
+                }
+                
+                // Sort by date to get most recent
+                const sortedData = [...crsState.csvData].sort((a, b) => 
+                    new Date(b.date) - new Date(a.date)
+                );
+                
+                // Use reserved from most recent day (may have changed over time)
+                // Use average utilized across the period
+                const avgUtilized = crsState.csvData.reduce((sum, d) => sum + d.utilized, 0) / crsState.csvData.length;
+                const mostRecentReserved = sortedData[0].reserved;
+                
+                return {
+                    reserved: mostRecentReserved,
+                    utilized: avgUtilized,
+                    isAveraged: true // Flag to show in UI
+                };
+            }
+        }
+
+        // Fetch appliances and metrics
+        async function fetchCRSData(dateRange) {
+            const appliances = await window.apiClient.getAppliances();
+            
+            // Filter for EDA discover appliances only
+            const edaAppliances = appliances.filter(a => 
+                a.platform === 'discover' && 
+                a.license_platform && 
+                a.license_platform.includes('EDA')
+            );
+            
+            const results = [];
+            
+            for (const appliance of edaAppliances) {
+                const times = getDateUnixTimes(dateRange.end); // Use end date for single day query
+                
+                const metricPayload = {
+                    cycle: 'auto',
+                    from: times.from,
+                    until: times.until,
+                    metric_category: 'capture',
+                    metric_specs: [{ name: 'record_bytes' }],
+                    object_ids: [appliance.id],
+                    object_type: 'system'
+                };
+                
+                try {
+                    const metricResponse = await window.apiClient.request('/metrics/total', {
+                        method: 'POST',
+                        body: JSON.stringify(metricPayload)
+                    });
+                    const recordBytes = metricResponse.stats?.[0]?.values?.[0] || 0;
+                    
+                    results.push({
+                        name: appliance.display_name,
+                        model: appliance.license_platform,
+                        recordBytes: recordBytes,
+                        recordBytesGB: bytesToGB(recordBytes),
+                        capacity: CRS_CAPACITIES[appliance.license_platform] || 0
+                    });
+                } catch (error) {
+                    console.error(`Error fetching metrics for ${appliance.display_name}:`, error);
+                    results.push({
+                        name: appliance.display_name,
+                        model: appliance.license_platform,
+                        recordBytes: 0,
+                        recordBytesGB: 0,
+                        capacity: CRS_CAPACITIES[appliance.license_platform] || 0
+                    });
+                }
+            }
+            
+            return results;
+        }
+
+        // Generate report
+        async function generateCRSReport() {
+            document.getElementById('crsLoading').style.display = 'block';
+            document.getElementById('crsResults').style.display = 'none';
+            
+            try {
+                const dateRange = getDateRange(crsState.selectedPeriod);
+                const capacityData = getCapacityData(); // Can be null
+                const applianceData = await fetchCRSData(dateRange);
+                
+                // Calculate totals
+                const totalRecordBytesGB = applianceData.reduce((sum, a) => sum + a.recordBytesGB, 0);
+                
+                let compressionRatio = null;
+                let utilizationPercent = null;
+                let compressedData = applianceData;
+                
+                if (capacityData) {
+                    compressionRatio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized).toFixed(2) : 'N/A';
+                    utilizationPercent = ((capacityData.utilized / capacityData.reserved) * 100).toFixed(1);
+                    
+                    // Calculate compressed values
+                    compressedData = applianceData.map(a => ({
+                        ...a,
+                        compressedGB: totalRecordBytesGB > 0 ? (a.recordBytesGB / compressionRatio).toFixed(2) : 0
+                    }));
+                } else {
+                    // No capacity data - use raw record bytes
+                    compressedData = applianceData.map(a => ({
+                        ...a,
+                        compressedGB: a.recordBytesGB.toFixed(2)
+                    }));
+                }
+                
+                // Update KPIs
+                if (compressionRatio) {
+                    document.getElementById('compressionRatio').textContent = compressionRatio;
+                    document.getElementById('compressionRatioSubtext').textContent = '1 GB stored : ' + compressionRatio + ' GB ingested';
+                } else {
+                    document.getElementById('compressionRatio').textContent = 'N/A';
+                    document.getElementById('compressionRatioSubtext').textContent = 'Add capacity data to calculate';
+                }
+                
+                document.getElementById('totalRecordBytes').textContent = `${totalRecordBytesGB} GB`;
+                
+                if (utilizationPercent) {
+                    document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
+                    const subtext = capacityData.isAveraged ? 'Of reserved (avg utilized from CSV)' : 'Of reserved capacity';
+                    document.getElementById('capacityUtilizationSubtext').textContent = subtext;
+                } else {
+                    document.getElementById('capacityUtilization').textContent = 'N/A';
+                    document.getElementById('capacityUtilizationSubtext').textContent = 'Add capacity data to calculate';
+                }
+                
+                // Update chart title based on whether we have capacity data
+                const stackedChartTitle = document.getElementById('stackedChartTitle');
+                const barChartTitle = document.getElementById('barChartTitle');
+                if (capacityData) {
+                    stackedChartTitle.textContent = 'Capacity Consumption by Sensor';
+                    barChartTitle.textContent = 'Utilization by Sensor';
+                } else {
+                    stackedChartTitle.textContent = 'Record Bytes by Sensor';
+                    barChartTitle.textContent = 'Record Bytes by Sensor';
+                }
+                
+                // Render charts
+                renderStackedBarChart(compressedData, capacityData ? capacityData.reserved : null);
+                renderSensorBarChart(compressedData);
+                renderDataTable(compressedData, compressionRatio);
+                
+                document.getElementById('crsLoading').style.display = 'none';
+                document.getElementById('crsResults').style.display = 'block';
+                
+            } catch (error) {
+                alert(`Error generating report: ${error.message}`);
+                document.getElementById('crsLoading').style.display = 'none';
+            }
+        }
+
+        // Render stacked horizontal bar chart
+        function renderStackedBarChart(data, reservedCapacity) {
+            const canvas = document.getElementById('stackedBarChart');
+            const ctx = canvas.getContext('2d');
+            
+            // Destroy existing chart
+            if (crsState.chartInstances.stacked) {
+                crsState.chartInstances.stacked.destroy();
+            }
+            
+            const consumed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0);
+            
+            const datasets = data
+                .filter(d => parseFloat(d.compressedGB) > 0)
+                .map((d, i) => ({
+                    label: d.name,
+                    data: [parseFloat(d.compressedGB)],
+                    backgroundColor: EH_COLORS[i % EH_COLORS.length]
+                }));
+            
+            // Only add remaining capacity if reservedCapacity is provided
+            if (reservedCapacity !== null) {
+                const remaining = Math.max(0, reservedCapacity - consumed);
+                datasets.push({
+                    label: 'Remaining Capacity',
+                    data: [remaining],
+                    backgroundColor: '#898a8d'
+                });
+            }
+            
+            crsState.chartInstances.stacked = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: ['Capacity'], datasets },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            stacked: true,
+                            title: { display: true, text: reservedCapacity !== null ? 'Capacity (GB)' : 'Record Bytes (GB)' }
+                        },
+                        y: { stacked: true, display: false }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => `${context.dataset.label}: ${context.parsed.x} GB`
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Render vertical bar chart
+        function renderSensorBarChart(data) {
+            const canvas = document.getElementById('sensorBarChart');
+            const ctx = canvas.getContext('2d');
+            
+            if (crsState.chartInstances.bar) {
+                crsState.chartInstances.bar.destroy();
+            }
+            
+            const sortedData = [...data].sort((a, b) => parseFloat(b.compressedGB) - parseFloat(a.compressedGB));
+            const labels = sortedData.map(d => d.name);
+            const values = sortedData.map(d => parseFloat(d.compressedGB));
+            
+            crsState.chartInstances.bar = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Utilization (GB)',
+                        data: values,
+                        backgroundColor: '#7f2854'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: 'Capacity Utilization (GB)' }
+                        },
+                        x: {
+                            ticks: {
+                                autoSkip: false,
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+
+        // Render data table
+        function renderDataTable(data, compressionRatio) {
+            const tbody = document.getElementById('crsDataTableBody');
+            tbody.innerHTML = '';
+            
+            // Update table header based on whether we have compression data
+            const tableHeader = document.querySelector('#crsDataTable thead tr');
+            const hasCompression = compressionRatio !== null;
+            tableHeader.innerHTML = `
+                <th>Sensor Name</th>
+                <th>Platform</th>
+                <th>Record Bytes (GB)</th>
+                ${hasCompression ? '<th>After Compression (GB)</th>' : ''}
+            `;
+            
+            const sortedData = [...data].sort((a, b) => parseFloat(b.compressedGB) - parseFloat(a.compressedGB));
+            
+            sortedData.forEach(d => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${d.name}</td>
+                    <td>${d.model}</td>
+                    <td>${d.recordBytesGB}</td>
+                    ${hasCompression ? `<td>${d.compressedGB}</td>` : ''}
+                `;
+                tbody.appendChild(row);
+            });
+            
+            // Add totals row
+            const totalRow = document.createElement('tr');
+            totalRow.style.fontWeight = 'bold';
+            totalRow.style.borderTop = '2px solid var(--border-color)';
+            const totalRecordBytes = data.reduce((sum, d) => sum + d.recordBytesGB, 0);
+            const totalCompressed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0).toFixed(2);
+            totalRow.innerHTML = `
+                <td colspan="2">TOTAL</td>
+                <td>${totalRecordBytes}</td>
+                ${hasCompression ? `<td>${totalCompressed}</td>` : ''}
+            `;
+            tbody.appendChild(totalRow);
+        }
+
+        // Event listeners for CRS module
+        document.querySelectorAll('.crs-period-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.crs-period-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                crsState.selectedPeriod = btn.dataset.period;
+                updateCapacityInputOptions();
+            });
+        });
+
+        document.querySelectorAll('.capacity-input-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.capacity-input-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                crsState.inputMethod = btn.dataset.input;
+                
+                if (crsState.inputMethod === 'manual') {
+                    document.getElementById('manualCapacityInput').style.display = 'block';
+                    document.getElementById('csvCapacityInput').style.display = 'none';
+                } else {
+                    document.getElementById('manualCapacityInput').style.display = 'none';
+                    document.getElementById('csvCapacityInput').style.display = 'block';
+                }
+            });
+        });
+
+        document.getElementById('csvFileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    crsState.csvData = parseCSV(event.target.result);
+                    
+                    const summary = document.getElementById('csvSummary');
+                    summary.innerHTML = `
+                        <strong>${crsState.csvData.length} records loaded</strong><br>
+                        Date range: ${crsState.csvData[crsState.csvData.length - 1].date} to ${crsState.csvData[0].date}<br>
+                        Avg Utilized: ${(crsState.csvData.reduce((s, d) => s + d.utilized, 0) / crsState.csvData.length).toFixed(1)} GB<br>
+                        Avg Reserved: ${(crsState.csvData.reduce((s, d) => s + d.reserved, 0) / crsState.csvData.length).toFixed(1)} GB
+                    `;
+                    document.getElementById('csvPreview').style.display = 'block';
+                } catch (error) {
+                    alert(`Error parsing CSV: ${error.message}`);
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        document.getElementById('generateCrsReport').addEventListener('click', generateCRSReport);
+
+        // ===========================================
+        // Network Localities Module
+        // ===========================================
+        
+        const localitiesState = {
+            originalLocalities: [],  // Original data from GET
+            currentLocalities: [],   // Working copy with edits
+            deletedIds: new Set(),   // Track deleted entries
+            isLoaded: false
+        };
+
+        // API Functions for Network Localities
+        async function loadNetworkLocalities() {
+            if (!state.connected || !window.apiClient) {
+                alert('Please connect to your ExtraHop instance first');
+                return;
+            }
+
+            try {
+                document.getElementById('localitiesLoading').style.display = 'block';
+                document.getElementById('localitiesTable').style.display = 'none';
+                document.getElementById('localityStatus').style.display = 'none';
+
+                const response = await window.apiClient.request('/networklocalities');
+                
+                localitiesState.originalLocalities = response.map(loc => ({...loc}));
+                localitiesState.currentLocalities = response.map(loc => ({...loc}));
+                localitiesState.deletedIds.clear();
+                localitiesState.isLoaded = true;
+
+                renderLocalitiesTable();
+                
+                document.getElementById('localitiesLoading').style.display = 'none';
+                document.getElementById('localitiesTable').style.display = 'block';
+                document.getElementById('addLocalityRow').style.display = 'inline-block';
+                document.getElementById('saveLocalityChanges').style.display = 'inline-block';
+                document.getElementById('uploadCsvLabel').style.display = 'inline-block';
+
+                showLocalityStatus(`Loaded ${response.length} network localities`, 'success');
+            } catch (error) {
+                document.getElementById('localitiesLoading').style.display = 'none';
+                showLocalityStatus(`Error loading localities: ${error.message}`, 'error');
+            }
+        }
+
+        function renderLocalitiesTable() {
+            const tbody = document.getElementById('localitiesTableBody');
+            tbody.innerHTML = '';
+
+            localitiesState.currentLocalities.forEach((locality, index) => {
+                if (locality._deleted) return; // Skip deleted rows
+
+                const row = document.createElement('tr');
+                row.dataset.index = index;
+                row.dataset.id = locality.id || '';
+                
+                // Determine if this is new (no ID) or existing
+                const isNew = !locality.id;
+                
+                row.innerHTML = `
+                    <td>
+                        <input type="text" 
+                               class="w-full px-2 py-1 border rounded locality-field" 
+                               data-field="name" 
+                               value="${escapeHtml(locality.name || '')}"
+                               style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
+                    </td>
+                    <td>
+                        <input type="text" 
+                               class="w-full px-2 py-1 border rounded locality-field" 
+                               data-field="networks" 
+                               value="${escapeHtml((locality.networks || []).join(', '))}"
+                               placeholder="e.g., 192.168.1.0/24, 10.0.0.1"
+                               style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
+                    </td>
+                    <td>
+                        <select class="w-full px-2 py-1 border rounded locality-field" 
+                                data-field="external"
+                                style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
+                            <option value="false" ${!locality.external ? 'selected' : ''}>Internal</option>
+                            <option value="true" ${locality.external ? 'selected' : ''}>External</option>
+                        </select>
+                    </td>
+                    <td>
+                        <input type="text" 
+                               class="w-full px-2 py-1 border rounded locality-field" 
+                               data-field="description" 
+                               value="${escapeHtml(locality.description || '')}"
+                               style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
+                    </td>
+                    <td class="text-center">
+                        <button class="btn-danger px-3 py-1 rounded text-sm delete-locality-btn">
+                            Delete
+                        </button>
+                    </td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+
+            // Add event listeners for inline editing
+            document.querySelectorAll('.locality-field').forEach(input => {
+                input.addEventListener('change', handleLocalityFieldChange);
+            });
+
+            // Add event listeners for delete buttons
+            document.querySelectorAll('.delete-locality-btn').forEach(btn => {
+                btn.addEventListener('click', handleDeleteLocality);
+            });
+        }
+
+        function handleLocalityFieldChange(e) {
+            const field = e.target.dataset.field;
+            const row = e.target.closest('tr');
+            const index = parseInt(row.dataset.index);
+            
+            let value = e.target.value;
+            
+            if (field === 'external') {
+                value = value === 'true';
+            } else if (field === 'networks') {
+                // Convert comma-separated string to array
+                value = value.split(',').map(s => s.trim()).filter(s => s);
+            }
+            
+            localitiesState.currentLocalities[index][field] = value;
+            localitiesState.currentLocalities[index]._modified = true;
+        }
+
+        function handleDeleteLocality(e) {
+            const row = e.target.closest('tr');
+            const index = parseInt(row.dataset.index);
+            const id = row.dataset.id;
+            
+            if (id) {
+                // Existing locality - mark for deletion
+                localitiesState.deletedIds.add(parseInt(id));
+            }
+            
+            // Mark as deleted in current state
+            localitiesState.currentLocalities[index]._deleted = true;
+            
+            renderLocalitiesTable();
+        }
+
+        function addLocalityRow() {
+            const newLocality = {
+                name: '',
+                networks: [],
+                external: false,
+                description: '',
+                _isNew: true
+            };
+            
+            localitiesState.currentLocalities.push(newLocality);
+            renderLocalitiesTable();
+            
+            // Focus on the name field of the new row
+            setTimeout(() => {
+                const lastRow = document.querySelector('#localitiesTableBody tr:last-child');
+                if (lastRow) {
+                    lastRow.querySelector('input[data-field="name"]')?.focus();
+                }
+            }, 100);
+        }
+
+        async function saveLocalityChanges() {
+            try {
+                document.getElementById('saveLocalityChanges').disabled = true;
+                document.getElementById('saveLocalityChanges').textContent = 'Saving...';
+                
+                const results = {
+                    created: [],
+                    updated: [],
+                    deleted: [],
+                    errors: []
+                };
+
+                // Process deletions
+                for (const id of localitiesState.deletedIds) {
+                    try {
+                        await window.apiClient.request(`/networklocalities/${id}`, { method: 'DELETE' });
+                        results.deleted.push(id);
+                    } catch (error) {
+                        results.errors.push(`Failed to delete locality ID ${id}: ${error.message}`);
+                    }
+                }
+
+                // Process creations and updates
+                for (const locality of localitiesState.currentLocalities) {
+                    if (locality._deleted) continue;
+
+                    // Validate required fields
+                    if (!locality.name || !locality.networks || locality.networks.length === 0) {
+                        results.errors.push(`Skipped entry: Name and at least one network are required`);
+                        continue;
+                    }
+
+                    const payload = {
+                        name: locality.name,
+                        networks: locality.networks,
+                        external: locality.external,
+                        description: locality.description || ''
+                    };
+
+                    try {
+                        if (locality._isNew && !locality.id) {
+                            // Create new locality
+                            const response = await window.apiClient.request('/networklocalities', {
+                                method: 'POST',
+                                body: JSON.stringify(payload)
+                            });
+                            results.created.push(locality.name);
+                        } else if (locality._modified && locality.id) {
+                            // Update existing locality
+                            await window.apiClient.request(`/networklocalities/${locality.id}`, {
+                                method: 'PATCH',
+                                body: JSON.stringify(payload)
+                            });
+                            results.updated.push(locality.name);
+                        }
+                    } catch (error) {
+                        results.errors.push(`Failed to save "${locality.name}": ${error.message}`);
+                    }
+                }
+
+                // Build status message
+                let statusMsg = [];
+                if (results.created.length > 0) statusMsg.push(`Created: ${results.created.length}`);
+                if (results.updated.length > 0) statusMsg.push(`Updated: ${results.updated.length}`);
+                if (results.deleted.length > 0) statusMsg.push(`Deleted: ${results.deleted.length}`);
+                if (results.errors.length > 0) statusMsg.push(`Errors: ${results.errors.length}`);
+
+                showLocalityStatus(statusMsg.join(' | '), results.errors.length > 0 ? 'warning' : 'success');
+
+                if (results.errors.length > 0) {
+                    console.error('Errors during save:', results.errors);
+                    alert('Some operations failed. Check the console for details.\n\n' + results.errors.join('\n'));
+                }
+
+                // Reload localities to get fresh data
+                await loadNetworkLocalities();
+
+            } catch (error) {
+                showLocalityStatus(`Error saving changes: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('saveLocalityChanges').disabled = false;
+                document.getElementById('saveLocalityChanges').textContent = 'Save Changes';
+            }
+        }
+
+        function handleCsvUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                try {
+                    const csv = event.target.result;
+                    const lines = csv.split('\n').map(line => line.trim()).filter(line => line);
+                    
+                    if (lines.length < 2) {
+                        throw new Error('CSV file appears to be empty');
+                    }
+
+                    // Parse header
+                    const header = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+                    const nameIdx = header.findIndex(h => h.toLowerCase().includes('name'));
+                    const cidrIdx = header.findIndex(h => h.toLowerCase().includes('cidr') || h.toLowerCase().includes('ip') || h.toLowerCase().includes('network'));
+                    const externalIdx = header.findIndex(h => h.toLowerCase().includes('external') || h.toLowerCase().includes('type'));
+                    const descIdx = header.findIndex(h => h.toLowerCase().includes('description') || h.toLowerCase().includes('desc'));
+
+                    if (nameIdx === -1 || cidrIdx === -1) {
+                        throw new Error('CSV must contain Name and CIDR/Network columns');
+                    }
+
+                    // Parse rows
+                    const newLocalities = [];
+                    const duplicates = [];
+
+                    for (let i = 1; i < lines.length; i++) {
+                        const cols = parseCSVLine(lines[i]);
+                        
+                        const name = cols[nameIdx]?.trim();
+                        const cidrs = cols[cidrIdx]?.split(',').map(s => s.trim()).filter(s => s) || [];
+                        const externalStr = externalIdx !== -1 ? cols[externalIdx]?.trim().toLowerCase() : 'false';
+                        const external = ['true', 'external', '1', 'yes'].includes(externalStr);
+                        const description = descIdx !== -1 ? cols[descIdx]?.trim() : '';
+
+                        if (!name || cidrs.length === 0) {
+                            console.warn(`Skipping row ${i + 1}: missing name or CIDR`);
+                            continue;
+                        }
+
+                        // Check for duplicates in existing localities
+                        const isDuplicateName = localitiesState.currentLocalities.some(
+                            loc => !loc._deleted && loc.name.toLowerCase() === name.toLowerCase()
+                        );
+                        const isDuplicateCidr = localitiesState.currentLocalities.some(
+                            loc => !loc._deleted && loc.networks && loc.networks.some(net => cidrs.includes(net))
+                        );
+
+                        if (isDuplicateName || isDuplicateCidr) {
+                            duplicates.push({ name, cidrs: cidrs.join(', '), reason: isDuplicateName ? 'name' : 'CIDR' });
+                            continue;
+                        }
+
+                        newLocalities.push({
+                            name,
+                            networks: cidrs,
+                            external,
+                            description,
+                            _isNew: true
+                        });
+                    }
+
+                    // Add new localities to current state
+                    localitiesState.currentLocalities.push(...newLocalities);
+                    renderLocalitiesTable();
+
+                    // Show status
+                    let msg = `Loaded ${newLocalities.length} localities from CSV`;
+                    if (duplicates.length > 0) {
+                        msg += ` (${duplicates.length} duplicates skipped)`;
+                        console.warn('Duplicate localities skipped:', duplicates);
+                    }
+                    showLocalityStatus(msg, duplicates.length > 0 ? 'warning' : 'success');
+
+                    // Show duplicate report if any
+                    if (duplicates.length > 0) {
+                        const report = duplicates.map(d => `${d.name} (${d.reason} collision)`).join('\n');
+                        alert(`Duplicate Detection Report:\n\n${report}\n\nThese entries were not added. Please review and modify if needed.`);
+                    }
+
+                } catch (error) {
+                    showLocalityStatus(`Error parsing CSV: ${error.message}`, 'error');
+                }
+            };
+            reader.readAsText(file);
+            
+            // Reset file input
+            e.target.value = '';
+        }
+
+        function parseCSVLine(line) {
+            // Simple CSV parser that handles quoted fields
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current.trim());
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current.trim());
+            
+            return result;
+        }
+
+        function showLocalityStatus(message, type = 'success') {
+            const statusDiv = document.getElementById('localityStatus');
+            const statusText = document.getElementById('localityStatusText');
+            
+            statusDiv.style.display = 'block';
+            statusText.textContent = message;
+            
+            const colors = {
+                success: { bg: '#dcfce7', border: '#166534', text: '#166534' },
+                warning: { bg: '#fef3c7', border: '#92400e', text: '#92400e' },
+                error: { bg: '#fee2e2', border: '#dc2626', text: '#dc2626' }
+            };
+            
+            const color = colors[type] || colors.success;
+            statusDiv.querySelector('div').style.backgroundColor = color.bg;
+            statusDiv.querySelector('div').style.borderColor = color.border;
+            statusText.style.color = color.text;
+            
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Audit Log Analysis Module
+        const auditLogState = {
+            rawData: [],
+            operations: {},
+            dateRange: [],
+            actualDateRange: [], // Actual dates that have data
+            shouldStop: false,
+            charts: {
+                eventTypes: null,
+                loginPerDay: null,
+                loginByUser: null,
+                activityByUser: null
+            }
+        };
+
+        const ehColors = ['#7f2854', '#261f63', '#ec0089', '#00aaef', '#f05918', '#dae343'];
+
+        async function loadAuditLog() {
+            if (!state.connected) {
+                alert('Please connect to your ExtraHop instance first');
+                return;
+            }
+
+            const loadBtn = document.getElementById('loadAuditLog');
+            const stopBtn = document.getElementById('stopAuditLogLoad');
+            const loadingStatus = document.getElementById('auditLogLoadingStatus');
+            const loadingText = document.getElementById('auditLogLoadingText');
+            const batchSize = parseInt(document.getElementById('auditLogBatchSize').value);
+            const lookbackDays = parseInt(document.getElementById('auditLogLookback').value);
+
+            try {
+                loadBtn.disabled = true;
+                loadBtn.style.display = 'none';
+                stopBtn.style.display = 'block';
+                loadingStatus.style.display = 'block';
+                auditLogState.shouldStop = false;
+                
+                // Build date range
+                auditLogState.dateRange = [];
+                const today = new Date();
+                for (let i = 0; i < lookbackDays; i++) {
+                    const date = new Date(today);
+                    date.setDate(date.getDate() - i);
+                    auditLogState.dateRange.push(formatDate(date));
+                }
+                auditLogState.dateRange.reverse();
+
+                const cutoffDate = auditLogState.dateRange[0];
+
+                // Fetch audit log in batches
+                auditLogState.rawData = [];
+                let offset = 0;
+                let hasMore = true;
+                let totalFetched = 0;
+
+                while (hasMore && !auditLogState.shouldStop) {
+                    loadingText.textContent = `Loading audit log entries... (${totalFetched} fetched)`;
+                    
+                    const batch = await window.apiClient.getAuditLog(batchSize, offset);
+                    
+                    if (!batch || batch.length === 0) {
+                        hasMore = false;
+                        break;
+                    }
+
+                    auditLogState.rawData.push(...batch);
+                    totalFetched += batch.length;
+                    
+                    if (batch.length < batchSize) {
+                        hasMore = false;
+                    }
+                    
+                    offset += batchSize;
+                }
+
+                if (auditLogState.shouldStop) {
+                    showAuditLogStatus(`Loading stopped by user. Loaded ${auditLogState.rawData.length} entries.`, 'warning');
+                }
+
+                loadingText.textContent = 'Processing audit log data...';
+
+                // Process the data
+                processAuditLogData(cutoffDate);
+
+                // Populate operation type dropdown
+                populateOperationTypeDropdown();
+
+                // Generate charts
+                loadingText.textContent = 'Generating charts...';
+                generateAuditLogCharts();
+
+                // Show status
+                if (!auditLogState.shouldStop) {
+                    showAuditLogStatus(`Successfully loaded ${auditLogState.rawData.length} audit log entries`, 'success');
+                }
+                
+                // Show charts and export
+                document.getElementById('auditLogChartsContainer').style.display = 'block';
+                document.getElementById('exportAuditLogSection').style.display = 'block';
+
+            } catch (error) {
+                console.error('Error loading audit log:', error);
+                showAuditLogStatus(`Error loading audit log: ${error.message}`, 'error');
+            } finally {
+                loadBtn.disabled = false;
+                loadBtn.style.display = 'block';
+                stopBtn.style.display = 'none';
+                loadingStatus.style.display = 'none';
+            }
+        }
+
+        function stopAuditLogLoad() {
+            auditLogState.shouldStop = true;
+            document.getElementById('auditLogLoadingText').textContent = 'Stopping...';
+        }
+
+        function processAuditLogData(cutoffDate) {
+            auditLogState.operations = {};
+            const datesWithData = new Set();
+
+            for (const item of auditLogState.rawData) {
+                const entry = { ...item.body };
+                entry.id = item.id;
+                entry.time = item.occur_time;
+                
+                const dateObj = new Date(entry.time);
+                const dateStr = formatDate(dateObj);
+                entry.datetime = formatDateTime(dateObj);
+                
+                // Filter by date range
+                if (dateStr < cutoffDate) continue;
+
+                // Track dates that have data
+                datesWithData.add(dateStr);
+
+                // Normalize operation names
+                let operation = entry.operation;
+                if (operation.startsWith('Remove fngr-')) {
+                    operation = 'Remove Node';
+                } else if (operation.startsWith('Disable node')) {
+                    operation = 'Disable Node';
+                } else if (operation.startsWith('Enable node')) {
+                    operation = 'Enable Node';
+                }
+
+                if (!auditLogState.operations[operation]) {
+                    auditLogState.operations[operation] = [];
+                }
+                auditLogState.operations[operation].push(entry);
+            }
+
+            // Build actual date range (only dates with data)
+            auditLogState.actualDateRange = Array.from(datesWithData).sort();
+        }
+
+        function populateOperationTypeDropdown() {
+            const select = document.getElementById('exportOperationType');
+            select.innerHTML = '<option value="all">All Operations</option>';
+            
+            // Sort operations alphabetically
+            const sortedOps = Object.keys(auditLogState.operations).sort();
+            
+            sortedOps.forEach(op => {
+                const count = auditLogState.operations[op].length;
+                const option = document.createElement('option');
+                option.value = op;
+                option.textContent = `${op} (${count} entries)`;
+                select.appendChild(option);
+            });
+        }
+
+        function generateAuditLogCharts() {
+            // Destroy existing charts
+            Object.keys(auditLogState.charts).forEach(key => {
+                if (auditLogState.charts[key]) {
+                    auditLogState.charts[key].destroy();
+                    auditLogState.charts[key] = null;
+                }
+            });
+
+            // Chart 1: Logs per Event Type
+            generateEventTypesChart();
+
+            // Chart 2, 3, 4: Login-specific charts (only if Login events exist)
+            if (auditLogState.operations['Login']) {
+                generateLoginPerDayChart();
+                generateLoginByUserChart();
+                document.getElementById('chartLoginPerDayContainer').style.display = 'block';
+                document.getElementById('chartLoginByUserContainer').style.display = 'block';
+            } else {
+                document.getElementById('chartLoginPerDayContainer').style.display = 'none';
+                document.getElementById('chartLoginByUserContainer').style.display = 'none';
+            }
+
+            // Chart 5: All Activity per Day by User
+            generateActivityByUserChart();
+            document.getElementById('chartActivityByUserContainer').style.display = 'block';
+        }
+
+        function generateEventTypesChart() {
+            const ctx = document.getElementById('chartEventTypes');
+            
+            // Sort operations by count
+            const sortedOps = Object.entries(auditLogState.operations)
+                .map(([name, entries]) => ({ name, count: entries.length }))
+                .sort((a, b) => a.count - b.count);
+
+            const labels = sortedOps.map(op => op.name);
+            const data = sortedOps.map(op => op.count);
+
+            auditLogState.charts.eventTypes = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Number of Log Entries',
+                        data: data,
+                        backgroundColor: ehColors[0],
+                        borderColor: ehColors[0],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        title: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Events'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateLoginPerDayChart() {
+            const ctx = document.getElementById('chartLoginPerDay');
+            
+            const loginsByDay = {};
+            auditLogState.actualDateRange.forEach(date => {
+                loginsByDay[date] = 0;
+            });
+
+            auditLogState.operations['Login'].forEach(log => {
+                const dateObj = new Date(log.time);
+                const dateStr = formatDate(dateObj);
+                if (dateStr in loginsByDay) {
+                    loginsByDay[dateStr]++;
+                }
+            });
+
+            const labels = Object.keys(loginsByDay);
+            const data = Object.values(loginsByDay);
+
+            auditLogState.charts.loginPerDay = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Login Events',
+                        data: data,
+                        backgroundColor: ehColors[0],
+                        borderColor: ehColors[0],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Logins'
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateLoginByUserChart() {
+            const ctx = document.getElementById('chartLoginByUser');
+            
+            const loginsByUser = {};
+            auditLogState.operations['Login'].forEach(log => {
+                const user = log.user || 'unknown';
+                loginsByUser[user] = (loginsByUser[user] || 0) + 1;
+            });
+
+            // Sort by count
+            const sortedUsers = Object.entries(loginsByUser)
+                .map(([user, count]) => ({ user, count }))
+                .sort((a, b) => a.count - b.count);
+
+            const labels = sortedUsers.map(u => u.user === 'unknown' ? 'API' : u.user);
+            const data = sortedUsers.map(u => u.count);
+
+            auditLogState.charts.loginByUser = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Login Count',
+                        data: data,
+                        backgroundColor: ehColors.slice(0, data.length),
+                        borderColor: ehColors.slice(0, data.length),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Logins'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function generateActivityByUserChart() {
+            const ctx = document.getElementById('chartActivityByUser');
+            
+            // Build user activity by day
+            const userActivity = {};
+            
+            Object.values(auditLogState.operations).forEach(logs => {
+                logs.forEach(log => {
+                    if (!log.user) return;
+                    
+                    const user = log.user === 'unknown' ? 'API' : log.user;
+                    const dateObj = new Date(log.time);
+                    const dateStr = formatDate(dateObj);
+                    
+                    if (!userActivity[user]) {
+                        userActivity[user] = {};
+                    }
+                    
+                    if (!userActivity[user][dateStr]) {
+                        userActivity[user][dateStr] = 0;
+                    }
+                    
+                    userActivity[user][dateStr]++;
+                });
+            });
+
+            // Calculate total activity per user
+            const userTotals = {};
+            Object.entries(userActivity).forEach(([user, activity]) => {
+                userTotals[user] = Object.values(activity).reduce((sum, count) => sum + count, 0);
+            });
+
+            // Sort users by total activity and take top 10
+            const sortedUsers = Object.entries(userTotals)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10)
+                .map(([user]) => user);
+
+            // Aggregate remaining users into "Other"
+            const topUserActivity = {};
+            const otherActivity = {};
+            
+            Object.entries(userActivity).forEach(([user, activity]) => {
+                if (sortedUsers.includes(user)) {
+                    topUserActivity[user] = activity;
+                } else {
+                    Object.entries(activity).forEach(([date, count]) => {
+                        if (!otherActivity[date]) {
+                            otherActivity[date] = 0;
+                        }
+                        otherActivity[date] += count;
+                    });
+                }
+            });
+
+            // Add "Other" if there are users beyond top 10
+            if (Object.keys(otherActivity).length > 0) {
+                topUserActivity['Other'] = otherActivity;
+            }
+
+            // Fill in missing dates with 0 for all users
+            Object.keys(topUserActivity).forEach(user => {
+                auditLogState.actualDateRange.forEach(date => {
+                    if (!topUserActivity[user][date]) {
+                        topUserActivity[user][date] = 0;
+                    }
+                });
+            });
+
+            // Create datasets for stacked bar chart
+            const datasets = [];
+            let colorIndex = 0;
+            
+            Object.entries(topUserActivity).forEach(([user, activity]) => {
+                const data = auditLogState.actualDateRange.map(date => activity[date]);
+                
+                datasets.push({
+                    label: user,
+                    data: data,
+                    backgroundColor: ehColors[colorIndex % ehColors.length],
+                    borderColor: ehColors[colorIndex % ehColors.length],
+                    borderWidth: 1
+                });
+                
+                colorIndex++;
+            });
+
+            auditLogState.charts.activityByUser = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: auditLogState.actualDateRange,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        }
+                    },
+                    scales: {
+                        x: {
+                            stacked: true,
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Events'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function exportAuditLogCsv() {
+            if (auditLogState.rawData.length === 0) {
+                alert('No audit log data to export');
+                return;
+            }
+
+            const operationType = document.getElementById('exportOperationType').value;
+            let dataToExport = [];
+
+            if (operationType === 'all') {
+                dataToExport = auditLogState.rawData;
+            } else {
+                // Filter by operation type
+                const operationEntries = auditLogState.operations[operationType];
+                if (!operationEntries || operationEntries.length === 0) {
+                    alert(`No entries found for operation type: ${operationType}`);
+                    return;
+                }
+                
+                // Map back to raw data format
+                dataToExport = operationEntries.map(entry => ({
+                    id: entry.id,
+                    occur_time: entry.time,
+                    body: entry
+                }));
+            }
+
+            // Prepare CSV data
+            const headers = ['ID', 'Date/Time', 'Operation', 'User', 'Details'];
+            const rows = [headers];
+
+            dataToExport.forEach(item => {
+                const entry = item.body;
+                const dateObj = new Date(item.occur_time);
+                const dateTime = formatDateTime(dateObj);
+                
+                const details = JSON.stringify(entry).replace(/"/g, '""');
+                
+                rows.push([
+                    item.id,
+                    dateTime,
+                    entry.operation || '',
+                    entry.user || 'unknown',
+                    `"${details}"`
+                ]);
+            });
+
+            // Convert to CSV string
+            const csvContent = rows.map(row => row.join(',')).join('\n');
+
+            // Download
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            
+            const filename = operationType === 'all' 
+                ? `audit_log_all_${formatDate(new Date())}.csv`
+                : `audit_log_${operationType.replace(/\s+/g, '_')}_${formatDate(new Date())}.csv`;
+            
+            link.setAttribute('href', url);
+            link.setAttribute('download', filename);
+            link.style.visibility = 'hidden';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            const statusMsg = operationType === 'all' 
+                ? `CSV export completed (${dataToExport.length} entries)`
+                : `CSV export completed for ${operationType} (${dataToExport.length} entries)`;
+            showAuditLogStatus(statusMsg, 'success');
+        }
+
+        function showAuditLogStatus(message, type = 'success') {
+            const statusDiv = document.getElementById('auditLogStatus');
+            const statusText = document.getElementById('auditLogStatusText');
+            
+            statusDiv.style.display = 'block';
+            statusText.textContent = message;
+            
+            const colors = {
+                success: { bg: '#dcfce7', border: '#166534', text: '#166534' },
+                warning: { bg: '#fef3c7', border: '#92400e', text: '#92400e' },
+                error: { bg: '#fee2e2', border: '#dc2626', text: '#dc2626' }
+            };
+            
+            const color = colors[type] || colors.success;
+            statusDiv.querySelector('div').style.backgroundColor = color.bg;
+            statusDiv.querySelector('div').style.borderColor = color.border;
+            statusText.style.color = color.text;
+            
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        function formatDate(date) {
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = String(date.getFullYear()).slice(-2);
+            return `${month}-${day}-${year}`;
+        }
+
+        function formatDateTime(date) {
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = String(date.getFullYear()).slice(-2);
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return `${month}-${day}-${year} ${hours}:${minutes}:${seconds}`;
+        }
+
+        // Event listeners for Audit Log module
+        document.getElementById('loadAuditLog').addEventListener('click', loadAuditLog);
+        document.getElementById('stopAuditLogLoad').addEventListener('click', stopAuditLogLoad);
+        document.getElementById('exportAuditLogCsv').addEventListener('click', exportAuditLogCsv);
+
+        // Event listeners for Network Localities module
+        document.getElementById('loadLocalities').addEventListener('click', loadNetworkLocalities);
+        document.getElementById('addLocalityRow').addEventListener('click', addLocalityRow);
+        document.getElementById('saveLocalityChanges').addEventListener('click', saveLocalityChanges);
+        document.getElementById('localityCsvInput').addEventListener('change', handleCsvUpload);
+
+    </script>
+</body>
+</html>
