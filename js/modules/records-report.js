@@ -451,7 +451,7 @@ function initCrsUsageModule() {
     console.log('Initializing Records Report module');
     
     // Set up event listeners specific to CRS module
-    if (!document.querySelector('.crs-period-btn').hasAttribute('data-listener-added')) {
+    if (!document.getElementById('generateCrsReport').hasAttribute('data-listener-added')) {
         document.querySelectorAll('.crs-period-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.crs-period-btn').forEach(b => b.classList.remove('active'));
@@ -504,6 +504,9 @@ function initCrsUsageModule() {
         });
 
         document.getElementById('generateCrsReport').addEventListener('click', generateCRSReport);
+        
+        // Mark that listeners have been added
+        document.getElementById('generateCrsReport').setAttribute('data-listener-added', 'true');
     }
     
     // Initialize the UI state
