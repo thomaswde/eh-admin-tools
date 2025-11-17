@@ -174,40 +174,391 @@
                 </div>
             </div>
 
-            <!-- Module content containers will be populated by JavaScript -->
-            <!-- These are placeholders - the actual HTML content would be extracted from the original file -->
-            
             <!-- Dashboard Manager Module -->
             <div id="dashboardsModule" class="module-content" style="display: none;">
-                <!-- Dashboard manager HTML content goes here -->
-                <div class="p-6">
+                <div class="mb-6">
                     <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Dashboard Manager</h2>
                     <p class="mt-2" style="color: var(--text-muted);">Manage dashboard ownership, sharing, and deletion at scale</p>
-                    <!-- Rest of dashboard HTML content -->
+                </div>
+
+                <!-- Controls -->
+                <div class="mb-6 space-y-4">
+                    <div class="flex flex-wrap gap-4">
+                        <input type="text" id="searchDashboards" placeholder="Search dashboards..." class="flex-1 min-w-[200px] px-4 py-2 rounded border">
+                        <input type="text" id="filterOwner" placeholder="Filter by owner..." class="flex-1 min-w-[200px] px-4 py-2 rounded border">
+                        <button id="loadDashboardsBtn" class="btn-primary px-6 py-2 rounded font-semibold">
+                            Load Dashboards
+                        </button>
+                    </div>
+
+                    <!-- Bulk Actions -->
+                    <div id="bulkActions" class="flex flex-wrap gap-3" style="display: none;">
+                        <button id="bulkChangeOwnerBtn" class="btn-secondary px-4 py-2 rounded font-semibold">
+                            Change Owner
+                        </button>
+                        <button id="bulkShareBtn" class="btn-secondary px-4 py-2 rounded font-semibold">
+                            Modify Sharing
+                        </button>
+                        <button id="bulkDeleteBtn" class="btn-danger px-4 py-2 rounded font-semibold">
+                            Delete Selected
+                        </button>
+                        <span id="selectedCount" class="px-4 py-2 font-semibold" style="color: var(--text-secondary);"></span>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div id="dashboardsLoading" class="text-center py-20" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p style="color: var(--text-muted);">Loading dashboards...</p>
+                </div>
+
+                <!-- Dashboard Table -->
+                <div id="dashboardsTableContainer" class="table-container rounded-lg overflow-hidden" style="display: none;">
+                    <table id="dashboardsTable">
+                        <thead>
+                            <tr>
+                                <th width="40">
+                                    <input type="checkbox" id="selectAll">
+                                </th>
+                                <th>Dashboard Name</th>
+                                <th width="150">Owner</th>
+                                <th width="100">Shared</th>
+                                <th width="200">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dashboardsTableBody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div id="paginationContainer" class="mt-6 flex justify-between items-center" style="display: none;">
+                    <div style="color: var(--text-secondary);">
+                        <span id="paginationInfo"></span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="prevPageBtn" class="btn-secondary px-4 py-2 rounded">Previous</button>
+                        <button id="nextPageBtn" class="btn-secondary px-4 py-2 rounded">Next</button>
+                    </div>
                 </div>
             </div>
 
             <!-- Records Report Module -->
             <div id="crs-usageModule" class="module-content" style="display: none;">
-                <div class="p-6">
+                <div class="mb-6">
                     <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Records Report</h2>
-                    <!-- CRS usage HTML content -->
+                    <p class="mt-2" style="color: var(--text-muted);">Analyze record storage capacity and compression ratios</p>
+                </div>
+
+                <!-- Configuration Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <!-- Time Period Selection -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Time Period</h3>
+                        <div class="space-y-3">
+                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border active" data-period="yesterday">
+                                <div class="font-semibold">Yesterday</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Previous day's data</div>
+                            </button>
+                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="week">
+                                <div class="font-semibold">Last 7 Days</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Weekly trend analysis</div>
+                            </button>
+                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="month">
+                                <div class="font-semibold">Last 30 Days</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Monthly overview</div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Capacity Data Input -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Data (Optional)</h3>
+                        <p class="text-sm mb-4" style="color: var(--text-muted);">Provide capacity data to calculate compression ratios. Leave blank to view raw record bytes only.</p>
+                        
+                        <!-- Input Method Selection -->
+                        <div id="capacityInputSection" class="mb-4">
+                            <div class="flex gap-3 mb-4">
+                                <button class="capacity-input-btn flex-1 px-4 py-2 rounded border active" data-input="manual">
+                                    Manual Entry
+                                </button>
+                                <button class="capacity-input-btn flex-1 px-4 py-2 rounded border" data-input="csv">
+                                    CSV Upload
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Manual Input Fields -->
+                        <div id="manualCapacityInput" class="space-y-3">
+                            <div>
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Reserved Capacity (GB)</label>
+                                <input type="number" id="reservedCapacity" placeholder="e.g., 1500" class="w-full px-3 py-2 rounded border">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Utilized Capacity (GB)</label>
+                                <input type="number" id="utilizedCapacity" placeholder="e.g., 817" class="w-full px-3 py-2 rounded border">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">From your data lake (BigQuery/LogScale/Elastic)</p>
+                            </div>
+                        </div>
+
+                        <!-- CSV Upload Fields -->
+                        <div id="csvCapacityInput" class="space-y-3" style="display: none;">
+                            <div>
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Upload Usage CSV</label>
+                                <input type="file" id="csvFileInput" accept=".csv" class="w-full px-3 py-2 rounded border">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">CSV with "Summary Date UTC", "Utilized", and "Reserved" columns</p>
+                            </div>
+                            <div id="csvPreview" style="display: none;">
+                                <p class="text-sm font-medium mb-2" style="color: var(--text-secondary);">Parsed Data:</p>
+                                <div class="p-3 rounded text-xs" style="background-color: var(--bg-subtle);">
+                                    <div id="csvSummary"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- CRS Trend Analysis Tool Link -->
+                        <div class="mt-4 pt-4" style="border-top: 1px solid var(--border-color);">
+                            <a href="https://thomaswde.github.io/crs-report/" target="_blank" rel="noopener noreferrer" class="btn-primary w-full px-4 py-2 rounded font-semibold flex items-center justify-center gap-2" style="display: flex;">
+                                <span>Open CRS Trend Analysis Tool</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Generate Report Button -->
+                <div class="mb-6">
+                    <button id="generateCrsReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
+                        Generate Report
+                    </button>
+                </div>
+
+                <!-- Loading State -->
+                <div id="crsLoading" class="text-center py-20" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p style="color: var(--text-muted);">Fetching appliance data and calculating metrics...</p>
+                </div>
+
+                <!-- Results Section -->
+                <div id="crsResults" style="display: none;">
+                    <!-- KPI Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--cyan);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Compression Ratio</div>
+                            <div id="compressionRatio" class="text-4xl font-bold" style="color: var(--cyan);">-</div>
+                            <div id="compressionRatioSubtext" class="text-xs mt-2" style="color: var(--text-muted);">1 GB stored : X GB ingested</div>
+                        </div>
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--magenta);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Total Record Bytes</div>
+                            <div id="totalRecordBytes" class="text-4xl font-bold" style="color: var(--magenta);">-</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">From all EDA appliances</div>
+                        </div>
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Capacity Utilization</div>
+                            <div id="capacityUtilization" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
+                            <div id="capacityUtilizationSubtext" class="text-xs mt-2" style="color: var(--text-muted);">Of reserved capacity</div>
+                        </div>
+                    </div>
+
+                    <!-- Charts -->
+                    <div class="space-y-6">
+                        <!-- Stacked Bar Chart -->
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 id="stackedChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Consumption by Sensor</h3>
+                            <div style="position: relative; height: 150px;">
+                                <canvas id="stackedBarChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Bar Chart -->
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 id="barChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Utilization by Sensor</h3>
+                            <div style="position: relative; height: 400px;">
+                                <canvas id="sensorBarChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Data Table -->
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Breakdown</h3>
+                            <div class="table-container rounded-lg overflow-hidden">
+                                <table id="crsDataTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Sensor Name</th>
+                                            <th>Platform</th>
+                                            <th>Record Bytes (GB)</th>
+                                            <th>After Compression (GB)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="crsDataTableBody">
+                                        <!-- Populated dynamically -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <!-- Network Localities Module -->
             <div id="localitiesModule" class="module-content" style="display: none;">
-                <div class="p-6">
+                <div class="mb-6">
                     <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Network Localities Manager</h2>
-                    <!-- Localities HTML content -->
+                    <p class="mt-2" style="color: var(--text-muted);">Manage network locality entries to designate IP addresses and CIDR blocks as internal or external</p>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex flex-wrap gap-3 mb-6">
+                    <button id="loadLocalities" class="btn-primary px-6 py-2 rounded font-semibold">
+                        Load Existing Localities
+                    </button>
+                    <button id="addLocalityRow" class="btn-secondary px-6 py-2 rounded font-semibold" style="display: none;">
+                        + Add Row
+                    </button>
+                    <button id="saveLocalityChanges" class="btn-primary px-6 py-2 rounded font-semibold" style="display: none;">
+                        Save Changes
+                    </button>
+                    <label class="btn-secondary px-6 py-2 rounded font-semibold cursor-pointer" style="display: none;" id="uploadCsvLabel">
+                        Upload CSV
+                        <input type="file" id="localityCsvInput" accept=".csv" class="hidden">
+                    </label>
+                </div>
+
+                <!-- Status Messages -->
+                <div id="localityStatus" class="mb-4" style="display: none;">
+                    <div class="p-4 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <p id="localityStatusText" class="text-sm"></p>
+                    </div>
+                </div>
+
+                <!-- Loading Indicator -->
+                <div id="localitiesLoading" class="text-center py-12" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p style="color: var(--text-muted);">Loading network localities...</p>
+                </div>
+
+                <!-- Localities Table -->
+                <div id="localitiesTable" class="table-container rounded-lg overflow-x-auto" style="display: none;">
+                    <table id="localitiesDataTable" class="w-full">
+                        <thead>
+                            <tr>
+                                <th style="width: 20%;">Network Locality Name</th>
+                                <th style="width: 30%;">IP Addresses and CIDR Blocks</th>
+                                <th style="width: 15%;">Network Locality Type</th>
+                                <th style="width: 25%;">Description</th>
+                                <th style="width: 10%;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="localitiesTableBody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
             <!-- Audit Logs Module -->
             <div id="audit-logsModule" class="module-content" style="display: none;">
-                <div class="p-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Audit Log Analyzer</h2>
-                    <!-- Audit logs HTML content -->
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Audit Log Analysis</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Analyze audit log entries, user activity, and operation trends</p>
+                </div>
+
+                <!-- Configuration Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <!-- Settings -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Settings</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Lookback Period (Days)</label>
+                                <input type="number" id="auditLogLookback" value="90" min="1" max="90" 
+                                    class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">Maximum 90 days (ExtraHop audit log retention)</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Batch Size</label>
+                                <input type="number" id="auditLogBatchSize" value="100" min="10" max="1000" 
+                                    class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">Number of entries to fetch per request</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Actions</h3>
+                        <div class="space-y-3">
+                            <button id="loadAuditLog" class="btn-primary w-full px-4 py-3 rounded font-semibold">
+                                Load Audit Log
+                            </button>
+                            <button id="stopAuditLogLoad" class="btn-danger w-full px-4 py-3 rounded font-semibold" style="display: none;">
+                                Stop Loading
+                            </button>
+                            <div id="exportAuditLogSection" style="display: none;">
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Export Operation Type</label>
+                                <select id="exportOperationType" class="w-full px-3 py-2 border rounded mb-2" style="background-color: var(--bg-input); border-color: var(--border-color);">
+                                    <option value="all">All Operations</option>
+                                </select>
+                                <button id="exportAuditLogCsv" class="btn-secondary w-full px-4 py-3 rounded font-semibold">
+                                    Export to CSV
+                                </button>
+                            </div>
+                        </div>
+                        <div id="auditLogLoadingStatus" class="mt-4 text-sm" style="color: var(--text-muted); display: none;">
+                            <div class="flex items-center">
+                                <div class="animate-spin mr-2" style="width: 16px; height: 16px; border: 2px solid var(--cyan); border-top-color: transparent; border-radius: 50%;"></div>
+                                <span id="auditLogLoadingText">Loading...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Display -->
+                <div id="auditLogStatus" style="display: none;" class="mb-6">
+                    <div class="p-4 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <div class="text-sm font-semibold" style="color: var(--text-primary);" id="auditLogStatusText"></div>
+                    </div>
+                </div>
+
+                <!-- Charts Container -->
+                <div id="auditLogChartsContainer" style="display: none;">
+                    
+                    <!-- Chart 1: Logs per Event Type -->
+                    <div class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Logs per Event Type</h3>
+                        <div style="position: relative; height: 500px;">
+                            <canvas id="chartEventTypes"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 2: Login Events per Day -->
+                    <div id="chartLoginPerDayContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Login Events per Day (All Users)</h3>
+                        <div style="position: relative; height: 400px;">
+                            <canvas id="chartLoginPerDay"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 3: Total Login Events by Username -->
+                    <div id="chartLoginByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Total Login Events by Username</h3>
+                        <div style="position: relative; height: 500px;">
+                            <canvas id="chartLoginByUser"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Chart 4: All Activity per Day by User -->
+                    <div id="chartActivityByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">All Activity per Day Broken Down by User</h3>
+                        <div style="position: relative; height: 500px;">
+                            <canvas id="chartActivityByUser"></canvas>
+                        </div>
+                    </div>
+
                 </div>
             </div>
         </main>
