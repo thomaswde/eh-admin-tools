@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ExtraHop API Tools</title>
+    <link rel="icon" href="favicon.png" type="image/png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Load modular CSS -->
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- TOP RIBBON -->
+    <div class="top-ribbon">
+        <img src="eh_logo.png" alt="ExtraHop" class="ribbon-logo">
+        <span class="ribbon-title">API Tools</span>
+        <span id="ribbonModuleTitle" class="ribbon-module-title"></span>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="content-wrapper flex flex-col lg:flex-row min-h-screen">
+        <!-- SIDEBAR -->
+        <aside class="w-full lg:w-80 border-r p-6 space-y-6 lg:fixed lg:h-full lg:overflow-y-auto">
+            <!-- API Configuration Section -->
+            <div id="apiConfigSection" class="space-y-4">
+                <!-- Connected State (Hidden Initially) -->
+                <div id="connectedState" class="hidden">
+                    <div class="flex items-center justify-between p-3 rounded cursor-pointer" style="background-color: var(--bg-subtle);" onclick="toggleApiConfig()">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-2" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <span class="font-semibold" style="color: var(--text-primary);">Connected</span>
+                        </div>
+                        <svg id="expandIcon" class="w-5 h-5 transition-transform" style="color: var(--text-secondary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </div>
+                    <p class="text-xs mt-2 text-center" style="color: var(--text-muted);" id="connectedInfo"></p>
+                </div>
+
+                <!-- Configuration Form -->
+                <div id="configForm">
+                    <h2 class="text-lg font-semibold" style="color: var(--text-primary);">API Configuration</h2>
+                    
+                    <!-- Deployment Type -->
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Deployment Type</label>
+                        <select id="deploymentType" class="w-full px-3 py-2 rounded border">
+                            <option value="360">RevealX 360 (Cloud)</option>
+                            <option value="enterprise">RevealX Enterprise (On-Premises)</option>
+                        </select>
+                    </div>
+
+                    <!-- 360 Configuration -->
+                    <div id="config360" class="space-y-3">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Tenant Name</label>
+                            <input type="text" id="tenantName" placeholder="e.g., extrahop-se" class="w-full px-3 py-2 rounded border">
+                            <p class="text-xs mt-1" style="color: var(--text-muted);">From: tenant.api.cloud.extrahop.com</p>
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API ID</label>
+                            <input type="text" id="apiId" class="w-full px-3 py-2 rounded border">
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Secret</label>
+                            <input type="password" id="apiSecret" class="w-full px-3 py-2 rounded border">
+                        </div>
+                        <div class="mb-4">
+                            <label class="flex items-center cursor-pointer">
+                                <input type="checkbox" id="useAwsProxy" checked class="mr-2">
+                                <span class="text-sm" style="color: var(--text-secondary);">Use AWS Proxy</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Enterprise Configuration -->
+                    <div id="configEnterprise" class="space-y-3" style="display: none;">
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Hostname or IP</label>
+                            <input type="text" id="enterpriseHost" placeholder="e.g., extrahop.company.com" class="w-full px-3 py-2 rounded border">
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Key</label>
+                            <input type="password" id="enterpriseApiKey" class="w-full px-3 py-2 rounded border">
+                        </div>
+                    </div>
+
+                    <button id="connectBtn" class="btn-primary w-full py-2 px-4 rounded font-semibold">
+                        Connect
+                    </button>
+                </div>
+            </div>
+
+            <!-- Connection Status -->
+            <div id="connectionStatus" style="display: none;">
+                <div class="p-3 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                    <p id="statusText" class="text-sm font-medium"></p>
+                </div>
+            </div>
+
+            <!-- Module Selection -->
+            <div id="moduleSelection" style="display: none;">
+                <h2 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Tools</h2>
+                <nav class="space-y-2">
+                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="dashboards">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-3" style="color: var(--sapphire);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path>
+                            </svg>
+                            <div>
+                                <div class="font-semibold">Dashboard Manager</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Manage dashboards at scale</div>
+                            </div>
+                        </div>
+                    </button>
+                    
+                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="crs-usage">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-3" style="color: var(--plum);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            <div>
+                                <div class="font-semibold">Records Report</div>
+                                <div class="text-xs" style="color: var(--text-muted);">CRS usage analysis</div>
+                            </div>
+                        </div>
+                    </button>
+
+                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="localities">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-3" style="color: var(--tangerine);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
+                            </svg>
+                            <div>
+                                <div class="font-semibold">Network Localities</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Manage network locality definitions</div>
+                            </div>
+                        </div>
+                    </button>
+
+                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="audit-logs">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-3" style="color: var(--magenta);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            <div>
+                                <div class="font-semibold">Audit Logs</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Analyze audit log data</div>
+                            </div>
+                        </div>
+                    </button>
+                </nav>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT AREA -->
+        <main class="flex-1 lg:ml-80 min-h-screen" style="background-color: var(--bg-primary);">
+            <!-- Welcome Screen -->
+            <div id="welcomeScreen" class="flex items-center justify-center h-full">
+                <div class="text-center p-8">
+                    <img src="eh_logo.png" alt="ExtraHop" class="mx-auto mb-6 h-16">
+                    <h1 class="text-3xl font-bold mb-4" style="color: var(--sapphire);">ExtraHop API Tools</h1>
+                    <p class="text-lg mb-6" style="color: var(--text-secondary);">Connect to your ExtraHop deployment to get started</p>
+                    <div class="max-w-md mx-auto" style="color: var(--text-muted);">
+                        <p class="text-sm">This tool provides a web-based interface for managing ExtraHop resources via API. Configure your connection in the sidebar to begin.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Module content containers will be populated by JavaScript -->
+            <!-- These are placeholders - the actual HTML content would be extracted from the original file -->
+            
+            <!-- Dashboard Manager Module -->
+            <div id="dashboardsModule" class="module-content" style="display: none;">
+                <!-- Dashboard manager HTML content goes here -->
+                <div class="p-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Dashboard Manager</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Manage dashboard ownership, sharing, and deletion at scale</p>
+                    <!-- Rest of dashboard HTML content -->
+                </div>
+            </div>
+
+            <!-- Records Report Module -->
+            <div id="crs-usageModule" class="module-content" style="display: none;">
+                <div class="p-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Records Report</h2>
+                    <!-- CRS usage HTML content -->
+                </div>
+            </div>
+
+            <!-- Network Localities Module -->
+            <div id="localitiesModule" class="module-content" style="display: none;">
+                <div class="p-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Network Localities Manager</h2>
+                    <!-- Localities HTML content -->
+                </div>
+            </div>
+
+            <!-- Audit Logs Module -->
+            <div id="audit-logsModule" class="module-content" style="display: none;">
+                <div class="p-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Audit Log Analyzer</h2>
+                    <!-- Audit logs HTML content -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Error Modal -->
+    <div id="errorModal" class="modal">
+        <div class="modal-content">
+            <h2 class="text-xl font-bold mb-4" style="color: var(--text-primary);">Connection Error</h2>
+            <p id="errorMessage" class="mb-4" style="color: var(--text-secondary);"></p>
+            
+            <div class="mb-4">
+                <button id="toggleErrorDetails" class="btn-secondary px-4 py-2 rounded text-sm">
+                    Show Technical Details
+                </button>
+            </div>
+            
+            <div id="errorDetails" style="display: none;">
+                <div class="bg-gray-50 p-3 rounded text-xs space-y-2">
+                    <div><strong>URL:</strong> <code id="errorUrl"></code></div>
+                    <div><strong>Headers:</strong> <pre id="errorHeaders" class="whitespace-pre-wrap"></pre></div>
+                    <div><strong>Body:</strong> <pre id="errorBody" class="whitespace-pre-wrap"></pre></div>
+                    <div><strong>Status:</strong> <code id="errorStatus"></code></div>
+                    <div><strong>Response:</strong> <pre id="errorResponse" class="whitespace-pre-wrap"></pre></div>
+                </div>
+            </div>
+            
+            <div class="flex justify-end mt-6">
+                <button id="closeErrorModal" class="btn-primary px-4 py-2 rounded">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load JavaScript Modules -->
+    <script src="js/utils/app-state.js"></script>
+    <script src="js/api-client/extrahop-api.js"></script>
+    <script src="js/utils/common.js"></script>
+    <script src="js/auth/auth-manager.js"></script>
+    <script src="js/utils/module-loader.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
