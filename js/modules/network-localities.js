@@ -395,7 +395,7 @@ function initLocalitiesModule() {
         document.getElementById('loadLocalities').addEventListener('click', loadNetworkLocalities);
         document.getElementById('addLocalityRow').addEventListener('click', addLocalityRow);
         document.getElementById('saveLocalityChanges').addEventListener('click', saveLocalityChanges);
-        document.getElementById('uploadCsv').addEventListener('change', handleCsvUpload);
+        document.getElementById('localityCsvInput').addEventListener('change', handleCsvUpload);
         
         document.getElementById('loadLocalities').setAttribute('data-listener-added', 'true');
     }

@@ -132,7 +132,7 @@ function processAuditLogData(cutoffDate) {
 }
 
 function populateOperationTypeDropdown() {
-    const dropdown = document.getElementById('operationTypeFilter');
+    const dropdown = document.getElementById('exportOperationType');
     dropdown.innerHTML = '<option value="">All Operations</option>';
     
     Object.keys(auditLogState.operations).sort().forEach(opType => {
