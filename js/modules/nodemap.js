@@ -114,6 +114,16 @@ function matchesSearch(appliance) {
     if (!nodemapState.searchTerm) return true;
     
     const term = nodemapState.searchTerm.toLowerCase();
+    const productModulesRaw = appliance.product_modules;
+    const licensedModulesRaw = appliance.licensed_modules;
+
+    const productModules = Array.isArray(productModulesRaw)
+        ? productModulesRaw
+        : (productModulesRaw ? [productModulesRaw] : []);
+
+    const licensedModules = Array.isArray(licensedModulesRaw)
+        ? licensedModulesRaw
+        : (licensedModulesRaw ? [licensedModulesRaw] : []);
     const searchableFields = [
         appliance.display_name,
         appliance.hostname,
@@ -124,8 +134,8 @@ function matchesSearch(appliance) {
         appliance.status_message,
         appliance.uuid,
         appliance.id?.toString(),
-        ...(appliance.product_modules || []),
-        ...(appliance.licensed_modules || [])
+        ...productModules,
+        ...licensedModules
     ];
     
     return searchableFields.some(field => 
