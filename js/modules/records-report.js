@@ -58,6 +58,33 @@ function updateCapacityInputOptions() {
             document.getElementById('csvCapacityInput').style.display = 'block';
         }
     }
+
+    // Update environment-specific helper tips after adjusting visibility
+    updateCapacityTips();
+}
+
+// Show environment-specific helper tips for RevealX 360
+function updateCapacityTips() {
+    const manualTip = document.getElementById('manualCapacityTip360');
+    const csvTip = document.getElementById('csvCapacityTip360');
+
+    if (!manualTip || !csvTip) return;
+
+    const is360 = !!(window.state && window.state.apiConfig && window.state.apiConfig.type === '360');
+
+    if (!is360) {
+        manualTip.style.display = 'none';
+        csvTip.style.display = 'none';
+        return;
+    }
+
+    if (crsState.inputMethod === 'manual') {
+        manualTip.style.display = 'block';
+        csvTip.style.display = 'none';
+    } else {
+        manualTip.style.display = 'none';
+        csvTip.style.display = 'block';
+    }
 }
 
 // Helper functions
@@ -475,6 +502,9 @@ function initCrsUsageModule() {
                     document.getElementById('manualCapacityInput').style.display = 'none';
                     document.getElementById('csvCapacityInput').style.display = 'block';
                 }
+
+                // Update helper tips when the input method changes
+                updateCapacityTips();
             });
             btn.setAttribute('data-listener-added', 'true');
         });

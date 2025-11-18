@@ -327,6 +327,9 @@
                                 <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Utilized Capacity (GB)</label>
                                 <input type="number" id="utilizedCapacity" placeholder="e.g., 817" class="w-full px-3 py-2 rounded border">
                                 <p class="text-xs mt-1" style="color: var(--text-muted);">From your data lake (BigQuery/LogScale/Elastic)</p>
+                                <p id="manualCapacityTip360" class="text-xs mt-1" style="color: var(--text-muted); display: none;">
+                                    For RevealX 360, you can find reserved and utilized capacity on the Administration page of your RevealX 360 Cloud Console.
+                                </p>
                             </div>
                         </div>
 
@@ -336,6 +339,9 @@
                                 <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Upload Usage CSV</label>
                                 <input type="file" id="csvFileInput" accept=".csv" class="w-full px-3 py-2 rounded border">
                                 <p class="text-xs mt-1" style="color: var(--text-muted);">CSV with "Summary Date UTC", "Utilized", and "Reserved" columns</p>
+                                <p id="csvCapacityTip360" class="text-xs mt-1" style="color: var(--text-muted); display: none;">
+                                    For RevealX 360, you can export this data as the "R(x) 360 Detailed Tenant CRS Usage" report from Salesforce. If you are not an ExtraHop employee, contact your ExtraHop CSM to obtain this CSV.
+                                </p>
                             </div>
                             <div id="csvPreview" style="display: none;">
                                 <p class="text-sm font-medium mb-2" style="color: var(--text-secondary);">Parsed Data:</p>
