@@ -207,13 +207,16 @@ async function fetchCRSData(dateRange) {
     
     const results = [];
     
+    // Use the full selected date range for the metrics query so that
+    // multi-day periods (week/month) return aggregated record bytes
+    const startTimes = getDateUnixTimes(dateRange.start);
+    const endTimes = getDateUnixTimes(dateRange.end);
+    
     for (const appliance of edaAppliances) {
-        const times = getDateUnixTimes(dateRange.end); // Use end date for single day query
-        
         const metricPayload = {
             cycle: 'auto',
-            from: times.from,
-            until: times.until,
+            from: startTimes.from,
+            until: endTimes.until,
             metric_category: 'capture',
             metric_specs: [{ name: 'record_bytes' }],
             object_ids: [appliance.id],
