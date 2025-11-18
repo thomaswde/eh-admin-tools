@@ -75,18 +75,6 @@ function switchModule(moduleName) {
     document.getElementById('welcomeScreen').style.display = 'none';
     document.getElementById(`${moduleName}Module`).style.display = 'block';
 
-    // Update ribbon module title
-    const moduleTitles = {
-        'dashboards': 'Dashboard Manager',
-        'audit-logs': 'Audit Log Analyzer',
-        'detections': 'Detections',
-        'devices': 'Device Manager',
-        'analysis-priorities': 'Analysis Priorities',
-        'localities': 'Network Localities Manager',
-        'nodemap': 'Appliance Node Map'
-    };
-    document.getElementById('ribbonModuleTitle').textContent = moduleTitles[moduleName] || '';
-
     state.currentModule = moduleName;
 
     // Call module-specific activation function if it exists

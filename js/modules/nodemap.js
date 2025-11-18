@@ -55,7 +55,7 @@ function getNodeInfo(appliance) {
     } else {
         // Fallback: check if model name has V before underscore or at end
         const licensePlatform = appliance.license_platform || '';
-        if (licensePlatform.match(/V(_|$)/)) {
+        if (licensePlatform.match(/V(_|$)/) || licensePlatform.includes('ECA')) {
             isVirtual = true;
         }
     }
@@ -178,20 +178,22 @@ function renderGraph() {
     const svg = d3.select('#nodeGraph');
     const container = document.getElementById('graphContainer');
     
-    // Calculate dimensions
+    // Calculate width based on available space; height will be set based on
+    // the actual node layout so we don't leave a large empty bottom area.
     const width = container.clientWidth - 48;
-    const height = Math.max(400, window.innerHeight - 200);
-    
-    // Update container and SVG sizes
-    container.style.height = height + 'px';
-    container.style.minHeight = height + 'px';
-    svg.attr('width', width).attr('height', height);
+    const defaultHeight = 400;
+    svg.attr('width', width);
     svg.selectAll('*').remove();
 
     if (nodemapState.appliances.length === 0) {
+        // Empty state: use a sensible default height
+        container.style.height = defaultHeight + 'px';
+        container.style.minHeight = defaultHeight + 'px';
+        svg.attr('height', defaultHeight);
+
         svg.append('text')
             .attr('x', width / 2)
-            .attr('y', height / 2)
+            .attr('y', defaultHeight / 2)
             .attr('text-anchor', 'middle')
             .attr('fill', '#9ca3af')
             .text('No appliances to display');
@@ -335,6 +337,23 @@ function renderGraph() {
     
     const traceY = discoverMaxY + verticalGap;
     const tracePositions = calculatePositions(traceAppliances, traceY);
+
+    // Determine the total required height based on the lowest row that has
+    // nodes, so the SVG height closely matches the actual content.
+    let contentBottom = commandMaxY;
+    if (discoverPositions.length > 0) {
+        contentBottom = discoverMaxY;
+    }
+    if (tracePositions.length > 0) {
+        const traceMaxY = Math.max(...tracePositions.map(p => p.y)) + nodeHeight;
+        contentBottom = traceMaxY;
+    }
+
+    const height = Math.max(400, contentBottom + verticalGap);
+
+    container.style.height = height + 'px';
+    container.style.minHeight = height + 'px';
+    svg.attr('height', height);
 
     // Add CSS for links and nodes
     const defs = svg.append('defs');
