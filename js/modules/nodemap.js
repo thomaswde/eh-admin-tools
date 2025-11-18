@@ -352,7 +352,6 @@ function renderGraph() {
             }
             .node-rect:hover {
                 stroke-width: 3;
-                fill-opacity: 0.3;
             }
             .node-rect.virtual {
                 stroke-dasharray: 5,5;
@@ -402,8 +401,35 @@ function renderGraph() {
             const x = pos.x;
             const y = pos.y;
             const info = getNodeInfo(appliance);
-            const color = platformColors[info.platform] || '#6b7280';
             const statusInfo = getStatusInfo(appliance);
+
+            const model = (appliance.license_platform || '').toString().toUpperCase();
+            let typeTag = 'other';
+
+            if (info.platform === 'command') {
+                typeTag = 'command';
+            } else if (model.startsWith('EFC')) {
+                typeTag = 'efc';
+            } else if (model.startsWith('EDA')) {
+                typeTag = 'discover';
+            } else if ((info.platform === 'packetstore' || info.platform === 'trace') && !info.hasIntegratedTrace) {
+                typeTag = 'trace';
+            }
+
+            let color;
+            if (typeTag === 'efc') {
+                color = '#a855f7'; // lavender for Flow Collector
+            } else if (typeTag === 'discover') {
+                color = platformColors.discover;
+            } else if (typeTag === 'trace') {
+                color = platformColors.trace;
+            } else if (typeTag === 'command') {
+                color = platformColors.command;
+            } else if (typeTag === 'other') {
+                color = '#6b7280'; // gray for Other
+            } else {
+                color = platformColors[info.platform] || '#6b7280';
+            }
 
             const nodeGroup = g.append('g')
                 .attr('class', 'node-group')
@@ -417,8 +443,7 @@ function renderGraph() {
                 .attr('height', nodeHeight)
                 .attr('rx', 8)
                 .attr('fill', color)
-                .attr('stroke', color)
-                .attr('fill-opacity', 0.2);
+                .attr('stroke', color);
 
             // Display name with truncation
             const displayName = appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`;
