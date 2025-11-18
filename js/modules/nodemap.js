@@ -6,9 +6,10 @@ const nodemapState = {
     catalogData: [],
     searchTerm: '',
     filters: {
-        command: true,
         discover: true,
         trace: true,
+        efc: true,
+        other: true,
         physical: true,
         virtual: true,
         offline: true,
@@ -229,26 +230,38 @@ function renderGraph() {
     // Filter appliances based on active filters
     const filteredAppliances = nodemapState.appliances.filter(a => {
         const info = getNodeInfo(a);
-        
-        // First apply checkbox filters
-        if (info.platform === 'command' && !nodemapState.filters.command) return false;
-        
-        if ((info.platform === 'packet_sensor' || info.platform === 'discover' || 
-             info.platform === 'multifunction_sensor' || info.platform === 'all_in_one') && !nodemapState.filters.discover) {
-            return false;
+        const statusInfo = getStatusInfo(a);
+
+        // Determine logical type based on model/platform
+        const model = (a.license_platform || '').toString().toUpperCase();
+        let typeTag = 'other';
+
+        if (info.platform === 'command') {
+            typeTag = 'command';
+        } else if (model.startsWith('EFC')) {
+            typeTag = 'efc';
+        } else if (model.startsWith('EDA')) {
+            typeTag = 'discover';
+        } else if ((info.platform === 'packetstore' || info.platform === 'trace') && !info.hasIntegratedTrace) {
+            typeTag = 'trace';
         }
-        
-        if ((info.platform === 'packetstore' || info.platform === 'trace') && 
-            !info.hasIntegratedTrace && !nodemapState.filters.trace) {
-            return false;
-        }
-        
+
+        // Platform / model filters
+        if (typeTag === 'discover' && !nodemapState.filters.discover) return false;
+        if (typeTag === 'trace' && !nodemapState.filters.trace) return false;
+        if (typeTag === 'efc' && !nodemapState.filters.efc) return false;
+        if (typeTag === 'other' && !nodemapState.filters.other) return false;
+        // Command nodes are always shown
+
+        // Deployment type filters
         if (info.isVirtual && !nodemapState.filters.virtual) return false;
         if (!info.isVirtual && !nodemapState.filters.physical) return false;
-        
-        if (info.isOffline && !nodemapState.filters.offline) return false;
-        if (!info.isOffline && !nodemapState.filters.online) return false;
-        
+
+        // Connection status filters: only apply to true online/error states
+        if (statusInfo.level === 'online' && !nodemapState.filters.online) return false;
+        if (statusInfo.level === 'error' && !nodemapState.filters.offline) return false;
+
+        // Search within remaining appliances
         if (!matchesSearch(a)) return false;
         
         return true;
@@ -600,9 +613,12 @@ function showNodeDetails(appliance) {
             <div class="space-y-4">
                 <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Product Modules</h4>
                 <div class="flex flex-wrap gap-2">
-                    ${appliance.product_modules.map(module => `
-                        <span class="px-3 py-1 text-sm rounded-full" style="background-color: var(--cyan); color: white;">${module}</span>
-                    `).join('')}
+                    ${appliance.product_modules.map(module => {
+                        const label = (module == null ? '' : module.toString()).toUpperCase();
+                        return `
+                        <span class="px-3 py-1 text-sm rounded-full" style="background-color: var(--cyan); color: white;">${label}</span>
+                        `;
+                    }).join('')}
                 </div>
             </div>
             ` : ''}
@@ -638,9 +654,10 @@ function hideNodemapControls() {
 // Update filter checkboxes to match current state
 function updateFilterCheckboxes() {
     const filterMap = {
-        'filter-command': 'command',
         'filter-discover': 'discover', 
         'filter-trace': 'trace',
+        'filter-efc': 'efc',
+        'filter-other': 'other',
         'filter-physical': 'physical',
         'filter-virtual': 'virtual',
         'filter-online': 'online',
@@ -687,9 +704,10 @@ function setupNodemapFilterEventListeners() {
         applyFiltersBtn.addEventListener('click', () => {
             // Update filter state from checkboxes
             const filterMap = {
-                'filter-command': 'command',
                 'filter-discover': 'discover', 
                 'filter-trace': 'trace',
+                'filter-efc': 'efc',
+                'filter-other': 'other',
                 'filter-physical': 'physical',
                 'filter-virtual': 'virtual',
                 'filter-online': 'online',
