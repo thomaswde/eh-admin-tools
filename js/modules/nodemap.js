@@ -17,15 +17,16 @@ const nodemapState = {
     }
 };
 
-// Platform colors
+// Platform colors (aligned with global site palette)
 const platformColors = {
-    'command': '#00aaef',           // Cyan
-    'packet_sensor': '#dae343',     // Lime
-    'discover': '#dae343',          // Lime
-    'packetstore': '#f05918',       // Tangerine
-    'trace': '#f05918',             // Tangerine
+    'command': '#00aaef',              // Cyan
+    'packet_sensor': '#dae343',        // Lime
+    'discover': '#dae343',             // Lime
+    'packetstore': '#f05918',          // Tangerine
+    'trace': '#f05918',                // Tangerine
     'multifunction_sensor': '#dae343', // Lime
-    'all_in_one': '#dae343'         // Lime
+    'all_in_one': '#dae343',           // Lime
+    'efc': '#7f2854'                   // Plum for Flow Collector
 };
 
 // Helper function to get catalog info
@@ -341,7 +342,7 @@ function renderGraph() {
         .text(`
             .link {
                 fill: none;
-                stroke: #d1d5db;
+                stroke: var(--border-color);
                 stroke-width: 2;
                 stroke-opacity: 0.6;
             }
@@ -416,20 +417,24 @@ function renderGraph() {
                 typeTag = 'trace';
             }
 
-            let color;
+            // Use a neutral card-like fill for all nodes, with a limited set of
+            // accent colors (borders) based on platform/type to reduce visual noise
+            let strokeColor;
             if (typeTag === 'efc') {
-                color = '#a855f7'; // lavender for Flow Collector
+                strokeColor = platformColors.efc; // Plum for Flow Collector
             } else if (typeTag === 'discover') {
-                color = platformColors.discover;
+                strokeColor = platformColors.discover;
             } else if (typeTag === 'trace') {
-                color = platformColors.trace;
+                strokeColor = platformColors.trace;
             } else if (typeTag === 'command') {
-                color = platformColors.command;
+                strokeColor = platformColors.command;
             } else if (typeTag === 'other') {
-                color = '#6b7280'; // gray for Other
+                strokeColor = '#6b7280'; // text-muted gray for Other
             } else {
-                color = platformColors[info.platform] || '#6b7280';
+                strokeColor = platformColors[info.platform] || '#6b7280';
             }
+
+            const fillColor = 'var(--bg-card)';
 
             const nodeGroup = g.append('g')
                 .attr('class', 'node-group')
@@ -442,8 +447,8 @@ function renderGraph() {
                 .attr('width', nodeWidth)
                 .attr('height', nodeHeight)
                 .attr('rx', 8)
-                .attr('fill', color)
-                .attr('stroke', color);
+                .attr('fill', fillColor)
+                .attr('stroke', strokeColor);
 
             // Display name with truncation
             const displayName = appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`;
