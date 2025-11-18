@@ -82,7 +82,8 @@ function switchModule(moduleName) {
         'detections': 'Detections',
         'devices': 'Device Manager',
         'analysis-priorities': 'Analysis Priorities',
-        'localities': 'Network Localities Manager'
+        'localities': 'Network Localities Manager',
+        'nodemap': 'Appliance Node Map'
     };
     document.getElementById('ribbonModuleTitle').textContent = moduleTitles[moduleName] || '';
 

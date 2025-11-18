@@ -7,6 +7,7 @@
     <link rel="icon" href="favicon.png" type="image/png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
@@ -153,6 +154,18 @@
                             <div>
                                 <div class="font-semibold">Audit Logs</div>
                                 <div class="text-xs" style="color: var(--text-muted);">Analyze audit log data</div>
+                            </div>
+                        </div>
+                    </button>
+
+                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="nodemap">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-3" style="color: var(--orange);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                            </svg>
+                            <div>
+                                <div class="font-semibold">Appliance Node Map</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Visualize appliance topology</div>
                             </div>
                         </div>
                     </button>
@@ -561,6 +574,30 @@
 
                 </div>
             </div>
+
+            <!-- Nodemap Module -->
+            <div id="nodemapModule" class="module-content" style="display: none;">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Appliance Node Map</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Visualize your ExtraHop appliance topology and relationships</p>
+                </div>
+
+                <!-- Graph Container -->
+                <div id="graphContainer" class="w-full h-full" style="display: none;">
+                    <svg id="nodeGraph" class="w-full h-full"></svg>
+                </div>
+
+                <!-- Welcome Screen (shown when not connected/loaded) -->
+                <div id="nodemapWelcome" class="flex items-center justify-center h-96">
+                    <div class="text-center p-8">
+                        <svg class="w-16 h-16 mx-auto mb-4" style="color: var(--orange);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                        </svg>
+                        <h3 class="text-xl font-semibold mb-4" style="color: var(--text-primary);">Connect to View Node Map</h3>
+                        <p class="text-sm" style="color: var(--text-muted);">Connect to your ExtraHop deployment to visualize the appliance topology.</p>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -588,6 +625,19 @@
             
             <div class="flex justify-end mt-6">
                 <button id="closeErrorModal" class="btn-primary px-4 py-2 rounded">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Node Details Modal -->
+    <div id="nodeDetailsModal" class="modal">
+        <div class="modal-content">
+            <h2 class="text-xl font-bold mb-4" style="color: var(--text-primary);">Appliance Details</h2>
+            <div id="nodeDetailsContent">
+                <!-- Node details will be populated here -->
+            </div>
+            <div class="flex justify-end mt-6">
+                <button onclick="hideModal('nodeDetailsModal')" class="btn-primary px-4 py-2 rounded">Close</button>
             </div>
         </div>
     </div>
