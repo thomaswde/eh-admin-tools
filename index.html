@@ -78,6 +78,7 @@
                                 <input type="checkbox" id="useAwsProxy" checked class="mr-2">
                                 <span class="text-sm" style="color: var(--text-secondary);">Use AWS Proxy</span>
                             </label>
+                            <p class="text-xs mt-1 ml-6" style="color: var(--text-muted);">Unchecking requires CORS configuration on tenant</p>
                         </div>
                     </div>
 
@@ -90,6 +91,21 @@
                         <div class="mb-4">
                             <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Key</label>
                             <input type="password" id="enterpriseApiKey" class="w-full px-3 py-2 rounded border">
+                        </div>
+                        <div class="mb-4 p-3 rounded" style="background-color: var(--bg-subtle);">
+                            <p class="text-xs mb-2" style="color: var(--text-muted);">
+                                <strong>Note:</strong> Web-based API requests require CORS to be configured on your RevealX Enterprise appliance.
+                            </p>
+                            <a href="https://docs.extrahop.com/current/rest-api-guide/#:~:text=Configure%20cross%2Dorigin%20resource%20sharing%20(CORS)" 
+                               target="_blank" 
+                               rel="noopener noreferrer" 
+                               class="text-xs flex items-center gap-1" 
+                               style="color: var(--cyan);">
+                                <span>Configure CORS on RevealX Enterprise</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                            </a>
                         </div>
                     </div>
 
@@ -174,7 +190,7 @@
         </aside>
 
         <!-- MAIN CONTENT AREA -->
-        <main class="flex-1 lg:ml-80 min-h-screen" style="background-color: var(--bg-primary);">
+        <main class="flex-1 lg:ml-80 min-h-screen p-6" style="background-color: var(--bg-primary);">
             <!-- Welcome Screen -->
             <div id="welcomeScreen" class="flex items-center justify-center h-full">
                 <div class="text-center p-8">
@@ -810,8 +826,8 @@
 
     <!-- Node Details Modal -->
     <div id="nodeDetailsModal" class="modal">
-        <div class="modal-content" style="max-width: 700px;">
-            <div class="flex items-center justify-between mb-4">
+        <div class="modal-content" style="max-width: 800px; width: 95%; max-height: 80vh;">
+            <div class="flex items-center justify-between mb-6">
                 <h3 class="text-xl font-bold" style="color: var(--sapphire);">Appliance Details</h3>
                 <button id="closeNodeDetails" style="color: var(--text-muted);" class="hover:opacity-70">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -819,7 +835,7 @@
                     </svg>
                 </button>
             </div>
-            <div id="nodeDetailsContent"></div>
+            <div id="nodeDetailsContent" style="overflow-y: auto; max-height: calc(80vh - 120px);"></div>
         </div>
     </div>
 

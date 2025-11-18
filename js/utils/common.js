@@ -88,6 +88,21 @@ function switchModule(moduleName) {
     document.getElementById('ribbonModuleTitle').textContent = moduleTitles[moduleName] || '';
 
     state.currentModule = moduleName;
+
+    // Call module-specific activation function if it exists
+    const camelCaseName = moduleName.split('-').map((part, index) => 
+        index === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : 
+                     part.charAt(0).toUpperCase() + part.slice(1)
+    ).join('');
+    const activationFunctionName = `activate${camelCaseName}Module`;
+    
+    if (typeof window[activationFunctionName] === 'function') {
+        try {
+            window[activationFunctionName]();
+        } catch (error) {
+            console.error(`Error activating module '${moduleName}':`, error);
+        }
+    }
 }
 
 function showModal(modalId) {

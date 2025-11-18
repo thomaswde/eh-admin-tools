@@ -455,36 +455,84 @@ function showNodeDetails(appliance) {
     const info = getNodeInfo(appliance);
     
     content.innerHTML = `
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-                <h4 class="font-semibold mb-2" style="color: var(--text-primary);">Basic Information</h4>
-                <div class="space-y-2 text-sm">
-                    <div><strong>Name:</strong> ${appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`}</div>
-                    <div><strong>Model:</strong> ${appliance.license_platform || 'Unknown'}</div>
-                    <div><strong>Platform:</strong> ${appliance.platform || 'Unknown'}</div>
-                    <div><strong>Firmware:</strong> ${appliance.firmware_version || 'Unknown'}</div>
-                    <div><strong>Status:</strong> ${appliance.status_message || 'Unknown'}</div>
-                    <div><strong>Type:</strong> ${info.isVirtual ? 'Virtual' : 'Physical'}</div>
+        <div class="space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="space-y-4">
+                    <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Basic Information</h4>
+                    <div class="space-y-3">
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Name:</span>
+                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`}</span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Model:</span>
+                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.license_platform || 'Unknown'}</span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Platform:</span>
+                            <span class="text-sm" style="color: var(--text-primary);">${appliance.platform || 'Unknown'}</span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Firmware:</span>
+                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.firmware_version || 'Unknown'}</span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Status:</span>
+                            <span class="text-sm px-2 py-1 rounded ${appliance.is_connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${appliance.status_message || 'Unknown'}</span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Type:</span>
+                            <span class="text-sm px-2 py-1 rounded ${info.isVirtual ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}">${info.isVirtual ? 'Virtual' : 'Physical'}</span>
+                        </div>
+                        ${info.hasIntegratedTrace ? `
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Features:</span>
+                            <span class="text-sm px-2 py-1 rounded bg-orange-100 text-orange-800">Integrated PCAP</span>
+                        </div>
+                        ` : ''}
+                    </div>
+                </div>
+                
+                <div class="space-y-4">
+                    <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Technical Details</h4>
+                    <div class="space-y-3">
+                        <div class="flex flex-col">
+                            <span class="font-medium text-sm" style="color: var(--text-secondary);">UUID:</span>
+                            <span class="text-xs font-mono break-all p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.uuid || 'N/A'}</span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">ID:</span>
+                            <span class="text-sm" style="color: var(--text-primary);">${appliance.id}</span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Connected:</span>
+                            <span class="text-sm px-2 py-1 rounded ${appliance.is_connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${appliance.is_connected ? 'Yes' : 'No'}</span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Hostname:</span>
+                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.hostname || 'N/A'}</span>
+                        </div>
+                        ${appliance.nickname ? `
+                        <div class="flex flex-col sm:flex-row">
+                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Nickname:</span>
+                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.nickname}</span>
+                        </div>
+                        ` : ''}
+                    </div>
                 </div>
             </div>
-            <div>
-                <h4 class="font-semibold mb-2" style="color: var(--text-primary);">Technical Details</h4>
-                <div class="space-y-2 text-sm">
-                    <div><strong>UUID:</strong> ${appliance.uuid || 'N/A'}</div>
-                    <div><strong>ID:</strong> ${appliance.id}</div>
-                    <div><strong>Connected:</strong> ${appliance.is_connected ? 'Yes' : 'No'}</div>
-                    <div><strong>Hostname:</strong> ${appliance.hostname || 'N/A'}</div>
-                    ${appliance.nickname ? `<div><strong>Nickname:</strong> ${appliance.nickname}</div>` : ''}
-                    ${info.hasIntegratedTrace ? '<div><strong>Features:</strong> Integrated PCAP</div>' : ''}
+            
+            ${appliance.product_modules && appliance.product_modules.length > 0 ? `
+            <div class="space-y-4 pt-4 border-t" style="border-color: var(--border-color);">
+                <h4 class="font-semibold text-base" style="color: var(--text-primary);">Product Modules</h4>
+                <div class="flex flex-wrap gap-2">
+                    ${appliance.product_modules.map(module => `
+                        <span class="px-3 py-1 text-sm rounded-full" style="background-color: var(--cyan); color: white;">${module}</span>
+                    `).join('')}
                 </div>
             </div>
+            ` : ''}
         </div>
-        ${appliance.product_modules && appliance.product_modules.length > 0 ? `
-            <div class="mt-4">
-                <h4 class="font-semibold mb-2" style="color: var(--text-primary);">Product Modules</h4>
-                <div class="text-sm">${appliance.product_modules.join(', ')}</div>
-            </div>
-        ` : ''}
     `;
     
     showModal('nodeDetailsModal');
@@ -622,17 +670,32 @@ function setupNodemapFilterEventListeners() {
     });
 }
 
-// Nodemap module initialization function
+// Nodemap module activation function (called every time module is shown)
+function activateNodemapModule() {
+    console.log('Activating Nodemap module');
+    
+    // Check if we need to load/refresh based on connection state
+    if (state.connected && nodemapState.appliances.length === 0) {
+        // Connected but no appliances loaded, load them
+        loadAppliances();
+    } else if (state.connected && nodemapState.appliances.length > 0) {
+        // Connected and have appliances, make sure controls are visible
+        showNodemapControls();
+        document.getElementById('graphContainer').style.display = 'block';
+        document.getElementById('nodemapWelcome').style.display = 'none';
+    } else if (!state.connected) {
+        // Not connected, show welcome
+        showNodemapWelcome();
+    }
+}
+
+// Nodemap module initialization function (called once when module first loads)
 function initNodemapModule() {
     console.log('Initializing Nodemap module');
     
     // Set up event listeners
     setupNodemapFilterEventListeners();
     
-    // Auto-load appliances if already connected
-    if (state.connected) {
-        loadAppliances();
-    } else {
-        showNodemapWelcome();
-    }
+    // Initial activation
+    activateNodemapModule();
 }
