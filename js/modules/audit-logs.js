@@ -362,9 +362,10 @@ function generateActivityByUserChart() {
     
     Object.values(auditLogState.operations).forEach(logs => {
         logs.forEach(log => {
-            if (!log.user) return;
+            // Skip entries with no user or 'unknown' user for this chart
+            if (!log.user || log.user === 'unknown') return;
             
-            const user = log.user === 'unknown' ? 'API' : log.user;
+            const user = log.user;
             const dateObj = new Date(log.time);
             const dateStr = formatDate(dateObj);
             

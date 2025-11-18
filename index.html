@@ -189,6 +189,22 @@
                         </div>
                     </button>
                 </nav>
+
+                <!-- Other Tools (external links) -->
+                <div class="mt-6">
+                    <button id="otherToolsToggle" class="w-full flex items-center justify-between px-4 py-2 rounded text-sm" style="color: var(--text-secondary); background-color: transparent;">
+                        <span class="font-semibold">Other Tools</span>
+                        <span id="otherToolsCaret" class="text-xs">▶</span>
+                    </button>
+                    <div id="otherToolsContainer" class="mt-2 space-y-2" style="display: none;">
+                        <button id="productCatalogBtn" class="w-full text-left px-4 py-2 rounded border text-sm" style="border-color: var(--border-color);">
+                            Product Catalog
+                        </button>
+                        <button id="restApiGuideBtn" class="w-full text-left px-4 py-2 rounded border text-sm" style="border-color: var(--border-color);">
+                            REST API Guide
+                        </button>
+                    </div>
+                </div>
             </div>
         </aside>
 
@@ -512,13 +528,13 @@
                         <div class="space-y-4">
                             <div>
                                 <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Lookback Period (Days)</label>
-                                <input type="number" id="auditLogLookback" value="90" min="1" max="90" 
+                                <input type="number" id="auditLogLookback" value="30" min="1" max="90" 
                                     class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
                                 <p class="text-xs mt-1" style="color: var(--text-muted);">Maximum 90 days (ExtraHop audit log retention)</p>
                             </div>
                             <div>
                                 <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Batch Size</label>
-                                <input type="number" id="auditLogBatchSize" value="100" min="10" max="1000" 
+                                <input type="number" id="auditLogBatchSize" value="1000" min="10" max="1000" 
                                     class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
                                 <p class="text-xs mt-1" style="color: var(--text-muted);">Number of entries to fetch per request</p>
                             </div>
