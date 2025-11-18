@@ -59,13 +59,51 @@ function getNodeInfo(appliance) {
     }
     
     // Check if appliance is offline
-    const isOffline = !appliance.is_connected;
+    const statusMessage = (appliance.status_message || '').toString().toLowerCase();
+    const isOffline = statusMessage && statusMessage !== 'online';
     
     return {
         platform,
         isVirtual,
         hasIntegratedTrace,
         isOffline
+    };
+}
+
+function getStatusInfo(appliance) {
+    const rawStatus = (appliance.status_message || '').toString();
+    const normalized = rawStatus.toLowerCase();
+
+    let level = 'unknown';
+    if (normalized === 'online') {
+        level = 'online';
+    } else if (normalized.includes('unable to connect')) {
+        level = 'error';
+    } else if (normalized.includes('requires additional configuration')) {
+        level = 'warning';
+    }
+
+    let circleColor = '#9ca3af';
+    let badgeClass = 'bg-gray-100 text-gray-800';
+
+    if (level === 'online') {
+        circleColor = '#10b981'; // green-500
+        badgeClass = 'bg-green-100 text-green-800';
+    } else if (level === 'error') {
+        circleColor = '#ef4444'; // red-500
+        badgeClass = 'bg-red-100 text-red-800';
+    } else if (level === 'warning') {
+        circleColor = '#f59e0b'; // amber-500
+        badgeClass = 'bg-yellow-100 text-yellow-800';
+    }
+
+    const statusText = rawStatus || 'Unknown';
+
+    return {
+        statusText,
+        level,
+        circleColor,
+        badgeClass
     };
 }
 
@@ -310,8 +348,7 @@ function renderGraph() {
                 cursor: pointer;
                 user-select: none;
             }
-            .offline-indicator {
-                fill: #ef4444;
+            .status-indicator {
                 stroke: white;
                 stroke-width: 2;
             }
@@ -353,6 +390,7 @@ function renderGraph() {
             const y = pos.y;
             const info = getNodeInfo(appliance);
             const color = platformColors[info.platform] || '#6b7280';
+            const statusInfo = getStatusInfo(appliance);
 
             const nodeGroup = g.append('g')
                 .attr('class', 'node-group')
@@ -411,13 +449,12 @@ function renderGraph() {
                 textLength = modelText.node().getComputedTextLength();
             }
 
-            if (info.isOffline) {
-                nodeGroup.append('circle')
-                    .attr('class', 'offline-indicator')
-                    .attr('cx', x + nodeWidth - 10)
-                    .attr('cy', y + 10)
-                    .attr('r', 6);
-            }
+            nodeGroup.append('circle')
+                .attr('class', 'status-indicator')
+                .attr('cx', x + nodeWidth - 10)
+                .attr('cy', y + 10)
+                .attr('r', 6)
+                .attr('fill', statusInfo.circleColor);
 
             if (info.hasIntegratedTrace) {
                 nodeGroup.append('rect')
@@ -490,6 +527,7 @@ function hideNodeDetailsPanel() {
 function showNodeDetails(appliance) {
     const content = document.getElementById('nodeDetailsPanelContent');
     const info = getNodeInfo(appliance);
+    const statusInfo = getStatusInfo(appliance);
     
     content.innerHTML = `
         <div class="space-y-6">
@@ -515,7 +553,7 @@ function showNodeDetails(appliance) {
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Status</span>
-                        <span class="inline-block text-sm px-3 py-1 rounded-full ${appliance.is_connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${appliance.is_connected ? 'Online' : 'Offline'}</span>
+                        <span class="inline-block text-sm px-3 py-1 rounded-full ${statusInfo.badgeClass}">${statusInfo.statusText}</span>
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Type</span>
@@ -541,10 +579,6 @@ function showNodeDetails(appliance) {
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">ID</span>
                         <span class="block text-sm p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.id}</span>
-                    </div>
-                    <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Connected</span>
-                        <span class="inline-block text-sm px-3 py-1 rounded-full ${appliance.is_connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${appliance.is_connected ? 'Yes' : 'No'}</span>
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Hostname</span>
