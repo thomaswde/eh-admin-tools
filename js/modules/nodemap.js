@@ -118,6 +118,7 @@ async function loadAppliances() {
         }
         
         document.getElementById('graphContainer').style.display = 'block';
+        showNodemapControls();
         renderGraph();
     } catch (error) {
         console.error('Error loading appliances:', error);
@@ -129,6 +130,7 @@ async function loadAppliances() {
 function showNodemapWelcome() {
     document.getElementById('nodemapWelcome').style.display = 'flex';
     document.getElementById('graphContainer').style.display = 'none';
+    hideNodemapControls();
 }
 
 // Render the graph
@@ -488,9 +490,144 @@ function showNodeDetails(appliance) {
     showModal('nodeDetailsModal');
 }
 
+// Update search term and re-render
+function updateNodemapSearch(searchValue) {
+    nodemapState.searchTerm = searchValue.trim();
+    if (nodemapState.appliances.length > 0) {
+        renderGraph();
+    }
+}
+
+// Show/hide controls when connected
+function showNodemapControls() {
+    const controls = document.getElementById('nodemapControls');
+    if (controls) {
+        controls.style.display = 'flex';
+    }
+}
+
+function hideNodemapControls() {
+    const controls = document.getElementById('nodemapControls');
+    if (controls) {
+        controls.style.display = 'none';
+    }
+}
+
+// Update filter checkboxes to match current state
+function updateFilterCheckboxes() {
+    const filterMap = {
+        'filter-command': 'command',
+        'filter-discover': 'discover', 
+        'filter-trace': 'trace',
+        'filter-physical': 'physical',
+        'filter-virtual': 'virtual',
+        'filter-online': 'online',
+        'filter-offline': 'offline'
+    };
+
+    for (const [elementId, filterKey] of Object.entries(filterMap)) {
+        const checkbox = document.getElementById(elementId);
+        if (checkbox) {
+            checkbox.checked = nodemapState.filters[filterKey];
+        }
+    }
+}
+
+// Set up event listeners for filter controls
+function setupNodemapFilterEventListeners() {
+    // Filter button to show modal
+    const showFiltersBtn = document.getElementById('showNodemapFilters');
+    if (showFiltersBtn) {
+        showFiltersBtn.addEventListener('click', () => {
+            updateFilterCheckboxes();
+            showModal('nodemapFiltersModal');
+        });
+    }
+
+    // Search input
+    const searchInput = document.getElementById('nodemapSearch');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            updateNodemapSearch(e.target.value);
+        });
+    }
+
+    // Filter modal controls
+    const closeFiltersBtn = document.getElementById('closeNodemapFilters');
+    if (closeFiltersBtn) {
+        closeFiltersBtn.addEventListener('click', () => {
+            hideModal('nodemapFiltersModal');
+        });
+    }
+
+    const applyFiltersBtn = document.getElementById('applyNodemapFilters');
+    if (applyFiltersBtn) {
+        applyFiltersBtn.addEventListener('click', () => {
+            // Update filter state from checkboxes
+            const filterMap = {
+                'filter-command': 'command',
+                'filter-discover': 'discover', 
+                'filter-trace': 'trace',
+                'filter-physical': 'physical',
+                'filter-virtual': 'virtual',
+                'filter-online': 'online',
+                'filter-offline': 'offline'
+            };
+
+            for (const [elementId, filterKey] of Object.entries(filterMap)) {
+                const checkbox = document.getElementById(elementId);
+                if (checkbox) {
+                    nodemapState.filters[filterKey] = checkbox.checked;
+                }
+            }
+
+            // Re-render graph and close modal
+            if (nodemapState.appliances.length > 0) {
+                renderGraph();
+            }
+            hideModal('nodemapFiltersModal');
+        });
+    }
+
+    const resetFiltersBtn = document.getElementById('resetNodemapFilters');
+    if (resetFiltersBtn) {
+        resetFiltersBtn.addEventListener('click', () => {
+            // Reset all filters to true
+            Object.keys(nodemapState.filters).forEach(key => {
+                nodemapState.filters[key] = true;
+            });
+            updateFilterCheckboxes();
+        });
+    }
+
+    // Close node details modal
+    const closeNodeDetailsBtn = document.getElementById('closeNodeDetails');
+    if (closeNodeDetailsBtn) {
+        closeNodeDetailsBtn.addEventListener('click', () => {
+            hideModal('nodeDetailsModal');
+        });
+    }
+
+    // Modal background click to close
+    const modals = ['nodemapFiltersModal', 'nodeDetailsModal'];
+    modals.forEach(modalId => {
+        const modal = document.getElementById(modalId);
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    hideModal(modalId);
+                }
+            });
+        }
+    });
+}
+
 // Nodemap module initialization function
 function initNodemapModule() {
     console.log('Initializing Nodemap module');
+    
+    // Set up event listeners
+    setupNodemapFilterEventListeners();
     
     // Auto-load appliances if already connected
     if (state.connected) {

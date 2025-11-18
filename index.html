@@ -577,9 +577,20 @@
 
             <!-- Nodemap Module -->
             <div id="nodemapModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Appliance Node Map</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Visualize your ExtraHop appliance topology and relationships</p>
+                <div class="mb-6 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Appliance Node Map</h2>
+                        <p class="mt-2" style="color: var(--text-muted);">Visualize your ExtraHop appliance topology and relationships</p>
+                    </div>
+                    <div id="nodemapControls" class="flex gap-3" style="display: none;">
+                        <button id="showNodemapFilters" class="btn-secondary px-4 py-2 rounded text-sm flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path>
+                            </svg>
+                            Filters
+                        </button>
+                        <input type="text" id="nodemapSearch" placeholder="Search appliances..." class="px-3 py-2 rounded border text-sm" style="width: 250px;">
+                    </div>
                 </div>
 
                 <!-- Graph Container -->
@@ -714,6 +725,101 @@
                     Cancel
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- Nodemap Filters Modal -->
+    <div id="nodemapFiltersModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-bold" style="color: var(--sapphire);">Appliance Filters</h3>
+                <button id="closeNodemapFilters" style="color: var(--text-muted);" class="hover:opacity-70">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="space-y-6">
+                <!-- Platform Types -->
+                <div>
+                    <h4 class="font-semibold mb-3" style="color: var(--text-primary);">Platform Types</h4>
+                    <div class="space-y-2 text-sm">
+                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                            <input type="checkbox" id="filter-command" checked class="w-4 h-4" style="accent-color: var(--cyan);">
+                            <span style="color: var(--cyan);">●</span>
+                            <span>Command</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                            <input type="checkbox" id="filter-discover" checked class="w-4 h-4" style="accent-color: var(--lime);">
+                            <span style="color: var(--lime);">●</span>
+                            <span>Discover/Sensor</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                            <input type="checkbox" id="filter-trace" checked class="w-4 h-4" style="accent-color: var(--tangerine);">
+                            <span style="color: var(--tangerine);">●</span>
+                            <span>Trace/Packetstore</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Deployment Types -->
+                <div>
+                    <h4 class="font-semibold mb-3" style="color: var(--text-primary);">Deployment Types</h4>
+                    <div class="space-y-2 text-sm">
+                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                            <input type="checkbox" id="filter-physical" checked class="w-4 h-4">
+                            <span>Physical</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                            <input type="checkbox" id="filter-virtual" checked class="w-4 h-4">
+                            <span>Virtual/Cloud</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Connection Status -->
+                <div>
+                    <h4 class="font-semibold mb-3" style="color: var(--text-primary);">Connection Status</h4>
+                    <div class="space-y-2 text-sm">
+                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                            <input type="checkbox" id="filter-online" checked class="w-4 h-4" style="accent-color: #10b981;">
+                            <span style="color: #10b981;">●</span>
+                            <span>Online</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
+                            <input type="checkbox" id="filter-offline" checked class="w-4 h-4" style="accent-color: #ef4444;">
+                            <span style="color: #ef4444;">●</span>
+                            <span>Offline</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex gap-3 pt-4 border-t" style="border-color: var(--border-color);">
+                    <button id="resetNodemapFilters" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
+                        Reset All
+                    </button>
+                    <button id="applyNodemapFilters" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
+                        Apply Filters
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Node Details Modal -->
+    <div id="nodeDetailsModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-bold" style="color: var(--sapphire);">Appliance Details</h3>
+                <button id="closeNodeDetails" style="color: var(--text-muted);" class="hover:opacity-70">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="nodeDetailsContent"></div>
         </div>
     </div>
 
