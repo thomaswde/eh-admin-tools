@@ -593,25 +593,46 @@
 
             <!-- Nodemap Module -->
             <div id="nodemapModule" class="module-content" style="display: none;">
-                <div class="mb-6 flex items-center justify-between">
-                    <div>
-                        <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Appliance Node Map</h2>
-                        <p class="mt-2" style="color: var(--text-muted);">Visualize your ExtraHop appliance topology and relationships</p>
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Appliance Node Map</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Visualize your ExtraHop appliance topology and relationships</p>
+                </div>
+
+                <!-- Graph Container -->
+                <div id="graphContainer" class="w-full h-full relative" style="display: none;">
+                    <!-- Main graph area that adjusts width when details panel is open -->
+                    <div id="graphMainArea" class="transition-all duration-300" style="width: 100%;">
+                        <svg id="nodeGraph" class="w-full h-full"></svg>
                     </div>
-                    <div id="nodemapControls" class="flex gap-3" style="display: none;">
-                        <button id="showNodemapFilters" class="btn-secondary px-4 py-2 rounded text-sm flex items-center">
+                    
+                    <!-- Controls positioned absolutely over the graph -->
+                    <div id="nodemapControls" class="absolute top-8 left-4 flex gap-3 z-10" style="display: none;">
+                        <button id="showNodemapFilters" class="btn-secondary px-3 py-2 rounded text-sm flex items-center shadow-md">
                             <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path>
                             </svg>
                             Filters
                         </button>
-                        <input type="text" id="nodemapSearch" placeholder="Search appliances..." class="px-3 py-2 rounded border text-sm" style="width: 250px;">
+                        <input type="text" id="nodemapSearch" placeholder="Search appliances..." class="px-3 py-2 rounded border text-sm shadow-md" style="width: 200px;">
                     </div>
-                </div>
 
-                <!-- Graph Container -->
-                <div id="graphContainer" class="w-full h-full" style="display: none;">
-                    <svg id="nodeGraph" class="w-full h-full"></svg>
+                    <!-- Node Details Right Panel -->
+                    <div id="nodeDetailsPanel" class="absolute top-0 right-0 h-full w-96 transform translate-x-full transition-transform duration-300 ease-in-out z-20" style="background-color: var(--bg-card); border-left: 1px solid var(--border-color); display: none;">
+                        <div class="flex flex-col h-full">
+                            <!-- Panel Header -->
+                            <div class="flex items-center justify-between p-4 border-b" style="border-color: var(--border-color);">
+                                <h3 class="text-lg font-semibold" style="color: var(--sapphire);">Appliance Details</h3>
+                                <button id="closeNodeDetailsPanel" class="text-gray-400 hover:text-gray-600 transition-colors">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                            
+                            <!-- Panel Content -->
+                            <div id="nodeDetailsPanelContent" class="flex-1 overflow-y-auto p-4"></div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Welcome Screen (shown when not connected/loaded) -->
@@ -824,20 +845,6 @@
         </div>
     </div>
 
-    <!-- Node Details Modal -->
-    <div id="nodeDetailsModal" class="modal">
-        <div class="modal-content" style="max-width: 800px; width: 95%; max-height: 80vh;">
-            <div class="flex items-center justify-between mb-6">
-                <h3 class="text-xl font-bold" style="color: var(--sapphire);">Appliance Details</h3>
-                <button id="closeNodeDetails" style="color: var(--text-muted);" class="hover:opacity-70">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
-            </div>
-            <div id="nodeDetailsContent" style="overflow-y: auto; max-height: calc(80vh - 120px);"></div>
-        </div>
-    </div>
 
     <!-- Load JavaScript Modules -->
     <script src="js/utils/app-state.js"></script>

@@ -59,7 +59,7 @@ function getNodeInfo(appliance) {
     }
     
     // Check if appliance is offline
-    const isOffline = !appliance.is_connected || appliance.status_message === 'offline';
+    const isOffline = !appliance.is_connected;
     
     return {
         platform,
@@ -449,82 +449,119 @@ function renderGraph() {
     drawNodes(tracePositions);
 }
 
-// Show node details in modal
+// Show/hide node details panel
+function showNodeDetailsPanel() {
+    const panel = document.getElementById('nodeDetailsPanel');
+    const graphArea = document.getElementById('graphMainArea');
+    
+    panel.style.display = 'block';
+    // Trigger reflow before adding transform
+    panel.offsetHeight;
+    panel.style.transform = 'translateX(0)';
+    
+    // Adjust graph area width
+    graphArea.style.width = 'calc(100% - 384px)'; // 384px = w-96
+    
+    // Re-render graph to fit new container size
+    setTimeout(() => {
+        renderGraph();
+    }, 350); // Wait for animation to complete
+}
+
+function hideNodeDetailsPanel() {
+    const panel = document.getElementById('nodeDetailsPanel');
+    const graphArea = document.getElementById('graphMainArea');
+    
+    panel.style.transform = 'translateX(100%)';
+    graphArea.style.width = '100%';
+    
+    // Re-render graph to fit new container size
+    setTimeout(() => {
+        renderGraph();
+    }, 350); // Wait for animation to complete
+    
+    // Hide panel after animation
+    setTimeout(() => {
+        panel.style.display = 'none';
+    }, 300);
+}
+
+// Show node details in right panel
 function showNodeDetails(appliance) {
-    const content = document.getElementById('nodeDetailsContent');
+    const content = document.getElementById('nodeDetailsPanelContent');
     const info = getNodeInfo(appliance);
     
     content.innerHTML = `
         <div class="space-y-6">
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Basic Information Section -->
+            <div class="space-y-4">
+                <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Basic Information</h4>
                 <div class="space-y-4">
-                    <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Basic Information</h4>
-                    <div class="space-y-3">
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Name:</span>
-                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`}</span>
-                        </div>
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Model:</span>
-                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.license_platform || 'Unknown'}</span>
-                        </div>
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Platform:</span>
-                            <span class="text-sm" style="color: var(--text-primary);">${appliance.platform || 'Unknown'}</span>
-                        </div>
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Firmware:</span>
-                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.firmware_version || 'Unknown'}</span>
-                        </div>
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Status:</span>
-                            <span class="text-sm px-2 py-1 rounded ${appliance.is_connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${appliance.status_message || 'Unknown'}</span>
-                        </div>
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Type:</span>
-                            <span class="text-sm px-2 py-1 rounded ${info.isVirtual ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}">${info.isVirtual ? 'Virtual' : 'Physical'}</span>
-                        </div>
-                        ${info.hasIntegratedTrace ? `
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Features:</span>
-                            <span class="text-sm px-2 py-1 rounded bg-orange-100 text-orange-800">Integrated PCAP</span>
-                        </div>
-                        ` : ''}
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Name</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`}</span>
                     </div>
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Model</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.license_platform || 'Unknown'}</span>
+                    </div>
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Platform</span>
+                        <span class="block text-sm p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.platform || 'Unknown'}</span>
+                    </div>
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Firmware</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.firmware_version || 'Unknown'}</span>
+                    </div>
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Status</span>
+                        <span class="inline-block text-sm px-3 py-1 rounded-full ${appliance.is_connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${appliance.is_connected ? 'Online' : 'Offline'}</span>
+                    </div>
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Type</span>
+                        <span class="inline-block text-sm px-3 py-1 rounded-full ${info.isVirtual ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}">${info.isVirtual ? 'Virtual' : 'Physical'}</span>
+                    </div>
+                    ${info.hasIntegratedTrace ? `
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Features</span>
+                        <span class="inline-block text-sm px-3 py-1 rounded-full bg-orange-100 text-orange-800">Integrated PCAP</span>
+                    </div>
+                    ` : ''}
                 </div>
-                
+            </div>
+            
+            <!-- Technical Details Section -->
+            <div class="space-y-4">
+                <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Technical Details</h4>
                 <div class="space-y-4">
-                    <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Technical Details</h4>
-                    <div class="space-y-3">
-                        <div class="flex flex-col">
-                            <span class="font-medium text-sm" style="color: var(--text-secondary);">UUID:</span>
-                            <span class="text-xs font-mono break-all p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.uuid || 'N/A'}</span>
-                        </div>
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">ID:</span>
-                            <span class="text-sm" style="color: var(--text-primary);">${appliance.id}</span>
-                        </div>
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Connected:</span>
-                            <span class="text-sm px-2 py-1 rounded ${appliance.is_connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${appliance.is_connected ? 'Yes' : 'No'}</span>
-                        </div>
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Hostname:</span>
-                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.hostname || 'N/A'}</span>
-                        </div>
-                        ${appliance.nickname ? `
-                        <div class="flex flex-col sm:flex-row">
-                            <span class="font-medium text-sm min-w-20" style="color: var(--text-secondary);">Nickname:</span>
-                            <span class="text-sm break-words" style="color: var(--text-primary);">${appliance.nickname}</span>
-                        </div>
-                        ` : ''}
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">UUID</span>
+                        <span class="block text-xs font-mono break-all p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.uuid || 'N/A'}</span>
                     </div>
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">ID</span>
+                        <span class="block text-sm p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.id}</span>
+                    </div>
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Connected</span>
+                        <span class="inline-block text-sm px-3 py-1 rounded-full ${appliance.is_connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${appliance.is_connected ? 'Yes' : 'No'}</span>
+                    </div>
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Hostname</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.hostname || 'N/A'}</span>
+                    </div>
+                    ${appliance.nickname ? `
+                    <div>
+                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Nickname</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.nickname}</span>
+                    </div>
+                    ` : ''}
                 </div>
             </div>
             
             ${appliance.product_modules && appliance.product_modules.length > 0 ? `
-            <div class="space-y-4 pt-4 border-t" style="border-color: var(--border-color);">
-                <h4 class="font-semibold text-base" style="color: var(--text-primary);">Product Modules</h4>
+            <div class="space-y-4">
+                <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Product Modules</h4>
                 <div class="flex flex-wrap gap-2">
                     ${appliance.product_modules.map(module => `
                         <span class="px-3 py-1 text-sm rounded-full" style="background-color: var(--cyan); color: white;">${module}</span>
@@ -535,7 +572,7 @@ function showNodeDetails(appliance) {
         </div>
     `;
     
-    showModal('nodeDetailsModal');
+    showNodeDetailsPanel();
 }
 
 // Update search term and re-render
@@ -648,26 +685,23 @@ function setupNodemapFilterEventListeners() {
         });
     }
 
-    // Close node details modal
-    const closeNodeDetailsBtn = document.getElementById('closeNodeDetails');
-    if (closeNodeDetailsBtn) {
-        closeNodeDetailsBtn.addEventListener('click', () => {
-            hideModal('nodeDetailsModal');
+    // Close node details panel
+    const closeNodeDetailsPanelBtn = document.getElementById('closeNodeDetailsPanel');
+    if (closeNodeDetailsPanelBtn) {
+        closeNodeDetailsPanelBtn.addEventListener('click', () => {
+            hideNodeDetailsPanel();
         });
     }
 
-    // Modal background click to close
-    const modals = ['nodemapFiltersModal', 'nodeDetailsModal'];
-    modals.forEach(modalId => {
-        const modal = document.getElementById(modalId);
-        if (modal) {
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    hideModal(modalId);
-                }
-            });
-        }
-    });
+    // Modal background click to close (only for filters modal now)
+    const modal = document.getElementById('nodemapFiltersModal');
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                hideModal('nodemapFiltersModal');
+            }
+        });
+    }
 }
 
 // Nodemap module activation function (called every time module is shown)
