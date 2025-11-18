@@ -17,7 +17,23 @@ async function initializeApp() {
     // Set up global event listeners
     setupGlobalEventListeners();
     
+    // Set last modified timestamp in the ribbon
+    setLastModifiedTimestamp();
+    
     console.log('Application initialized successfully');
+}
+
+function setLastModifiedTimestamp() {
+    const el = document.getElementById('lastModified');
+    if (!el) return;
+
+    const modified = new Date(document.lastModified);
+    if (isNaN(modified.getTime())) {
+        el.textContent = '';
+        return;
+    }
+
+    el.textContent = `Last updated: ${modified.toLocaleString()}`;
 }
 
 function loadSavedConfig() {
