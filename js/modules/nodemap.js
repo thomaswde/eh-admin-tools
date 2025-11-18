@@ -112,23 +112,26 @@ function matchesSearch(appliance) {
     if (!nodemapState.searchTerm) return true;
     
     const term = nodemapState.searchTerm.toLowerCase();
-    const searchableFields = [
-        appliance.display_name,
-        appliance.hostname,
-        appliance.nickname,
-        appliance.license_platform,
-        appliance.platform,
-        appliance.firmware_version,
-        appliance.status_message,
-        appliance.uuid,
-        appliance.id?.toString(),
-        ...(appliance.product_modules || []),
-        ...(appliance.licensed_modules || [])
-    ];
-    
-    return searchableFields.some(field => 
-        field && field.toString().toLowerCase().includes(term)
-    );
+    const values = [];
+
+    Object.values(appliance).forEach(value => {
+        if (value == null) return;
+
+        const valueType = typeof value;
+        if (valueType === 'string' || valueType === 'number' || valueType === 'boolean') {
+            values.push(value.toString().toLowerCase());
+        } else if (Array.isArray(value)) {
+            value.forEach(item => {
+                if (item == null) return;
+                const itemType = typeof item;
+                if (itemType === 'string' || itemType === 'number' || itemType === 'boolean') {
+                    values.push(item.toString().toLowerCase());
+                }
+            });
+        }
+    });
+
+    return values.some(v => v.includes(term));
 }
 
 // Load appliances and render the graph
