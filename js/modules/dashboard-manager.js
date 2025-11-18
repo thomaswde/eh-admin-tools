@@ -35,9 +35,6 @@ async function loadDashboards() {
         // Populate user dropdowns
         populateUserDropdowns();
 
-        // Load sharing info for each dashboard (in background)
-        loadDashboardSharing();
-
         // Initial render
         applyFilters();
         renderDashboards();
@@ -55,19 +52,15 @@ async function loadDashboards() {
     }
 }
 
-async function loadDashboardSharing() {
-    // Load sharing info for visible dashboards
-    const promises = state.dashboards.map(async (dashboard) => {
-        try {
-            const sharing = await window.apiClient.getDashboardSharing(dashboard.id);
-            dashboard.sharing = sharing;
-        } catch (e) {
-            dashboard.sharing = { anyone: false, users: {}, groups: {} };
-        }
-    });
+async function loadDashboardSharing(dashboard) {
+    if (!dashboard) return;
 
-    await Promise.all(promises);
-    renderDashboards(); // Re-render with sharing info
+    try {
+        const sharing = await window.apiClient.getDashboardSharing(dashboard.id);
+        dashboard.sharing = sharing;
+    } catch (e) {
+        dashboard.sharing = { anyone: false, users: {}, groups: {} };
+    }
 }
 
 function populateUserDropdowns() {
@@ -124,6 +117,8 @@ function renderDashboards() {
                         Object.keys(dashboard.sharing?.users || {}).length > 0 || 
                         Object.keys(dashboard.sharing?.groups || {}).length > 0;
 
+        row.dataset.id = dashboard.id;
+
         row.innerHTML = `
             <td>
                 <input type="checkbox" class="dashboard-checkbox" data-id="${dashboard.id}" ${state.selectedDashboards.has(dashboard.id) ? 'checked' : ''}>
@@ -146,8 +141,56 @@ function renderDashboards() {
                 </div>
             </td>
         `;
-
         tbody.appendChild(row);
+
+        if (dashboard._expanded) {
+            const detailRow = document.createElement('tr');
+            detailRow.classList.add('dashboard-details-row');
+
+            let sharingContent;
+            if (dashboard._loadingSharing) {
+                sharingContent = `
+                    <div class="py-3 text-sm" style="color: var(--text-muted);">
+                        Loading sharing details...
+                    </div>
+                `;
+            } else if (dashboard.sharing) {
+                const sharing = dashboard.sharing;
+                const anyoneText = sharing.anyone ? `Anyone (${sharing.anyone})` : 'No';
+
+                const userEntries = Object.entries(sharing.users || {});
+                const groupEntries = Object.entries(sharing.groups || {});
+
+                const usersText = userEntries.length > 0
+                    ? userEntries.map(([user, role]) => `${escapeHtml(user)} (${role})`).join(', ')
+                    : 'None';
+
+                const groupsText = groupEntries.length > 0
+                    ? groupEntries.map(([group, role]) => `${escapeHtml(group)} (${role})`).join(', ')
+                    : 'None';
+
+                sharingContent = `
+                    <div class="py-3 text-sm space-y-1">
+                        <div><span class="font-semibold">Anyone:</span> ${anyoneText}</div>
+                        <div><span class="font-semibold">Users:</span> ${usersText}</div>
+                        <div><span class="font-semibold">Groups:</span> ${groupsText}</div>
+                    </div>
+                `;
+            } else {
+                sharingContent = `
+                    <div class="py-3 text-sm" style="color: var(--text-muted);">
+                        Sharing details not loaded.
+                    </div>
+                `;
+            }
+
+            detailRow.innerHTML = `
+                <td></td>
+                <td colspan="4">${sharingContent}</td>
+            `;
+
+            tbody.appendChild(detailRow);
+        }
     });
 
     updatePagination();
@@ -285,6 +328,59 @@ async function confirmDelete() {
     }
 }
 
+function handleDashboardRowClick(dashboardId) {
+    const dashboard = state.dashboards.find(d => d.id === dashboardId);
+    if (!dashboard) return;
+
+    // Toggle expanded state
+    if (dashboard._expanded) {
+        dashboard._expanded = false;
+        renderDashboards();
+        return;
+    }
+
+    dashboard._expanded = true;
+
+    // If sharing is already loaded, just re-render
+    if (dashboard.sharing) {
+        renderDashboards();
+        return;
+    }
+
+    // Lazily load sharing info
+    dashboard._loadingSharing = true;
+    renderDashboards();
+
+    loadDashboardSharing(dashboard)
+        .catch(() => {
+            // loadDashboardSharing already set a fallback sharing object on error
+        })
+        .finally(() => {
+            dashboard._loadingSharing = false;
+            renderDashboards();
+        });
+}
+
+function activateDashboardsModule() {
+    console.log('Activating Dashboard Manager module');
+
+    if (!state.connected) {
+        return;
+    }
+
+    // If we already have dashboards loaded, just ensure filters and table are in sync
+    if (state.dashboards && state.dashboards.length > 0) {
+        applyFilters();
+        renderDashboards();
+        document.getElementById('dashboardsTableContainer').style.display = 'block';
+        document.getElementById('paginationContainer').style.display = 'flex';
+        return;
+    }
+
+    // Auto-load dashboards on first activation when connected
+    loadDashboards();
+}
+
 // Dashboard module initialization function
 function initDashboardsModule() {
     console.log('Initializing Dashboard Manager module');
@@ -331,16 +427,29 @@ function initDashboardsModule() {
         });
 
         document.getElementById('dashboardsTableBody').addEventListener('click', (e) => {
-            if (e.target.classList.contains('change-owner-btn')) {
-                const id = parseInt(e.target.dataset.id);
+            const checkbox = e.target.closest('input[type="checkbox"]');
+            if (checkbox) {
+                return;
+            }
+
+            const changeOwnerBtn = e.target.closest('.change-owner-btn');
+            const deleteBtn = e.target.closest('.delete-btn');
+
+            if (changeOwnerBtn) {
+                const id = parseInt(changeOwnerBtn.dataset.id, 10);
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
                 handleBulkChangeOwner();
-            } else if (e.target.classList.contains('delete-btn')) {
-                const id = parseInt(e.target.dataset.id);
+            } else if (deleteBtn) {
+                const id = parseInt(deleteBtn.dataset.id, 10);
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
                 handleBulkDelete();
+            } else {
+                const row = e.target.closest('tr');
+                if (!row || !row.dataset.id) return;
+                const id = parseInt(row.dataset.id, 10);
+                handleDashboardRowClick(id);
             }
         });
 
