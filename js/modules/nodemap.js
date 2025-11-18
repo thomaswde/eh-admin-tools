@@ -342,9 +342,9 @@ function renderGraph() {
         .text(`
             .link {
                 fill: none;
-                stroke: var(--border-color);
+                stroke: var(--text-muted);
                 stroke-width: 2;
-                stroke-opacity: 0.6;
+                stroke-opacity: 0.8;
             }
             .node-rect {
                 stroke-width: 2;
@@ -434,7 +434,7 @@ function renderGraph() {
                 strokeColor = platformColors[info.platform] || '#6b7280';
             }
 
-            const fillColor = 'var(--bg-card)';
+            const fillColor = 'var(--bg-subtle)';
 
             const nodeGroup = g.append('g')
                 .attr('class', 'node-group')
