@@ -94,6 +94,23 @@ function bytesToGB(bytes) {
     return bytes / (1024 ** 3);
 }
 
+function formatGBWithUnits(valueGB) {
+    if (!valueGB || valueGB <= 0) {
+        return '0.00 GB';
+    }
+
+    const abs = Math.abs(valueGB);
+    let unit = 'GB';
+    let value = valueGB;
+
+    if (abs >= 1024) {
+        value = valueGB / 1024; // Convert GB to TB
+        unit = 'TB';
+    }
+
+    return `${value.toFixed(2)} ${unit}`;
+}
+
 function getDateUnixTimes(dateStr) {
     const date = new Date(dateStr);
     const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
@@ -299,7 +316,7 @@ async function generateCRSReport() {
             document.getElementById('compressionRatioSubtext').textContent = 'Add capacity data to calculate';
         }
         
-        document.getElementById('totalRecordBytes').textContent = `${totalRecordBytesGB} GB`;
+        document.getElementById('totalRecordBytes').textContent = formatGBWithUnits(totalRecordBytesGB);
         
         if (utilizationPercent) {
             document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
