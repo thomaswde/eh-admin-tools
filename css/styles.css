@@ -212,17 +212,17 @@ tr:hover {
     display: flex;
 }
 
-.crs-period-btn, .capacity-input-btn {
+.crs-period-btn, .capacity-input-btn, .device-period-btn {
     transition: all 0.2s;
     border-color: var(--border-color);
     background-color: var(--bg-card);
 }
 
-.crs-period-btn:hover, .capacity-input-btn:hover {
+.crs-period-btn:hover, .capacity-input-btn:hover, .device-period-btn:hover {
     background-color: var(--bg-hover);
 }
 
-.crs-period-btn.active, .capacity-input-btn.active {
+.crs-period-btn.active, .capacity-input-btn.active, .device-period-btn.active {
     border-color: var(--cyan);
     background-color: var(--bg-hover);
     font-weight: 600;

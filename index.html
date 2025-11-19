@@ -117,121 +117,7 @@
                 </div>
             </div>
 
-            <!-- Device Discovery Module -->
-            <div id="device-discoveryModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Device Discovery Report</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Understand how many devices were active and where they were discovered.</p>
-                </div>
-
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Time Period</h3>
-                        <div class="space-y-3">
-                            <button class="device-period-btn w-full text-left px-4 py-3 rounded border active" data-period="yesterday">
-                                <div class="font-semibold">Yesterday</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Previous day (midnight to midnight)</div>
-                            </button>
-                            <button class="device-period-btn w-full text-left px-4 py-3 rounded border" data-period="week">
-                                <div class="font-semibold">Last 7 Days</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Rolling seven-day lookback</div>
-                            </button>
-                            <button class="device-period-btn w-full text-left px-4 py-3 rounded border" data-period="month">
-                                <div class="font-semibold">Last 30 Days</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Rolling thirty-day lookback</div>
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">How this works</h3>
-                        <ul class="list-disc pl-5 space-y-2 text-sm" style="color: var(--text-secondary);">
-                            <li>Fetches appliance inventory to map <code>node_id</code> values to node names and platforms.</li>
-                            <li>Batches <code>/devices/search</code> calls (1,000 devices per request) for the selected time range.</li>
-                            <li>Aggregates totals by node and analysis level (Advanced, Standard, Discovery).</li>
-                            <li>Visualizes KPIs, stacked bar charts, and a detailed breakdown similar to the Records Report layout.</li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="mb-6">
-                    <button id="generateDeviceReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
-                        Generate Report
-                    </button>
-                </div>
-
-                <div id="deviceDiscoveryLoading" class="text-center py-20" style="display: none;">
-                    <div class="spinner mx-auto mb-4"></div>
-                    <p style="color: var(--text-muted);">Collecting appliance inventory and device activity...</p>
-                </div>
-
-                <div id="deviceDiscoveryResults" style="display: none;">
-                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
-                        <div class="p-6 rounded-lg text-center" style="background-color: var (--bg-card); border: 2px solid var(--cyan);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Total Devices</div>
-                            <div id="deviceTotalCount" class="text-4xl font-bold" style="color: var(--cyan);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">Active during selected period</div>
-                        </div>
-                        <div class="p-6 rounded-lg text-center" style="background-color: var (--bg-card); border: 2px solid var(--magenta);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Advanced (Level 1)</div>
-                            <div id="deviceAdvancedCount" class="text-4xl font-bold" style="color: var(--magenta);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">High-analysis devices</div>
-                        </div>
-                        <div class="p-6 rounded-lg text-center" style="background-color: var (--bg-card); border: 2px solid var(--sapphire);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Standard (Level 2)</div>
-                            <div id="deviceStandardCount" class="text-4xl font-bold" style="color: var(--sapphire);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">Standard analysis devices</div>
-                        </div>
-                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Discovery (Level 3)</div>
-                            <div id="deviceDiscoveryCount" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">Discovery-only devices</div>
-                        </div>
-                    </div>
-
-                    <div class="p-6 rounded-lg mb-6" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
-                            <div>
-                                <h3 class="text-lg font-semibold" style="color: var(--text-primary);">Devices by Node</h3>
-                                <p class="text-sm" style="color: var(--text-muted);">Stacked by analysis level, sorted by total device count</p>
-                            </div>
-                            <div class="text-sm" id="deviceReportRange" style="color: var(--text-secondary);"></div>
-                            <div class="text-sm" id="deviceNodeCount" style="color: var(--text-secondary);"></div>
-                        </div>
-                        <div id="deviceNoDataMessage" class="text-center py-10" style="display: none; color: var(--text-muted);">
-                            No devices matched the selected time period.
-                        </div>
-                        <div id="deviceChartWrapper" style="position: relative; height: 420px;">
-                            <canvas id="deviceStackedChart"></canvas>
-                        </div>
-                    </div>
-
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Breakdown</h3>
-                        <div id="deviceTableEmpty" class="text-center py-6" style="display: none; color: var(--text-muted);">
-                            Nothing to show yet. Run the report to populate this table.
-                        </div>
-                        <div class="table-container rounded-lg overflow-x-auto">
-                            <table id="deviceDetailsTable">
-                                <thead>
-                                    <tr>
-                                        <th>Node</th>
-                                        <th>Platform</th>
-                                        <th>Advanced</th>
-                                        <th>Standard</th>
-                                        <th>Discovery</th>
-                                        <th>Total</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="deviceDetailsBody">
-                                    <!-- Populated dynamically -->
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
+            
             <!-- Connection Status -->
             <div id="connectionStatus" style="display: none;">
                 <div class="p-3 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
@@ -416,6 +302,121 @@
                     <div class="flex gap-2">
                         <button id="prevPageBtn" class="btn-secondary px-4 py-2 rounded">Previous</button>
                         <button id="nextPageBtn" class="btn-secondary px-4 py-2 rounded">Next</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Device Discovery Module -->
+            <div id="device-discoveryModule" class="module-content" style="display: none;">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Device Discovery Report</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Understand how many devices were active and where they were discovered.</p>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Time Period</h3>
+                        <div class="space-y-3">
+                            <button class="device-period-btn w-full text-left px-4 py-3 rounded border active" data-period="yesterday">
+                                <div class="font-semibold">Yesterday</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Previous day (midnight to midnight)</div>
+                            </button>
+                            <button class="device-period-btn w-full text-left px-4 py-3 rounded border" data-period="week">
+                                <div class="font-semibold">Last 7 Days</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Rolling seven-day lookback</div>
+                            </button>
+                            <button class="device-period-btn w-full text-left px-4 py-3 rounded border" data-period="month">
+                                <div class="font-semibold">Last 30 Days</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Rolling thirty-day lookback</div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">How this works</h3>
+                        <ul class="list-disc pl-5 space-y-2 text-sm" style="color: var(--text-secondary);">
+                            <li>Fetches appliance inventory to map <code>node_id</code> values to node names and platforms.</li>
+                            <li>Batches <code>/devices/search</code> calls (1,000 devices per request) for the selected time range.</li>
+                            <li>Aggregates totals by node and analysis level (Advanced, Standard, Discovery).</li>
+                            <li>Visualizes KPIs, stacked bar charts, and a detailed breakdown similar to the Records Report layout.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="mb-6">
+                    <button id="generateDeviceReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
+                        Generate Report
+                    </button>
+                </div>
+
+                <div id="deviceDiscoveryLoading" class="text-center py-20" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p style="color: var(--text-muted);">Collecting appliance inventory and device activity...</p>
+                </div>
+
+                <div id="deviceDiscoveryResults" style="display: none;">
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--cyan);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Total Devices</div>
+                            <div id="deviceTotalCount" class="text-4xl font-bold" style="color: var(--cyan);">-</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">Active during selected period</div>
+                        </div>
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--magenta);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Advanced (Level 1)</div>
+                            <div id="deviceAdvancedCount" class="text-4xl font-bold" style="color: var(--magenta);">-</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">High-analysis devices</div>
+                        </div>
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--sapphire);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Standard (Level 2)</div>
+                            <div id="deviceStandardCount" class="text-4xl font-bold" style="color: var(--sapphire);">-</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">Standard analysis devices</div>
+                        </div>
+                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
+                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Discovery (Level 3)</div>
+                            <div id="deviceDiscoveryCount" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">Discovery-only devices</div>
+                        </div>
+                    </div>
+
+                    <div class="p-6 rounded-lg mb-6" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
+                            <div>
+                                <h3 class="text-lg font-semibold" style="color: var(--text-primary);">Devices by Node</h3>
+                                <p class="text-sm" style="color: var(--text-muted);">Stacked by analysis level, sorted by total device count</p>
+                            </div>
+                            <div class="text-sm" id="deviceReportRange" style="color: var(--text-secondary);"></div>
+                            <div class="text-sm" id="deviceNodeCount" style="color: var(--text-secondary);"></div>
+                        </div>
+                        <div id="deviceNoDataMessage" class="text-center py-10" style="display: none; color: var(--text-muted);">
+                            No devices matched the selected time period.
+                        </div>
+                        <div id="deviceChartWrapper" style="position: relative; height: 420px;">
+                            <canvas id="deviceStackedChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Breakdown</h3>
+                        <div id="deviceTableEmpty" class="text-center py-6" style="display: none; color: var(--text-muted);">
+                            Nothing to show yet. Run the report to populate this table.
+                        </div>
+                        <div class="table-container rounded-lg overflow-x-auto">
+                            <table id="deviceDetailsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Node</th>
+                                        <th>Platform</th>
+                                        <th>Advanced</th>
+                                        <th>Standard</th>
+                                        <th>Discovery</th>
+                                        <th>Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="deviceDetailsBody">
+                                    <!-- Populated dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
