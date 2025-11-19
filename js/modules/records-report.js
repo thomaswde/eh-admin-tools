@@ -231,8 +231,7 @@ async function fetchCRSData(dateRange) {
     
     for (const appliance of discoverAppliances) {
         // Skip appliances that are unable to connect to avoid failed API calls
-        if (appliance.status === 'Unable to connect') {
-            console.log(`Skipping ${appliance.display_name} - status: ${appliance.status}`);
+        if ((appliance.status || '').toLowerCase().trim() === 'unable to connect') {
             continue;
         }
         
