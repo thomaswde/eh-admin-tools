@@ -89,7 +89,9 @@ function updateCapacityTips() {
 
 // Helper functions
 function bytesToGB(bytes) {
-    return Math.round(bytes / (1024 ** 3));
+    if (!bytes || bytes <= 0) return 0;
+    // Keep fractional GB so small non-zero values are not rounded down to 0
+    return bytes / (1024 ** 3);
 }
 
 function getDateUnixTimes(dateStr) {
@@ -264,24 +266,27 @@ async function generateCRSReport() {
         // Calculate totals
         const totalRecordBytesGB = applianceData.reduce((sum, a) => sum + a.recordBytesGB, 0);
         
-        let compressionRatio = null;
+        let compressionRatio = null; // string for display (e.g., '3.21')
         let utilizationPercent = null;
         let compressedData = applianceData;
         
         if (capacityData) {
-            compressionRatio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized).toFixed(2) : 'N/A';
+            const ratio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized) : null;
+            compressionRatio = ratio ? ratio.toFixed(2) : 'N/A';
             utilizationPercent = ((capacityData.utilized / capacityData.reserved) * 100).toFixed(1);
             
             // Calculate compressed values
             compressedData = applianceData.map(a => ({
                 ...a,
-                compressedGB: totalRecordBytesGB > 0 ? (a.recordBytesGB / compressionRatio).toFixed(2) : 0
+                // Store numeric GB for charts; we'll format for display later
+                compressedGB: ratio ? (a.recordBytesGB / ratio) : 0
             }));
         } else {
             // No capacity data - use raw record bytes
             compressedData = applianceData.map(a => ({
                 ...a,
-                compressedGB: a.recordBytesGB.toFixed(2)
+                // Keep numeric GB so charts can include small non-zero values
+                compressedGB: a.recordBytesGB
             }));
         }
         
@@ -454,8 +459,8 @@ function renderDataTable(data, compressionRatio) {
         row.innerHTML = `
             <td>${d.name}</td>
             <td>${d.model}</td>
-            <td>${d.recordBytesGB}</td>
-            ${hasCompression ? `<td>${d.compressedGB}</td>` : ''}
+            <td>${d.recordBytesGB.toFixed(2)}</td>
+            ${hasCompression ? `<td>${d.compressedGB.toFixed(2)}</td>` : ''}
         `;
         tbody.appendChild(row);
     });
@@ -464,7 +469,7 @@ function renderDataTable(data, compressionRatio) {
     const totalRow = document.createElement('tr');
     totalRow.style.fontWeight = 'bold';
     totalRow.style.borderTop = '2px solid var(--border-color)';
-    const totalRecordBytes = data.reduce((sum, d) => sum + d.recordBytesGB, 0);
+    const totalRecordBytes = data.reduce((sum, d) => sum + d.recordBytesGB, 0).toFixed(2);
     const totalCompressed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0).toFixed(2);
     totalRow.innerHTML = `
         <td colspan="2">TOTAL</td>
