@@ -198,11 +198,9 @@ function getCapacityData() {
 async function fetchCRSData(dateRange) {
     const appliances = await window.apiClient.getAppliances();
     
-    // Filter for EDA discover appliances only
-    const edaAppliances = appliances.filter(a => 
-        a.platform === 'discover' && 
-        a.license_platform && 
-        a.license_platform.includes('EDA')
+    // Filter for all discover appliances (EDA, EFC, IDS, etc.)
+    const discoverAppliances = appliances.filter(a => 
+        a.platform === 'discover'
     );
     
     const results = [];
@@ -212,7 +210,7 @@ async function fetchCRSData(dateRange) {
     const startTimes = getDateUnixTimes(dateRange.start);
     const endTimes = getDateUnixTimes(dateRange.end);
     
-    for (const appliance of edaAppliances) {
+    for (const appliance of discoverAppliances) {
         const metricPayload = {
             cycle: 'auto',
             from: startTimes.from,
