@@ -230,8 +230,8 @@ async function fetchCRSData(dateRange) {
     const endTimes = getDateUnixTimes(dateRange.end);
     
     for (const appliance of discoverAppliances) {
-        // Skip appliances that are unable to connect to avoid failed API calls
-        if ((appliance.status || '').toLowerCase().trim() === 'unable to connect') {
+        // Skip appliances that are not online to avoid failed API calls
+        if ((appliance.status_message || '').toLowerCase().trim() !== 'online') {
             continue;
         }
         
