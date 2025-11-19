@@ -4,7 +4,8 @@ const deviceDiscoveryState = {
     selectedPeriod: 'yesterday',
     chartInstance: null,
     appliances: [],
-    applianceMap: {}
+    applianceMap: {},
+    includeEfc: false
 };
 
 const DEVICE_ANALYSIS = {
@@ -70,6 +71,13 @@ function getNodePlatform(nodeId, applianceMap) {
     const appliance = applianceMap[nodeId];
     if (!appliance) return 'Unknown';
     return appliance.license_platform || appliance.platform || 'Unknown';
+}
+
+function isEfcNode(nodeId, applianceMap) {
+    const appliance = applianceMap[nodeId];
+    if (!appliance) return false;
+    const platform = appliance.license_platform || appliance.platform || '';
+    return platform.startsWith('EFC');
 }
 
 async function loadAppliancesForDeviceModule() {
@@ -241,14 +249,43 @@ async function generateDeviceDiscoveryReport() {
             updateDeviceDiscoveryKpis({ totalDevices: 0, perLevelTotals: { advanced: 0, standard: 0, discovery: 0 } });
             nodeCount.textContent = 'Nodes represented: 0';
         } else {
-            const sortedNodes = aggregateEntries.map(([nodeId, counts]) => ({
+            let filteredEntries = aggregateEntries;
+            
+            // Filter out EFC nodes if includeEfc is false
+            if (!deviceDiscoveryState.includeEfc) {
+                filteredEntries = aggregateEntries.filter(([nodeId]) => !isEfcNode(nodeId, deviceDiscoveryState.applianceMap));
+            }
+
+            const sortedNodes = filteredEntries.map(([nodeId, counts]) => ({
                 id: nodeId,
                 label: getNodeLabel(nodeId, deviceDiscoveryState.applianceMap),
                 counts
             })).sort((a, b) => b.counts.total - a.counts.total);
 
+            // Recalculate totals if we filtered out EFC nodes
+            let finalData = data;
+            if (!deviceDiscoveryState.includeEfc) {
+                const filteredAggregate = {};
+                const filteredPerLevelTotals = { advanced: 0, standard: 0, discovery: 0 };
+                let filteredTotalDevices = 0;
+
+                sortedNodes.forEach(node => {
+                    filteredAggregate[node.id] = node.counts;
+                    filteredPerLevelTotals.advanced += node.counts.advanced;
+                    filteredPerLevelTotals.standard += node.counts.standard;
+                    filteredPerLevelTotals.discovery += node.counts.discovery;
+                    filteredTotalDevices += node.counts.total;
+                });
+
+                finalData = {
+                    aggregate: filteredAggregate,
+                    perLevelTotals: filteredPerLevelTotals,
+                    totalDevices: filteredTotalDevices
+                };
+            }
+
             nodeCount.textContent = `Nodes represented: ${sortedNodes.length}`;
-            updateDeviceDiscoveryKpis(data);
+            updateDeviceDiscoveryKpis(finalData);
             renderDeviceDiscoveryChart(sortedNodes);
             renderDeviceDiscoveryTable(sortedNodes, deviceDiscoveryState.applianceMap);
         }
@@ -278,6 +315,14 @@ function setupDeviceDiscoveryEvents() {
     if (generateBtn && !generateBtn.getAttribute('data-listener-added')) {
         generateBtn.addEventListener('click', generateDeviceDiscoveryReport);
         generateBtn.setAttribute('data-listener-added', 'true');
+    }
+
+    const includeEfcToggle = document.getElementById('includeEfcToggle');
+    if (includeEfcToggle && !includeEfcToggle.getAttribute('data-listener-added')) {
+        includeEfcToggle.addEventListener('change', (e) => {
+            deviceDiscoveryState.includeEfc = e.target.checked;
+        });
+        includeEfcToggle.setAttribute('data-listener-added', 'true');
     }
 }
 

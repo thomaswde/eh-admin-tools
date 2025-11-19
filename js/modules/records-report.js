@@ -230,6 +230,12 @@ async function fetchCRSData(dateRange) {
     const endTimes = getDateUnixTimes(dateRange.end);
     
     for (const appliance of discoverAppliances) {
+        // Skip appliances that are unable to connect to avoid failed API calls
+        if (appliance.status === 'Unable to connect') {
+            console.log(`Skipping ${appliance.display_name} - status: ${appliance.status}`);
+            continue;
+        }
+        
         const metricPayload = {
             cycle: 'auto',
             from: startTimes.from,

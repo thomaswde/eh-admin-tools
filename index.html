@@ -159,7 +159,7 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 20l9-5-9-5-9 5 9 5zM12 12l9-5-9-5-9 5 9 5z"></path>
                             </svg>
                             <div>
-                                <div class="font-semibold">Device Discovery</div>
+                                <div class="font-semibold">Devices Report</div>
                                 <div class="text-xs" style="color: var(--text-muted);">Active devices by node</div>
                             </div>
                         </div>
@@ -330,6 +330,16 @@
                                 <div class="text-xs" style="color: var(--text-muted);">Rolling thirty-day lookback</div>
                             </button>
                         </div>
+                        
+                        <div class="mt-6 pt-4 border-t" style="border-color: var(--border-color);">
+                            <label class="flex items-center cursor-pointer">
+                                <input type="checkbox" id="includeEfcToggle" class="mr-3">
+                                <div>
+                                    <div class="font-semibold text-sm" style="color: var(--text-primary);">Include flow-based device discovery</div>
+                                    <div class="text-xs" style="color: var(--text-muted);">Does not affect licensing (excludes EFC nodes when off)</div>
+                                </div>
+                            </label>
+                        </div>
                     </div>
 
                     <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
@@ -440,11 +450,11 @@
                             </button>
                             <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="week">
                                 <div class="font-semibold">Last 7 Days</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Weekly trend analysis</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Rolling seven-day lookback</div>
                             </button>
                             <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="month">
                                 <div class="font-semibold">Last 30 Days</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Monthly overview</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Rolling thirty-day lookback</div>
                             </button>
                         </div>
                     </div>
