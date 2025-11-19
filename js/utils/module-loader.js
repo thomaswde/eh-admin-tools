@@ -6,6 +6,7 @@ class ModuleLoader {
         this.moduleMap = {
             'dashboards': 'dashboard-manager.js',
             'crs-usage': 'records-report.js',
+            'device-discovery': 'device-discovery.js',
             'localities': 'network-localities.js',
             'audit-logs': 'audit-logs.js',
             'nodemap': 'nodemap.js'

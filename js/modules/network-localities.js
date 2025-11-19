@@ -386,6 +386,16 @@ function showLocalityStatus(message, type = 'success') {
     }, 5000);
 }
 
+// Network Localities module activation function (called when module is shown)
+function activateLocalitiesModule() {
+    console.log('Activating Network Localities module');
+    
+    // Auto-load existing localities on first activation when connected
+    if (state.connected && !localitiesState.isLoaded) {
+        loadNetworkLocalities();
+    }
+}
+
 // Network Localities module initialization function
 function initLocalitiesModule() {
     console.log('Initializing Network Localities module');
