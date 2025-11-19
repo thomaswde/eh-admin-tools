@@ -763,10 +763,10 @@
                 </div>
 
                 <!-- Graph Container -->
-                <div id="graphContainer" class="w-full h-full relative" style="display: none;">
+                <div id="graphContainer" class="w-full relative" style="display: none; min-height: 600px;">
                     <!-- Main graph area that adjusts width when details panel is open -->
                     <div id="graphMainArea" class="transition-all duration-300" style="width: 100%;">
-                        <svg id="nodeGraph" class="w-full h-full"></svg>
+                        <svg id="nodeGraph" class="w-full"></svg>
                     </div>
                     
                     <!-- Controls positioned absolutely over the graph -->
@@ -781,7 +781,7 @@
                     </div>
 
                     <!-- Node Details Right Panel -->
-                    <div id="nodeDetailsPanel" class="absolute top-0 right-0 h-full w-96 transform translate-x-full transition-transform duration-300 ease-in-out z-20" style="background-color: var(--bg-card); border-left: 1px solid var(--border-color); display: none;">
+                    <div id="nodeDetailsPanel" class="absolute top-0 right-0 w-96 transform translate-x-full transition-transform duration-300 ease-in-out z-20" style="background-color: var(--bg-card); border-left: 1px solid var(--border-color); display: none; bottom: 0;">
                         <div class="flex flex-col h-full">
                             <!-- Panel Header -->
                             <div class="flex items-center justify-between p-4 border-b" style="border-color: var(--border-color);">
