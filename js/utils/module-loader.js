@@ -6,6 +6,7 @@ class ModuleLoader {
         this.moduleMap = {
             'dashboards': 'dashboard-manager.js',
             'crs-usage': 'records-report.js',
+            'device-discovery': 'device-discovery.js',
             'localities': 'network-localities.js',
             'audit-logs': 'audit-logs.js',
             'nodemap': 'nodemap.js'
@@ -65,13 +66,21 @@ class ModuleLoader {
         switchModule(moduleName);
 
         // Call module-specific initialization if available
-        const initFunctionName = `init${moduleName.charAt(0).toUpperCase() + moduleName.slice(1).replace('-', '')}Module`;
+        const camelCaseName = moduleName.split('-').map((part, index) => 
+            index === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : 
+                         part.charAt(0).toUpperCase() + part.slice(1)
+        ).join('');
+        const initFunctionName = `init${camelCaseName}Module`;
+        console.log(`Looking for init function: ${initFunctionName}`);
         if (typeof window[initFunctionName] === 'function') {
             try {
+                console.log(`Calling ${initFunctionName}()`);
                 await window[initFunctionName]();
             } catch (error) {
                 console.error(`Error initializing module '${moduleName}':`, error);
             }
+        } else {
+            console.warn(`Init function ${initFunctionName} not found for module '${moduleName}'`);
         }
 
         return true;

@@ -17,7 +17,23 @@ async function initializeApp() {
     // Set up global event listeners
     setupGlobalEventListeners();
     
+    // Set last modified timestamp in the ribbon
+    setLastModifiedTimestamp();
+    
     console.log('Application initialized successfully');
+}
+
+function setLastModifiedTimestamp() {
+    const el = document.getElementById('lastModified');
+    if (!el) return;
+
+    const modified = new Date(document.lastModified);
+    if (isNaN(modified.getTime())) {
+        el.textContent = '';
+        return;
+    }
+
+    el.textContent = `Last updated: ${modified.toLocaleString()}`;
 }
 
 function loadSavedConfig() {
@@ -83,4 +99,36 @@ function setupGlobalEventListeners() {
             this.textContent = 'Show Technical Details';
         }
     });
+
+    // Other Tools toggle
+    const otherToolsToggle = document.getElementById('otherToolsToggle');
+    const otherToolsContainer = document.getElementById('otherToolsContainer');
+    const otherToolsCaret = document.getElementById('otherToolsCaret');
+
+    if (otherToolsToggle && otherToolsContainer && otherToolsCaret) {
+        otherToolsToggle.addEventListener('click', () => {
+            const isHidden = otherToolsContainer.style.display === 'none' || otherToolsContainer.style.display === '';
+            otherToolsContainer.style.display = isHidden ? 'block' : 'none';
+            otherToolsCaret.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+        });
+    }
+
+    // Other Tools external links
+    const productCatalogBtn = document.getElementById('productCatalogBtn');
+    if (productCatalogBtn) {
+        productCatalogBtn.addEventListener('click', () => {
+            window.open('https://thomaswde.github.io/eh-lookup/', '_blank');
+        });
+    }
+
+    const restApiGuideBtn = document.getElementById('restApiGuideBtn');
+    if (restApiGuideBtn) {
+        restApiGuideBtn.addEventListener('click', () => {
+            let url = 'https://docs.extrahop.com/current/rest-api-guide/';
+            if (window.state && window.state.apiConfig && window.state.apiConfig.type === '360') {
+                url = 'https://docs.extrahop.com/current/rx360-rest-api/';
+            }
+            window.open(url, '_blank');
+        });
+    }
 }

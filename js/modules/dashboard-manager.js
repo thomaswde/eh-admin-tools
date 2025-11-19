@@ -35,9 +35,6 @@ async function loadDashboards() {
         // Populate user dropdowns
         populateUserDropdowns();
 
-        // Load sharing info for each dashboard (in background)
-        loadDashboardSharing();
-
         // Initial render
         applyFilters();
         renderDashboards();
@@ -55,19 +52,15 @@ async function loadDashboards() {
     }
 }
 
-async function loadDashboardSharing() {
-    // Load sharing info for visible dashboards
-    const promises = state.dashboards.map(async (dashboard) => {
-        try {
-            const sharing = await window.apiClient.getDashboardSharing(dashboard.id);
-            dashboard.sharing = sharing;
-        } catch (e) {
-            dashboard.sharing = { anyone: false, users: {}, groups: {} };
-        }
-    });
+async function loadDashboardSharing(dashboard) {
+    if (!dashboard) return;
 
-    await Promise.all(promises);
-    renderDashboards(); // Re-render with sharing info
+    try {
+        const sharing = await window.apiClient.getDashboardSharing(dashboard.id);
+        dashboard.sharing = sharing;
+    } catch (e) {
+        dashboard.sharing = { anyone: false, users: {}, groups: {} };
+    }
 }
 
 function populateUserDropdowns() {
@@ -114,27 +107,27 @@ function renderDashboards() {
     tbody.innerHTML = '';
 
     if (pageData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8" style="color: var(--text-muted);">No dashboards found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center py-8" style="color: var(--text-muted);">No dashboards found</td></tr>';
         return;
     }
 
     pageData.forEach(dashboard => {
         const row = document.createElement('tr');
-        const isShared = dashboard.sharing?.anyone || 
-                        Object.keys(dashboard.sharing?.users || {}).length > 0 || 
-                        Object.keys(dashboard.sharing?.groups || {}).length > 0;
+        const isExpanded = !!dashboard._expanded;
+
+        row.dataset.id = dashboard.id;
 
         row.innerHTML = `
             <td>
                 <input type="checkbox" class="dashboard-checkbox" data-id="${dashboard.id}" ${state.selectedDashboards.has(dashboard.id) ? 'checked' : ''}>
             </td>
             <td>
-                <div class="font-semibold">${escapeHtml(dashboard.name)}</div>
+                <div class="flex items-center gap-2">
+                    <span class="inline-block text-xs" style="transition: transform 0.2s; transform: rotate(${isExpanded ? 90 : 0}deg);">▶</span>
+                    <div class="font-semibold">${escapeHtml(dashboard.name)}</div>
+                </div>
             </td>
             <td>${escapeHtml(dashboard.owner || 'System')}</td>
-            <td>
-                ${isShared ? '<span class="badge badge-success">Yes</span>' : '<span class="badge badge-warning">Private</span>'}
-            </td>
             <td>
                 <div class="flex gap-2">
                     <button class="btn-secondary px-3 py-1 rounded text-sm change-owner-btn" data-id="${dashboard.id}">
@@ -146,8 +139,118 @@ function renderDashboards() {
                 </div>
             </td>
         `;
-
         tbody.appendChild(row);
+
+        if (dashboard._expanded) {
+            const detailRow = document.createElement('tr');
+            detailRow.classList.add('dashboard-details-row');
+
+            // Metadata section from initial /dashboards response
+            const metaItems = [];
+            if (dashboard.id != null) {
+                metaItems.push(`<div><span class="font-semibold">ID:</span> ${escapeHtml(dashboard.id.toString())}</div>`);
+            }
+            const shortcode = dashboard.shortcode || dashboard.short_code;
+            if (shortcode) {
+                metaItems.push(`<div><span class="font-semibold">Shortcode:</span> ${escapeHtml(shortcode.toString())}</div>`);
+            }
+            if (dashboard.description) {
+                metaItems.push(`<div><span class="font-semibold">Description:</span> ${escapeHtml(dashboard.description)}</div>`);
+            }
+
+            const metadataSection = metaItems.length > 0
+                ? `<div class="text-sm space-y-1 mb-3">${metaItems.join('')}</div>`
+                : '';
+
+            let sharingSection;
+            if (dashboard._loadingSharing) {
+                sharingSection = `
+                    <div class="text-sm" style="color: var(--text-muted);">
+                        Loading sharing details...
+                    </div>
+                `;
+            } else if (dashboard.sharing) {
+                const sharing = dashboard.sharing;
+
+                let anyoneBubble = '<span class="text-sm" style="color: var(--text-muted);">No public access</span>';
+                if (sharing.anyone) {
+                    const anyoneRole = (sharing.anyone || '').toString().toLowerCase();
+                    const anyoneColor = anyoneRole === 'editor' ? 'var(--tangerine)' : 'var(--cyan)';
+                    const anyoneLabel = anyoneRole === 'editor' ? 'Editor' : 'Viewer';
+                    anyoneBubble = `
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" style="background-color: ${anyoneColor}; color: white;">
+                            <span>All users</span>
+                            <span class="ml-1 opacity-80">(${anyoneLabel})</span>
+                        </span>
+                    `;
+                }
+
+                const userEntries = Object.entries(sharing.users || {});
+                const groupEntries = Object.entries(sharing.groups || {});
+
+                const userBubbles = userEntries.length > 0
+                    ? userEntries.map(([user, role]) => {
+                        const roleLower = (role || '').toString().toLowerCase();
+                        const color = roleLower === 'editor' ? 'var(--tangerine)' : 'var(--cyan)';
+                        const roleLabel = roleLower === 'editor' ? 'Editor' : 'Viewer';
+                        return `
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium mr-1 mb-1" style="background-color: ${color}; color: white;">
+                                <span>${escapeHtml(user)}</span>
+                                <span class="ml-1 opacity-80">(${roleLabel})</span>
+                            </span>
+                        `;
+                    }).join('')
+                    : '<span class="text-sm" style="color: var(--text-muted);">None</span>';
+
+                const groupBubbles = groupEntries.length > 0
+                    ? groupEntries.map(([group, role]) => {
+                        const roleLower = (role || '').toString().toLowerCase();
+                        const color = roleLower === 'editor' ? 'var(--tangerine)' : 'var(--cyan)';
+                        const roleLabel = roleLower === 'editor' ? 'Editor' : 'Viewer';
+                        return `
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium mr-1 mb-1" style="background-color: ${color}; color: white;">
+                                <span>${escapeHtml(group)}</span>
+                                <span class="ml-1 opacity-80">(${roleLabel})</span>
+                            </span>
+                        `;
+                    }).join('')
+                    : '<span class="text-sm" style="color: var(--text-muted);">None</span>';
+
+                sharingSection = `
+                    <div class="text-sm space-y-2">
+                        <div><span class="font-semibold">Public access:</span> ${anyoneBubble}</div>
+                        <div>
+                            <span class="font-semibold">Users:</span>
+                            <div class="mt-1 flex flex-wrap">${userBubbles}</div>
+                        </div>
+                        <div>
+                            <span class="font-semibold">Groups:</span>
+                            <div class="mt-1 flex flex-wrap">${groupBubbles}</div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                sharingSection = `
+                    <div class="text-sm" style="color: var(--text-muted);">
+                        Sharing details not loaded.
+                    </div>
+                `;
+            }
+
+            const detailsContent = `
+                <div class="py-3 space-y-3">
+                    ${metadataSection}
+                    ${sharingSection}
+                </div>
+            `;
+
+            detailRow.innerHTML = `
+                <td></td>
+                <td colspan="3">${detailsContent}</td>
+            `;
+
+            tbody.appendChild(detailRow);
+        }
     });
 
     updatePagination();
@@ -285,6 +388,59 @@ async function confirmDelete() {
     }
 }
 
+function handleDashboardRowClick(dashboardId) {
+    const dashboard = state.dashboards.find(d => d.id === dashboardId);
+    if (!dashboard) return;
+
+    // Toggle expanded state
+    if (dashboard._expanded) {
+        dashboard._expanded = false;
+        renderDashboards();
+        return;
+    }
+
+    dashboard._expanded = true;
+
+    // If sharing is already loaded, just re-render
+    if (dashboard.sharing) {
+        renderDashboards();
+        return;
+    }
+
+    // Lazily load sharing info
+    dashboard._loadingSharing = true;
+    renderDashboards();
+
+    loadDashboardSharing(dashboard)
+        .catch(() => {
+            // loadDashboardSharing already set a fallback sharing object on error
+        })
+        .finally(() => {
+            dashboard._loadingSharing = false;
+            renderDashboards();
+        });
+}
+
+function activateDashboardsModule() {
+    console.log('Activating Dashboard Manager module');
+
+    if (!state.connected) {
+        return;
+    }
+
+    // If we already have dashboards loaded, just ensure filters and table are in sync
+    if (state.dashboards && state.dashboards.length > 0) {
+        applyFilters();
+        renderDashboards();
+        document.getElementById('dashboardsTableContainer').style.display = 'block';
+        document.getElementById('paginationContainer').style.display = 'flex';
+        return;
+    }
+
+    // Auto-load dashboards on first activation when connected
+    loadDashboards();
+}
+
 // Dashboard module initialization function
 function initDashboardsModule() {
     console.log('Initializing Dashboard Manager module');
@@ -331,16 +487,29 @@ function initDashboardsModule() {
         });
 
         document.getElementById('dashboardsTableBody').addEventListener('click', (e) => {
-            if (e.target.classList.contains('change-owner-btn')) {
-                const id = parseInt(e.target.dataset.id);
+            const checkbox = e.target.closest('input[type="checkbox"]');
+            if (checkbox) {
+                return;
+            }
+
+            const changeOwnerBtn = e.target.closest('.change-owner-btn');
+            const deleteBtn = e.target.closest('.delete-btn');
+
+            if (changeOwnerBtn) {
+                const id = parseInt(changeOwnerBtn.dataset.id, 10);
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
                 handleBulkChangeOwner();
-            } else if (e.target.classList.contains('delete-btn')) {
-                const id = parseInt(e.target.dataset.id);
+            } else if (deleteBtn) {
+                const id = parseInt(deleteBtn.dataset.id, 10);
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
                 handleBulkDelete();
+            } else {
+                const row = e.target.closest('tr');
+                if (!row || !row.dataset.id) return;
+                const id = parseInt(row.dataset.id, 10);
+                handleDashboardRowClick(id);
             }
         });
 

@@ -386,6 +386,16 @@ function showLocalityStatus(message, type = 'success') {
     }, 5000);
 }
 
+// Network Localities module activation function (called when module is shown)
+function activateLocalitiesModule() {
+    console.log('Activating Network Localities module');
+    
+    // Auto-load existing localities on first activation when connected
+    if (state.connected && !localitiesState.isLoaded) {
+        loadNetworkLocalities();
+    }
+}
+
 // Network Localities module initialization function
 function initLocalitiesModule() {
     console.log('Initializing Network Localities module');
@@ -395,7 +405,7 @@ function initLocalitiesModule() {
         document.getElementById('loadLocalities').addEventListener('click', loadNetworkLocalities);
         document.getElementById('addLocalityRow').addEventListener('click', addLocalityRow);
         document.getElementById('saveLocalityChanges').addEventListener('click', saveLocalityChanges);
-        document.getElementById('uploadCsv').addEventListener('change', handleCsvUpload);
+        document.getElementById('localityCsvInput').addEventListener('change', handleCsvUpload);
         
         document.getElementById('loadLocalities').setAttribute('data-listener-added', 'true');
     }

@@ -75,6 +75,12 @@ body {
     color: var(--sapphire);
 }
 
+.ribbon-last-modified {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
 .content-wrapper {
     min-height: calc(100vh - var(--ribbon-height));
 }

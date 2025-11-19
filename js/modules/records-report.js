@@ -58,11 +58,57 @@ function updateCapacityInputOptions() {
             document.getElementById('csvCapacityInput').style.display = 'block';
         }
     }
+
+    // Update environment-specific helper tips after adjusting visibility
+    updateCapacityTips();
+}
+
+// Show environment-specific helper tips for RevealX 360
+function updateCapacityTips() {
+    const manualTip = document.getElementById('manualCapacityTip360');
+    const csvTip = document.getElementById('csvCapacityTip360');
+
+    if (!manualTip || !csvTip) return;
+
+    const is360 = !!(window.state && window.state.apiConfig && window.state.apiConfig.type === '360');
+
+    if (!is360) {
+        manualTip.style.display = 'none';
+        csvTip.style.display = 'none';
+        return;
+    }
+
+    if (crsState.inputMethod === 'manual') {
+        manualTip.style.display = 'block';
+        csvTip.style.display = 'none';
+    } else {
+        manualTip.style.display = 'none';
+        csvTip.style.display = 'block';
+    }
 }
 
 // Helper functions
 function bytesToGB(bytes) {
-    return Math.round(bytes / (1024 ** 3));
+    if (!bytes || bytes <= 0) return 0;
+    // Keep fractional GB so small non-zero values are not rounded down to 0
+    return bytes / (1024 ** 3);
+}
+
+function formatGBWithUnits(valueGB) {
+    if (!valueGB || valueGB <= 0) {
+        return '0.00 GB';
+    }
+
+    const abs = Math.abs(valueGB);
+    let unit = 'GB';
+    let value = valueGB;
+
+    if (abs >= 1024) {
+        value = valueGB / 1024; // Convert GB to TB
+        unit = 'TB';
+    }
+
+    return `${value.toFixed(2)} ${unit}`;
 }
 
 function getDateUnixTimes(dateStr) {
@@ -171,22 +217,23 @@ function getCapacityData() {
 async function fetchCRSData(dateRange) {
     const appliances = await window.apiClient.getAppliances();
     
-    // Filter for EDA discover appliances only
-    const edaAppliances = appliances.filter(a => 
-        a.platform === 'discover' && 
-        a.license_platform && 
-        a.license_platform.includes('EDA')
+    // Filter for all discover appliances (EDA, EFC, IDS, etc.)
+    const discoverAppliances = appliances.filter(a => 
+        a.platform === 'discover'
     );
     
     const results = [];
     
-    for (const appliance of edaAppliances) {
-        const times = getDateUnixTimes(dateRange.end); // Use end date for single day query
-        
+    // Use the full selected date range for the metrics query so that
+    // multi-day periods (week/month) return aggregated record bytes
+    const startTimes = getDateUnixTimes(dateRange.start);
+    const endTimes = getDateUnixTimes(dateRange.end);
+    
+    for (const appliance of discoverAppliances) {
         const metricPayload = {
             cycle: 'auto',
-            from: times.from,
-            until: times.until,
+            from: startTimes.from,
+            until: endTimes.until,
             metric_category: 'capture',
             metric_specs: [{ name: 'record_bytes' }],
             object_ids: [appliance.id],
@@ -236,24 +283,27 @@ async function generateCRSReport() {
         // Calculate totals
         const totalRecordBytesGB = applianceData.reduce((sum, a) => sum + a.recordBytesGB, 0);
         
-        let compressionRatio = null;
+        let compressionRatio = null; // string for display (e.g., '3.21')
         let utilizationPercent = null;
         let compressedData = applianceData;
         
         if (capacityData) {
-            compressionRatio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized).toFixed(2) : 'N/A';
+            const ratio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized) : null;
+            compressionRatio = ratio ? ratio.toFixed(2) : 'N/A';
             utilizationPercent = ((capacityData.utilized / capacityData.reserved) * 100).toFixed(1);
             
             // Calculate compressed values
             compressedData = applianceData.map(a => ({
                 ...a,
-                compressedGB: totalRecordBytesGB > 0 ? (a.recordBytesGB / compressionRatio).toFixed(2) : 0
+                // Store numeric GB for charts; we'll format for display later
+                compressedGB: ratio ? (a.recordBytesGB / ratio) : 0
             }));
         } else {
             // No capacity data - use raw record bytes
             compressedData = applianceData.map(a => ({
                 ...a,
-                compressedGB: a.recordBytesGB.toFixed(2)
+                // Keep numeric GB so charts can include small non-zero values
+                compressedGB: a.recordBytesGB
             }));
         }
         
@@ -266,7 +316,7 @@ async function generateCRSReport() {
             document.getElementById('compressionRatioSubtext').textContent = 'Add capacity data to calculate';
         }
         
-        document.getElementById('totalRecordBytes').textContent = `${totalRecordBytesGB} GB`;
+        document.getElementById('totalRecordBytes').textContent = formatGBWithUnits(totalRecordBytesGB);
         
         if (utilizationPercent) {
             document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
@@ -426,8 +476,8 @@ function renderDataTable(data, compressionRatio) {
         row.innerHTML = `
             <td>${d.name}</td>
             <td>${d.model}</td>
-            <td>${d.recordBytesGB}</td>
-            ${hasCompression ? `<td>${d.compressedGB}</td>` : ''}
+            <td>${d.recordBytesGB.toFixed(2)}</td>
+            ${hasCompression ? `<td>${d.compressedGB.toFixed(2)}</td>` : ''}
         `;
         tbody.appendChild(row);
     });
@@ -436,7 +486,7 @@ function renderDataTable(data, compressionRatio) {
     const totalRow = document.createElement('tr');
     totalRow.style.fontWeight = 'bold';
     totalRow.style.borderTop = '2px solid var(--border-color)';
-    const totalRecordBytes = data.reduce((sum, d) => sum + d.recordBytesGB, 0);
+    const totalRecordBytes = data.reduce((sum, d) => sum + d.recordBytesGB, 0).toFixed(2);
     const totalCompressed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0).toFixed(2);
     totalRow.innerHTML = `
         <td colspan="2">TOTAL</td>
@@ -451,7 +501,7 @@ function initCrsUsageModule() {
     console.log('Initializing Records Report module');
     
     // Set up event listeners specific to CRS module
-    if (!document.querySelector('.crs-period-btn').hasAttribute('data-listener-added')) {
+    if (!document.getElementById('generateCrsReport').hasAttribute('data-listener-added')) {
         document.querySelectorAll('.crs-period-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.crs-period-btn').forEach(b => b.classList.remove('active'));
@@ -475,6 +525,9 @@ function initCrsUsageModule() {
                     document.getElementById('manualCapacityInput').style.display = 'none';
                     document.getElementById('csvCapacityInput').style.display = 'block';
                 }
+
+                // Update helper tips when the input method changes
+                updateCapacityTips();
             });
             btn.setAttribute('data-listener-added', 'true');
         });
@@ -504,6 +557,9 @@ function initCrsUsageModule() {
         });
 
         document.getElementById('generateCrsReport').addEventListener('click', generateCRSReport);
+        
+        // Mark that listeners have been added
+        document.getElementById('generateCrsReport').setAttribute('data-listener-added', 'true');
     }
     
     // Initialize the UI state
