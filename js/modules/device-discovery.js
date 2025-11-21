@@ -111,7 +111,7 @@ async function fetchDevicesBatch(range) {
         if (deviceDiscoveryState.excludeDiscovery) {
             payload.filter = {
                 field: 'analysis',
-                operand: '3',
+                operand: 'discovery',
                 operator: '!='
             };
         }
