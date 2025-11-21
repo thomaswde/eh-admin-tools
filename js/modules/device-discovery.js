@@ -5,7 +5,9 @@ const deviceDiscoveryState = {
     chartInstance: null,
     appliances: [],
     applianceMap: {},
-    includeEfc: false
+    includeEfc: false,
+    excludeDiscovery: false,
+    shouldStop: false
 };
 
 const DEVICE_ANALYSIS = {
@@ -14,7 +16,7 @@ const DEVICE_ANALYSIS = {
     3: { key: 'discovery', label: 'Discovery', color: '#f05918' }
 };
 
-const DEVICE_LIMIT = 1000;
+const DEVICE_LIMIT = 5000;
 
 function formatDateShort(date) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -95,8 +97,9 @@ async function fetchDevicesBatch(range) {
     const perLevelTotals = { advanced: 0, standard: 0, discovery: 0 };
     let offset = 0;
     let totalDevices = 0;
+    const loadingText = document.getElementById('deviceLoadingText');
 
-    while (true) {
+    while (!deviceDiscoveryState.shouldStop) {
         const payload = {
             active_from: range.activeFrom,
             active_until: range.activeUntil,
@@ -104,6 +107,14 @@ async function fetchDevicesBatch(range) {
             offset,
             result_fields: ['node_id', 'analysis_level', 'id']
         };
+
+        if (deviceDiscoveryState.excludeDiscovery) {
+            payload.filter = {
+                field: 'analysis',
+                operand: '3',
+                operator: '!='
+            };
+        }
 
         const response = await window.apiClient.request('/devices/search', {
             method: 'POST',
@@ -130,13 +141,19 @@ async function fetchDevicesBatch(range) {
             totalDevices += 1;
         });
 
+        if (loadingText) {
+            loadingText.textContent = `Loading devices... (${totalDevices.toLocaleString()} fetched so far)`;
+        }
+
         if (devices.length < DEVICE_LIMIT) {
             break;
         }
         offset += DEVICE_LIMIT;
     }
 
-    return { aggregate, perLevelTotals, totalDevices };
+    const incomplete = deviceDiscoveryState.shouldStop;
+
+    return { aggregate, perLevelTotals, totalDevices, incomplete };
 }
 
 function updateDeviceDiscoveryKpis(totals) {
@@ -231,10 +248,28 @@ async function generateDeviceDiscoveryReport() {
     const noData = document.getElementById('deviceNoDataMessage');
     const rangeInfo = document.getElementById('deviceReportRange');
     const nodeCount = document.getElementById('deviceNodeCount');
+    const generateBtn = document.getElementById('generateDeviceReport');
+    const stopBtn = document.getElementById('stopDeviceDiscoveryLoad');
+    const loadingText = document.getElementById('deviceLoadingText');
+
+    deviceDiscoveryState.shouldStop = false;
+
+    if (generateBtn) {
+        generateBtn.disabled = true;
+        generateBtn.style.display = 'none';
+    }
+    if (stopBtn) {
+        stopBtn.style.display = 'inline-block';
+    }
+    if (loadingText) {
+        loadingText.textContent = 'Collecting appliance inventory and device activity...';
+    }
 
     loading.style.display = 'block';
     results.style.display = 'none';
     noData.style.display = 'none';
+
+    let stoppedEarly = false;
 
     try {
         await loadAppliancesForDeviceModule();
@@ -242,6 +277,7 @@ async function generateDeviceDiscoveryReport() {
         rangeInfo.textContent = `${range.label} · ${range.displayRange}`;
 
         const data = await fetchDevicesBatch(range);
+        stoppedEarly = !!data.incomplete;
         const aggregateEntries = Object.entries(data.aggregate);
 
         if (!aggregateEntries.length) {
@@ -285,6 +321,9 @@ async function generateDeviceDiscoveryReport() {
             }
 
             nodeCount.textContent = `Nodes represented: ${sortedNodes.length}`;
+            if (stoppedEarly) {
+                nodeCount.textContent = `${nodeCount.textContent} (partial results - stopped early)`;
+            }
             updateDeviceDiscoveryKpis(finalData);
             renderDeviceDiscoveryChart(sortedNodes);
             renderDeviceDiscoveryTable(sortedNodes, deviceDiscoveryState.applianceMap);
@@ -296,6 +335,23 @@ async function generateDeviceDiscoveryReport() {
         console.error('Error generating device discovery report', error);
         loading.style.display = 'none';
         alert(`Error generating Device Discovery report: ${error.message}`);
+    } finally {
+        if (generateBtn) {
+            generateBtn.disabled = false;
+            generateBtn.style.display = 'block';
+        }
+        if (stopBtn) {
+            stopBtn.style.display = 'none';
+        }
+        deviceDiscoveryState.shouldStop = false;
+    }
+}
+
+function stopDeviceDiscoveryLoad() {
+    deviceDiscoveryState.shouldStop = true;
+    const loadingText = document.getElementById('deviceLoadingText');
+    if (loadingText) {
+        loadingText.textContent = 'Stopping device load...';
     }
 }
 
@@ -323,6 +379,20 @@ function setupDeviceDiscoveryEvents() {
             deviceDiscoveryState.includeEfc = e.target.checked;
         });
         includeEfcToggle.setAttribute('data-listener-added', 'true');
+    }
+
+    const excludeDiscoveryToggle = document.getElementById('excludeDiscoveryToggle');
+    if (excludeDiscoveryToggle && !excludeDiscoveryToggle.getAttribute('data-listener-added')) {
+        excludeDiscoveryToggle.addEventListener('change', (e) => {
+            deviceDiscoveryState.excludeDiscovery = e.target.checked;
+        });
+        excludeDiscoveryToggle.setAttribute('data-listener-added', 'true');
+    }
+
+    const stopBtn = document.getElementById('stopDeviceDiscoveryLoad');
+    if (stopBtn && !stopBtn.getAttribute('data-listener-added')) {
+        stopBtn.addEventListener('click', stopDeviceDiscoveryLoad);
+        stopBtn.setAttribute('data-listener-added', 'true');
     }
 }
 

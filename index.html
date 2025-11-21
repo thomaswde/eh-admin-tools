@@ -339,6 +339,13 @@
                                     <div class="text-xs" style="color: var(--text-muted);">Does not affect licensing (excludes EFC nodes when off)</div>
                                 </div>
                             </label>
+                            <label class="flex items-center cursor-pointer mt-3">
+                                <input type="checkbox" id="excludeDiscoveryToggle" class="mr-3">
+                                <div>
+                                    <div class="font-semibold text-sm" style="color: var(--text-primary);">Exclude Discovery analysis devices</div>
+                                    <div class="text-xs" style="color: var(--text-muted);">Skips devices at analysis level 3 to speed up large environments</div>
+                                </div>
+                            </label>
                         </div>
                     </div>
 
@@ -346,7 +353,7 @@
                         <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">How this works</h3>
                         <ul class="list-disc pl-5 space-y-2 text-sm" style="color: var(--text-secondary);">
                             <li>Fetches appliance inventory to map <code>node_id</code> values to node names and platforms.</li>
-                            <li>Batches <code>/devices/search</code> calls (1,000 devices per request) for the selected time range.</li>
+                            <li>Batches <code>/devices/search</code> calls in large chunks for the selected time range.</li>
                             <li>Aggregates totals by node and analysis level (Advanced, Standard, Discovery).</li>
                             <li>Visualizes KPIs, stacked bar charts, and a detailed breakdown similar to the Records Report layout.</li>
                         </ul>
@@ -361,7 +368,10 @@
 
                 <div id="deviceDiscoveryLoading" class="text-center py-20" style="display: none;">
                     <div class="spinner mx-auto mb-4"></div>
-                    <p style="color: var(--text-muted);">Collecting appliance inventory and device activity...</p>
+                    <p id="deviceLoadingText" style="color: var(--text-muted);">Collecting appliance inventory and device activity...</p>
+                    <button id="stopDeviceDiscoveryLoad" class="mt-4 px-4 py-2 rounded border text-sm" style="color: var(--text-secondary); border-color: var(--border-color); display: none;">
+                        Stop Loading
+                    </button>
                 </div>
 
                 <div id="deviceDiscoveryResults" style="display: none;">
