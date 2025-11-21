@@ -6,14 +6,15 @@ const deviceDiscoveryState = {
     appliances: [],
     applianceMap: {},
     includeEfc: false,
-    excludeDiscovery: false,
+    includeDiscovery: false,
     shouldStop: false
 };
 
 const DEVICE_ANALYSIS = {
-    1: { key: 'advanced', label: 'Advanced', color: '#ec0089' },
-    2: { key: 'standard', label: 'Standard', color: '#261f63' },
-    3: { key: 'discovery', label: 'Discovery', color: '#f05918' }
+    advanced: { key: 'advanced', label: 'Advanced', color: '#ec0089' },
+    standard: { key: 'standard', label: 'Standard', color: '#261f63' },
+    discovery: { key: 'discovery', label: 'Discovery', color: '#f05918' },
+    flow_log: { key: 'flow_log', label: 'Flow Log', color: '#00aaef' }
 };
 
 const DEVICE_LIMIT = 5000;
@@ -105,16 +106,29 @@ async function fetchDevicesBatch(range) {
             active_until: range.activeUntil,
             limit: DEVICE_LIMIT,
             offset,
-            result_fields: ['node_id', 'analysis_level', 'id']
+            result_fields: ['node_id', 'analysis', 'id']
         };
 
-        if (deviceDiscoveryState.excludeDiscovery) {
-            payload.filter = {
+        const filterRules = [
+            {
+                field: 'analysis',
+                operand: 'l2_exempt',
+                operator: '!='
+            }
+        ];
+
+        if (!deviceDiscoveryState.includeDiscovery) {
+            filterRules.push({
                 field: 'analysis',
                 operand: 'discovery',
                 operator: '!='
-            };
+            });
         }
+
+        payload.filter = {
+            operator: 'and',
+            rules: filterRules
+        };
 
         const response = await window.apiClient.request('/devices/search', {
             method: 'POST',
@@ -127,14 +141,17 @@ async function fetchDevicesBatch(range) {
 
         devices.forEach(device => {
             const nodeId = device.node_id ?? 'unassigned';
-            const analysisEntry = DEVICE_ANALYSIS[device.analysis_level];
+            const analysisKey = device.analysis;
             if (!aggregate[nodeId]) {
-                aggregate[nodeId] = { advanced: 0, standard: 0, discovery: 0, total: 0 };
+                aggregate[nodeId] = { advanced: 0, standard: 0, discovery: 0, flow_log: 0, total: 0 };
             }
 
+            const analysisEntry = DEVICE_ANALYSIS[analysisKey];
             if (analysisEntry) {
                 aggregate[nodeId][analysisEntry.key] += 1;
-                perLevelTotals[analysisEntry.key] += 1;
+                if (Object.prototype.hasOwnProperty.call(perLevelTotals, analysisEntry.key)) {
+                    perLevelTotals[analysisEntry.key] += 1;
+                }
             }
 
             aggregate[nodeId].total += 1;
@@ -156,12 +173,20 @@ async function fetchDevicesBatch(range) {
     return { aggregate, perLevelTotals, totalDevices, incomplete };
 }
 
-function updateDeviceDiscoveryKpis(totals) {
+function updateDeviceDiscoveryKpis(totals, options = {}) {
     const { totalDevices, perLevelTotals } = totals;
+    const { discoveryIncluded = true } = options;
+
     document.getElementById('deviceTotalCount').textContent = totalDevices.toLocaleString();
     document.getElementById('deviceAdvancedCount').textContent = perLevelTotals.advanced.toLocaleString();
     document.getElementById('deviceStandardCount').textContent = perLevelTotals.standard.toLocaleString();
-    document.getElementById('deviceDiscoveryCount').textContent = perLevelTotals.discovery.toLocaleString();
+
+    const discoveryElem = document.getElementById('deviceDiscoveryCount');
+    if (discoveryIncluded) {
+        discoveryElem.textContent = perLevelTotals.discovery.toLocaleString();
+    } else {
+        discoveryElem.textContent = 'N/A';
+    }
 }
 
 function renderDeviceDiscoveryChart(sortedNodes) {
@@ -282,7 +307,7 @@ async function generateDeviceDiscoveryReport() {
 
         if (!aggregateEntries.length) {
             noData.style.display = 'block';
-            updateDeviceDiscoveryKpis({ totalDevices: 0, perLevelTotals: { advanced: 0, standard: 0, discovery: 0 } });
+            updateDeviceDiscoveryKpis({ totalDevices: 0, perLevelTotals: { advanced: 0, standard: 0, discovery: 0 } }, { discoveryIncluded: deviceDiscoveryState.includeDiscovery });
             nodeCount.textContent = 'Nodes represented: 0';
         } else {
             let filteredEntries = aggregateEntries;
@@ -324,7 +349,7 @@ async function generateDeviceDiscoveryReport() {
             if (stoppedEarly) {
                 nodeCount.textContent = `${nodeCount.textContent} (partial results - stopped early)`;
             }
-            updateDeviceDiscoveryKpis(finalData);
+            updateDeviceDiscoveryKpis(finalData, { discoveryIncluded: deviceDiscoveryState.includeDiscovery });
             renderDeviceDiscoveryChart(sortedNodes);
             renderDeviceDiscoveryTable(sortedNodes, deviceDiscoveryState.applianceMap);
         }
@@ -381,12 +406,12 @@ function setupDeviceDiscoveryEvents() {
         includeEfcToggle.setAttribute('data-listener-added', 'true');
     }
 
-    const excludeDiscoveryToggle = document.getElementById('excludeDiscoveryToggle');
-    if (excludeDiscoveryToggle && !excludeDiscoveryToggle.getAttribute('data-listener-added')) {
-        excludeDiscoveryToggle.addEventListener('change', (e) => {
-            deviceDiscoveryState.excludeDiscovery = e.target.checked;
+    const includeDiscoveryToggle = document.getElementById('includeDiscoveryToggle');
+    if (includeDiscoveryToggle && !includeDiscoveryToggle.getAttribute('data-listener-added')) {
+        includeDiscoveryToggle.addEventListener('change', (e) => {
+            deviceDiscoveryState.includeDiscovery = e.target.checked;
         });
-        excludeDiscoveryToggle.setAttribute('data-listener-added', 'true');
+        includeDiscoveryToggle.setAttribute('data-listener-added', 'true');
     }
 
     const stopBtn = document.getElementById('stopDeviceDiscoveryLoad');
