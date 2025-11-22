@@ -335,15 +335,15 @@
                             <label class="flex items-center cursor-pointer">
                                 <input type="checkbox" id="includeEfcToggle" class="mr-3">
                                 <div>
-                                    <div class="font-semibold text-sm" style="color: var(--text-primary);">Include flow-based device discovery</div>
-                                    <div class="text-xs" style="color: var(--text-muted);">Does not affect licensing (excludes EFC nodes when off)</div>
+                                    <div class="font-semibold text-sm" style="color: var(--text-primary);">Include devices discovered by Flow Sensors (EFC)</div>
+                                    <div class="text-xs" style="color: var(--text-muted);">Uncheck to skip Netflow/Sflow discovered devices which don't count against license band</div>
                                 </div>
                             </label>
                             <label class="flex items-center cursor-pointer mt-3">
                                 <input type="checkbox" id="includeDiscoveryToggle" class="mr-3">
                                 <div>
-                                    <div class="font-semibold text-sm" style="color: var(--text-primary);">Include Discovery devices</div>
-                                    <div class="text-xs" style="color: var(--text-muted);">When unchecked, devices with analysis <code>discovery</code> are skipped to speed up large environments</div>
+                                    <div class="font-semibold text-sm" style="color: var(--text-primary);">Include devices in "Discovery" analysis level</div>
+                                    <div class="text-xs" style="color: var(--text-muted);">Uncheck to skip <code>discovery</code> devices which are not being analyzed, usually because there isn't room available (faster report).</div>
                                 </div>
                             </label>
                         </div>
@@ -384,17 +384,17 @@
                         <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--magenta);">
                             <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Advanced</div>
                             <div id="deviceAdvancedCount" class="text-4xl font-bold" style="color: var(--magenta);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">High-analysis devices</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">Fully analyzed devices, L2-L7 metrics</div>
                         </div>
                         <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--sapphire);">
                             <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Standard</div>
                             <div id="deviceStandardCount" class="text-4xl font-bold" style="color: var(--sapphire);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">Standard analysis devices</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">L3 metrics, users, and metadata</div>
                         </div>
                         <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
                             <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Discovery</div>
                             <div id="deviceDiscoveryCount" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">Discovery-only devices</div>
+                            <div class="text-xs mt-2" style="color: var(--text-muted);">Discovered but not in analysis</div>
                         </div>
                     </div>
 
