@@ -9,7 +9,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 async function initializeApp() {
-    console.log('Initializing ExtraHop API Tools...');
+    console.log('Initializing ExtraHop Admin Tools...');
     
     // Load saved config on page load
     loadSavedConfig();
