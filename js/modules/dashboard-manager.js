@@ -98,16 +98,63 @@ function applyFilters() {
     state.currentPage = 1;
 }
 
-function renderDashboards() {
-    const tbody = document.getElementById('dashboardsTableBody');
+function getCurrentPageDashboards() {
     const start = (state.currentPage - 1) * state.itemsPerPage;
     const end = start + state.itemsPerPage;
-    const pageData = state.filteredDashboards.slice(start, end);
+    return state.filteredDashboards.slice(start, end);
+}
+
+function pruneSelectedDashboards() {
+    const validDashboardIds = new Set(state.dashboards.map(dashboard => dashboard.id));
+    state.selectedDashboards.forEach(id => {
+        if (!validDashboardIds.has(id)) {
+            state.selectedDashboards.delete(id);
+        }
+    });
+}
+
+function syncSelectAllCheckbox() {
+    const selectAllCheckbox = document.getElementById('selectAll');
+    const pageDashboards = getCurrentPageDashboards();
+    const selectedOnPage = pageDashboards.filter(dashboard => state.selectedDashboards.has(dashboard.id)).length;
+
+    if (pageDashboards.length === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+        selectAllCheckbox.disabled = true;
+        return;
+    }
+
+    selectAllCheckbox.disabled = false;
+    selectAllCheckbox.checked = selectedOnPage === pageDashboards.length;
+    selectAllCheckbox.indeterminate = selectedOnPage > 0 && selectedOnPage < pageDashboards.length;
+}
+
+function selectAllFilteredDashboards() {
+    state.filteredDashboards.forEach(dashboard => {
+        state.selectedDashboards.add(dashboard.id);
+    });
+    renderDashboards();
+}
+
+function clearDashboardSelection() {
+    state.selectedDashboards.clear();
+    renderDashboards();
+}
+
+function renderDashboards() {
+    const tbody = document.getElementById('dashboardsTableBody');
+    const pageData = getCurrentPageDashboards();
+
+    pruneSelectedDashboards();
 
     tbody.innerHTML = '';
 
     if (pageData.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" class="text-center py-8" style="color: var(--text-muted);">No dashboards found</td></tr>';
+        updatePagination();
+        updateBulkActions();
+        syncSelectAllCheckbox();
         return;
     }
 
@@ -255,6 +302,7 @@ function renderDashboards() {
 
     updatePagination();
     updateBulkActions();
+    syncSelectAllCheckbox();
 }
 
 function updatePagination() {
@@ -262,11 +310,21 @@ function updatePagination() {
     const paginationInfo = document.getElementById('paginationInfo');
     const prevBtn = document.getElementById('prevPageBtn');
     const nextBtn = document.getElementById('nextPageBtn');
+    const filterCount = document.getElementById('dashboardFilterCount');
+
+    if (state.filteredDashboards.length === 0) {
+        paginationInfo.textContent = 'Showing 0 of 0';
+        filterCount.textContent = '0 dashboards match the current filters';
+        prevBtn.disabled = true;
+        nextBtn.disabled = true;
+        return;
+    }
 
     const start = (state.currentPage - 1) * state.itemsPerPage + 1;
     const end = Math.min(start + state.itemsPerPage - 1, state.filteredDashboards.length);
 
     paginationInfo.textContent = `Showing ${start}-${end} of ${state.filteredDashboards.length}`;
+    filterCount.textContent = `${state.filteredDashboards.length} dashboard${state.filteredDashboards.length === 1 ? '' : 's'} match the current filters`;
 
     prevBtn.disabled = state.currentPage === 1;
     nextBtn.disabled = state.currentPage >= totalPages;
@@ -275,12 +333,22 @@ function updatePagination() {
 function updateBulkActions() {
     const bulkActions = document.getElementById('bulkActions');
     const selectedCount = document.getElementById('selectedCount');
+    const selectAllFilteredBtn = document.getElementById('selectAllFilteredBtn');
+    const clearSelectionBtn = document.getElementById('clearDashboardSelectionBtn');
+    const allFilteredSelected = state.filteredDashboards.length > 0
+        && state.filteredDashboards.every(dashboard => state.selectedDashboards.has(dashboard.id));
+
+    selectAllFilteredBtn.disabled = state.filteredDashboards.length === 0 || allFilteredSelected;
+    clearSelectionBtn.disabled = state.selectedDashboards.size === 0;
 
     if (state.selectedDashboards.size > 0) {
         bulkActions.style.display = 'flex';
-        selectedCount.textContent = `${state.selectedDashboards.size} selected`;
+        selectedCount.textContent = allFilteredSelected
+            ? `${state.selectedDashboards.size} selected (all filtered dashboards)`
+            : `${state.selectedDashboards.size} selected`;
     } else {
         bulkActions.style.display = 'none';
+        selectedCount.textContent = '';
     }
 }
 
@@ -461,17 +529,14 @@ function initDashboardsModule() {
         });
 
         document.getElementById('selectAll').addEventListener('change', (e) => {
-            const checkboxes = document.querySelectorAll('.dashboard-checkbox');
-            checkboxes.forEach(cb => {
-                cb.checked = e.target.checked;
-                const id = parseInt(cb.dataset.id);
+            getCurrentPageDashboards().forEach(dashboard => {
                 if (e.target.checked) {
-                    state.selectedDashboards.add(id);
+                    state.selectedDashboards.add(dashboard.id);
                 } else {
-                    state.selectedDashboards.delete(id);
+                    state.selectedDashboards.delete(dashboard.id);
                 }
             });
-            updateBulkActions();
+            renderDashboards();
         });
 
         document.getElementById('dashboardsTableBody').addEventListener('change', (e) => {
@@ -483,6 +548,7 @@ function initDashboardsModule() {
                     state.selectedDashboards.delete(id);
                 }
                 updateBulkActions();
+                syncSelectAllCheckbox();
             }
         });
 
@@ -499,11 +565,15 @@ function initDashboardsModule() {
                 const id = parseInt(changeOwnerBtn.dataset.id, 10);
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
+                updateBulkActions();
+                syncSelectAllCheckbox();
                 handleBulkChangeOwner();
             } else if (deleteBtn) {
                 const id = parseInt(deleteBtn.dataset.id, 10);
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
+                updateBulkActions();
+                syncSelectAllCheckbox();
                 handleBulkDelete();
             } else {
                 const row = e.target.closest('tr');
@@ -516,6 +586,8 @@ function initDashboardsModule() {
         document.getElementById('bulkChangeOwnerBtn').addEventListener('click', handleBulkChangeOwner);
         document.getElementById('bulkShareBtn').addEventListener('click', handleBulkShare);
         document.getElementById('bulkDeleteBtn').addEventListener('click', handleBulkDelete);
+        document.getElementById('selectAllFilteredBtn').addEventListener('click', selectAllFilteredDashboards);
+        document.getElementById('clearDashboardSelectionBtn').addEventListener('click', clearDashboardSelection);
 
         document.getElementById('prevPageBtn').addEventListener('click', () => {
             if (state.currentPage > 1) {
