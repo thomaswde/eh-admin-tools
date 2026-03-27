@@ -301,6 +301,10 @@ function formatTimestamp(value) {
     return date.toLocaleString();
 }
 
+function isRx360Deployment() {
+    return state.apiConfig?.type === '360';
+}
+
 function getBaseAccessInfo(roles = {}) {
     const baseSubset = {};
     USER_BASE_FAMILIES.forEach(key => {
@@ -563,6 +567,7 @@ function renderUsers() {
                 `;
             } else if (!user._loadingDetails && user.detailUser) {
                 const detailUser = user.detailUser;
+                const isRx360 = isRx360Deployment();
                 const metaPanel = `
                     <div class="detail-panel">
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
@@ -589,12 +594,12 @@ function renderUsers() {
                     <div class="py-3 space-y-4">
                         ${errorsHtml}
                         ${metaPanel}
-                        ${renderLockPanel(user)}
+                        ${isRx360 ? '' : renderLockPanel(user)}
                         <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
                             ${renderRolesPanel('Granted Roles', detailUser.granted_roles || {})}
                             ${renderRolesPanel('Effective Roles', detailUser.effective_roles || {})}
                         </div>
-                        ${renderApiKeysPanel(user.detailApiKeys)}
+                        ${isRx360 ? '' : renderApiKeysPanel(user.detailApiKeys)}
                     </div>
                 `;
             }
@@ -617,7 +622,12 @@ async function ensureUserDetailsLoaded(user) {
         return;
     }
 
-    if (user.detailUser && user.detailLockStatus && Array.isArray(user.detailApiKeys)) {
+    const isRx360 = isRx360Deployment();
+
+    if (
+        user.detailUser &&
+        (isRx360 || (user._lockStatusLoaded && user._apiKeysLoaded))
+    ) {
         return;
     }
 
@@ -625,11 +635,14 @@ async function ensureUserDetailsLoaded(user) {
     user.detailError = null;
     renderUsers();
 
-    const results = await Promise.allSettled([
-        window.apiClient.getUser(user.username),
-        window.apiClient.getUserLockStatus(user.username),
-        window.apiClient.getUserApiKeys(user.username)
-    ]);
+    const requestPromises = [window.apiClient.getUser(user.username)];
+
+    if (!isRx360) {
+        requestPromises.push(window.apiClient.getUserLockStatus(user.username));
+        requestPromises.push(window.apiClient.getUserApiKeys(user.username));
+    }
+
+    const results = await Promise.allSettled(requestPromises);
 
     user._loadingDetails = false;
     user.detailErrors = [];
@@ -643,18 +656,28 @@ async function ensureUserDetailsLoaded(user) {
         user.detailError = `Unable to load details for ${user.username}: ${userResult.reason.message}`;
     }
 
-    if (lockResult.status === 'fulfilled') {
-        user.detailLockStatus = lockResult.value;
-    } else {
-        user.detailErrors.push(`Lock status unavailable: ${lockResult.reason.message}`);
+    if (isRx360) {
+        user._lockStatusLoaded = true;
+        user._apiKeysLoaded = true;
         user.detailLockStatus = null;
-    }
-
-    if (apiKeysResult.status === 'fulfilled') {
-        user.detailApiKeys = apiKeysResult.value;
-    } else {
-        user.detailErrors.push(`API keys unavailable: ${apiKeysResult.reason.message}`);
         user.detailApiKeys = [];
+    } else {
+        if (lockResult.status === 'fulfilled') {
+            user.detailLockStatus = lockResult.value;
+        } else {
+            user.detailErrors.push(`Lock status unavailable: ${lockResult.reason.message}`);
+            user.detailLockStatus = null;
+        }
+
+        if (apiKeysResult.status === 'fulfilled') {
+            user.detailApiKeys = apiKeysResult.value;
+        } else {
+            user.detailErrors.push(`API keys unavailable: ${apiKeysResult.reason.message}`);
+            user.detailApiKeys = [];
+        }
+
+        user._lockStatusLoaded = true;
+        user._apiKeysLoaded = true;
     }
 
     renderUsers();
