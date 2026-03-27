@@ -1,25 +1,12 @@
 async function refreshAccessToken() {
-    if (!state.apiConfig || state.apiConfig.type !== '360') {
+    if (!window.apiClient || !state.apiConfig || state.apiConfig.type !== '360') {
         return false;
     }
 
-    console.log('Access token expired, refreshing...');
-    
     try {
-        const api = new ExtraHopAPI(state.apiConfig);
-        await api.authenticate();
-        
-        // Update the global API client with new token
-        window.apiClient.accessToken = api.accessToken;
-        
-        console.log('Access token refreshed successfully');
-        return true;
+        return await window.apiClient.refreshAccessToken();
     } catch (error) {
         console.error('Failed to refresh access token:', error);
-        // Show error and ask user to reconnect
-        alert('Your session has expired. Please reconnect.');
-        hideConnectedState();
-        state.connected = false;
         return false;
     }
 }
@@ -80,6 +67,10 @@ async function handleConnect() {
 
         const api = new ExtraHopAPI(config);
         await api.authenticate();
+
+        if (window.apiClient && typeof window.apiClient.dispose === 'function') {
+            window.apiClient.dispose();
+        }
 
         state.apiConfig = config;
         state.connected = true;

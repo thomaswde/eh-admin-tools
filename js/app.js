@@ -68,6 +68,12 @@ function setupGlobalEventListeners() {
     // Connect button
     document.getElementById('connectBtn').addEventListener('click', handleConnect);
 
+    window.addEventListener('beforeunload', () => {
+        if (window.apiClient && typeof window.apiClient.dispose === 'function') {
+            window.apiClient.dispose();
+        }
+    });
+
     // Module buttons - with dynamic loading
     document.querySelectorAll('.module-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {

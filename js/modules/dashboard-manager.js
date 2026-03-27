@@ -131,6 +131,10 @@ function syncSelectAllCheckbox() {
 }
 
 function selectAllFilteredDashboards() {
+    if (state.filteredDashboards.length === 0) {
+        return;
+    }
+
     state.filteredDashboards.forEach(dashboard => {
         state.selectedDashboards.add(dashboard.id);
     });
@@ -338,7 +342,8 @@ function updateBulkActions() {
     const allFilteredSelected = state.filteredDashboards.length > 0
         && state.filteredDashboards.every(dashboard => state.selectedDashboards.has(dashboard.id));
 
-    selectAllFilteredBtn.disabled = state.filteredDashboards.length === 0 || allFilteredSelected;
+    selectAllFilteredBtn.disabled = false;
+    selectAllFilteredBtn.textContent = allFilteredSelected ? 'All Selected' : 'Select All';
     clearSelectionBtn.disabled = state.selectedDashboards.size === 0;
 
     if (state.selectedDashboards.size > 0) {

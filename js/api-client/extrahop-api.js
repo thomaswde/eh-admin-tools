@@ -1,9 +1,15 @@
 const LAMBDA_PROXY_URL = 'https://mdpg23urni.execute-api.us-east-2.amazonaws.com/default/extrahop-api-wrapper-proxy';
+const DEFAULT_360_TOKEN_TTL_SECONDS = 30 * 60;
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const MIN_TOKEN_REFRESH_DELAY_MS = 60 * 1000;
 
 class ExtraHopAPI {
     constructor(config) {
         this.config = config;
         this.proxyUrl = LAMBDA_PROXY_URL;
+        this.refreshPromise = null;
+        this.refreshTimerId = null;
+        this.accessTokenExpiresAt = null;
         
         // For Enterprise, set up direct API URL
         if (config.type === 'enterprise') {
@@ -11,7 +17,98 @@ class ExtraHopAPI {
         }
     }
 
-    async authenticate() {
+    setAccessToken(token, expiresInSeconds = DEFAULT_360_TOKEN_TTL_SECONDS) {
+        this.accessToken = token;
+        this.accessTokenExpiresAt = Date.now() + (expiresInSeconds * 1000);
+        sessionStorage.setItem('eh_access_token', token);
+        sessionStorage.setItem('eh_access_token_expires_at', String(this.accessTokenExpiresAt));
+        this.scheduleAccessTokenRefresh();
+    }
+
+    clearAccessTokenRefresh() {
+        if (this.refreshTimerId) {
+            clearTimeout(this.refreshTimerId);
+            this.refreshTimerId = null;
+        }
+    }
+
+    clearStoredAccessToken() {
+        this.accessToken = null;
+        this.accessTokenExpiresAt = null;
+        sessionStorage.removeItem('eh_access_token');
+        sessionStorage.removeItem('eh_access_token_expires_at');
+    }
+
+    scheduleAccessTokenRefresh() {
+        this.clearAccessTokenRefresh();
+
+        if (this.config.type !== '360' || !this.accessToken || !this.accessTokenExpiresAt) {
+            return;
+        }
+
+        const refreshDelay = Math.max(
+            MIN_TOKEN_REFRESH_DELAY_MS,
+            this.accessTokenExpiresAt - Date.now() - TOKEN_REFRESH_BUFFER_MS
+        );
+
+        this.refreshTimerId = setTimeout(async () => {
+            try {
+                await this.refreshAccessToken({ silentFailure: true });
+            } catch (error) {
+                console.warn('Scheduled access token refresh failed:', error);
+            }
+        }, refreshDelay);
+    }
+
+    shouldRefreshAccessTokenSoon() {
+        return this.config.type === '360'
+            && !!this.accessToken
+            && !!this.accessTokenExpiresAt
+            && Date.now() >= (this.accessTokenExpiresAt - TOKEN_REFRESH_BUFFER_MS);
+    }
+
+    async refreshAccessToken({ silentFailure = false } = {}) {
+        if (this.config.type !== '360') {
+            return false;
+        }
+
+        if (this.refreshPromise) {
+            return this.refreshPromise;
+        }
+
+        this.refreshPromise = (async () => {
+            try {
+                await this.authenticate({ suppressErrors: silentFailure });
+                console.log('Access token refreshed successfully');
+                return true;
+            } catch (error) {
+                this.clearAccessTokenRefresh();
+
+                if (!silentFailure) {
+                    this.clearStoredAccessToken();
+                    if (window.apiClient === this) {
+                        alert('Your session has expired. Please reconnect.');
+                        hideConnectedState();
+                        state.connected = false;
+                    }
+                }
+
+                throw error;
+            } finally {
+                this.refreshPromise = null;
+            }
+        })();
+
+        return this.refreshPromise;
+    }
+
+    dispose() {
+        this.clearAccessTokenRefresh();
+    }
+
+    async authenticate(options = {}) {
+        const { suppressErrors = false } = options;
+
         if (this.config.type === '360') {
             if (this.config.useProxy === false) {
                 // Direct 360 API call (no proxy)
@@ -37,8 +134,7 @@ class ExtraHopAPI {
                     }
 
                     const data = await response.json();
-                    this.accessToken = data.access_token;
-                    sessionStorage.setItem('eh_access_token', data.access_token);
+                    this.setAccessToken(data.access_token, data.expires_in || DEFAULT_360_TOKEN_TTL_SECONDS);
                     return true;
                 } catch (error) {
                     throw new Error(`Direct 360 authentication failed: ${error.message}. Ensure CORS is configured on your tenant.`);
@@ -94,12 +190,13 @@ class ExtraHopAPI {
                         errorMessage += `Server returned ${response.status} ${response.statusText}.`;
                     }
 
-                    showErrorModal(errorMessage, errorDetails);
+                    if (!suppressErrors) {
+                        showErrorModal(errorMessage, errorDetails);
+                    }
                     throw new Error(errorMessage);
                 }
 
-                this.accessToken = responseData.access_token;
-                sessionStorage.setItem('eh_access_token', responseData.access_token);
+                this.setAccessToken(responseData.access_token, responseData.expires_in || DEFAULT_360_TOKEN_TTL_SECONDS);
                 return true;
             } catch (error) {
                 if (error.message.includes('Authentication failed')) {
@@ -113,7 +210,9 @@ class ExtraHopAPI {
                     response: error.message
                 };
                 const errorMessage = `Network error: ${error.message}. Check Lambda proxy URL: ${this.proxyUrl}`;
-                showErrorModal(errorMessage, errorDetails);
+                if (!suppressErrors) {
+                    showErrorModal(errorMessage, errorDetails);
+                }
                 throw new Error(errorMessage);
             }
         } else {
@@ -194,6 +293,14 @@ class ExtraHopAPI {
         // Ensure endpoint starts with /api/v1 unless it's the OAuth token endpoint
         if (!endpoint.startsWith('/api/v1') && !endpoint.startsWith('/oauth2')) {
             endpoint = '/api/v1' + endpoint;
+        }
+
+        if (this.shouldRefreshAccessTokenSoon()) {
+            try {
+                await this.refreshAccessToken({ silentFailure: true });
+            } catch (error) {
+                console.warn('Proactive access token refresh failed, continuing with current token', error);
+            }
         }
 
         const makeRequest = async () => {
@@ -316,15 +423,8 @@ class ExtraHopAPI {
         } catch (error) {
             if (error.message.includes('401') && this.config.type === '360') {
                 console.log('Token expired, attempting refresh...');
-                
-                // Refresh the token
-                const tempApi = new ExtraHopAPI(this.config);
-                await tempApi.authenticate();
-                this.accessToken = tempApi.accessToken;
-                
+                await this.refreshAccessToken();
                 console.log('Token refreshed, retrying request...');
-                
-                // Retry once with new token
                 return await makeRequest();
             }
             throw error;
@@ -354,32 +454,10 @@ class ExtraHopAPI {
     }
 
     async deleteDashboard(dashboardId) {
-        const proxyRequest = {
-            deploymentType: this.config.type,
-            method: 'DELETE',
-            endpoint: `/dashboards/${dashboardId}`
-        };
-
-        if (this.config.type === '360') {
-            proxyRequest.tenant = this.config.tenant;
-            proxyRequest.accessToken = this.accessToken;
-        } else {
-            proxyRequest.host = this.config.host;
-            proxyRequest.apiKey = this.config.apiKey;
-        }
-
-        // Need to prepend /api/v1 manually here since deleteDashboard bypasses request()
-        proxyRequest.endpoint = '/api/v1' + proxyRequest.endpoint;
-
-        const response = await fetch(this.proxyUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(proxyRequest)
+        await this.request(`/dashboards/${dashboardId}`, {
+            method: 'DELETE'
         });
-        
-        return response.ok;
+        return true;
     }
 
     async listUsers({ suppressErrors = false } = {}) {
