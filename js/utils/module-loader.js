@@ -5,6 +5,7 @@ class ModuleLoader {
         this.loadedModules = new Set();
         this.moduleMap = {
             'dashboards': 'dashboard-manager.js',
+            'users': 'user-manager.js',
             'crs-usage': 'records-report.js',
             'device-discovery': 'device-discovery.js',
             'localities': 'network-localities.js',

@@ -382,15 +382,62 @@ class ExtraHopAPI {
         return response.ok;
     }
 
-    async getUsers() {
-        // For Enterprise, this endpoint may not be available
-        // For 360, users endpoint should work
+    async listUsers({ suppressErrors = false } = {}) {
         try {
             return await this.request('/users');
-        } catch (e) {
-            console.warn('Could not fetch users:', e);
-            return [];
+        } catch (error) {
+            if (suppressErrors) {
+                console.warn('Could not fetch users:', error);
+                return [];
+            }
+            throw error;
         }
+    }
+
+    async getUsers() {
+        return this.listUsers({ suppressErrors: true });
+    }
+
+    async getUser(username) {
+        return this.request(`/users/${encodeURIComponent(username)}`);
+    }
+
+    async createUser(body) {
+        return this.request('/users', {
+            method: 'POST',
+            body: JSON.stringify(body)
+        });
+    }
+
+    async updateUser(username, body) {
+        return this.request(`/users/${encodeURIComponent(username)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(body)
+        });
+    }
+
+    async deleteUser(username, destUser) {
+        const query = destUser
+            ? `?dest_user=${encodeURIComponent(destUser)}`
+            : '';
+
+        return this.request(`/users/${encodeURIComponent(username)}${query}`, {
+            method: 'DELETE'
+        });
+    }
+
+    async getUserApiKeys(username) {
+        return this.request(`/users/${encodeURIComponent(username)}/apikeys`);
+    }
+
+    async getUserLockStatus(username) {
+        return this.request(`/users/${encodeURIComponent(username)}/lock`);
+    }
+
+    async unlockUser(username) {
+        return this.request(`/users/${encodeURIComponent(username)}/lock`, {
+            method: 'DELETE'
+        });
     }
 
     async getAppliances() {

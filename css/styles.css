@@ -138,12 +138,24 @@ aside {
     background-color: #dc2626;
 }
 
+button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
 input[type="text"], 
 input[type="password"],
+input[type="search"],
+textarea,
 select {
     background-color: var(--bg-input);
     border-color: var(--border-color);
     color: var(--text-primary);
+}
+
+textarea {
+    width: 100%;
 }
 
 input[type="checkbox"] {
@@ -236,6 +248,25 @@ tr:hover {
     width: 90%;
     max-height: 90vh;
     overflow-y: auto;
+}
+
+.detail-panel {
+    background-color: var(--bg-subtle);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.json-preview {
+    background-color: var(--bg-subtle);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-primary);
 }
 
 .spinner {

@@ -6,6 +6,8 @@ const state = {
     currentModule: 'dashboards',
     dashboards: [],
     filteredDashboards: [],
+    users: [],
+    filteredUsers: [],
     selectedDashboards: new Set(),
     currentPage: 1,
     itemsPerPage: 20,
