@@ -13,14 +13,39 @@ async function initializeApp() {
     
     // Load saved config on page load
     loadSavedConfig();
+
+    // Restore a still-valid backend session after a frontend reload
+    await restoreBackendSession();
     
     // Set up global event listeners
     setupGlobalEventListeners();
+
+    // Restore diagnostic logging preference
+    await loadApiLoggingStatus();
     
     // Set last modified timestamp in the ribbon
     setLastModifiedTimestamp();
     
     console.log('Application initialized successfully');
+}
+
+async function restoreBackendSession() {
+    try {
+        const config = await ExtraHopAPI.currentSession();
+        if (!config) return;
+
+        const api = new ExtraHopAPI(config);
+        state.apiConfig = config;
+        state.connected = true;
+        sessionStorage.setItem('eh_config', JSON.stringify(config));
+        window.apiClient = api;
+
+        document.getElementById('moduleSelection').style.display = 'block';
+        showConnectedState();
+        showStatus('✓ Reconnected to existing session', false);
+    } catch (error) {
+        console.warn('No existing backend session to restore:', error);
+    }
 }
 
 function setLastModifiedTimestamp() {
@@ -42,15 +67,10 @@ function loadSavedConfig() {
         const config = JSON.parse(savedConfig);
         if (config.type === '360') {
             document.getElementById('deploymentType').value = '360';
-            document.getElementById('tenantName').value = config.tenant;
-            document.getElementById('apiId').value = config.apiId;
-            document.getElementById('apiSecret').value = config.apiSecret;
-            // Restore proxy checkbox state (default to true if not set)
-            document.getElementById('useAwsProxy').checked = config.useProxy !== false;
+            document.getElementById('tenantName').value = config.tenant || '';
         } else {
             document.getElementById('deploymentType').value = 'enterprise';
-            document.getElementById('enterpriseHost').value = config.host;
-            document.getElementById('enterpriseApiKey').value = config.apiKey;
+            document.getElementById('enterpriseHost').value = config.host || '';
             document.getElementById('config360').style.display = 'none';
             document.getElementById('configEnterprise').style.display = 'block';
         }
@@ -68,6 +88,11 @@ function setupGlobalEventListeners() {
     // Connect button
     document.getElementById('connectBtn').addEventListener('click', handleConnect);
 
+    const apiLoggingVerbosity = document.getElementById('apiLoggingVerbosity');
+    if (apiLoggingVerbosity) {
+        apiLoggingVerbosity.addEventListener('change', handleApiLoggingChange);
+    }
+
     window.addEventListener('beforeunload', () => {
         if (window.apiClient && typeof window.apiClient.dispose === 'function') {
             window.apiClient.dispose();
@@ -78,8 +103,14 @@ function setupGlobalEventListeners() {
     document.querySelectorAll('.module-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             const moduleName = e.currentTarget.dataset.module;
-            if (state.connected) {
-                await moduleLoader.switchToModule(moduleName);
+            if (!state.connected) {
+                showStatus('Connect to an ExtraHop deployment before opening tools.', true);
+                return;
+            }
+
+            const switched = await moduleLoader.switchToModule(moduleName);
+            if (!switched) {
+                showStatus(`Could not open ${moduleName}. Check the browser console for details.`, true);
             }
         });
     });
@@ -137,4 +168,52 @@ function setupGlobalEventListeners() {
             window.open(url, '_blank');
         });
     }
+}
+
+async function loadApiLoggingStatus() {
+    const statusEl = document.getElementById('apiLoggingStatus');
+    const selectEl = document.getElementById('apiLoggingVerbosity');
+    if (!statusEl || !selectEl) return;
+
+    try {
+        const config = await ExtraHopAPI.getApiLogging();
+        renderApiLoggingStatus(config);
+    } catch (error) {
+        statusEl.textContent = `Logging status unavailable: ${error.message}`;
+        statusEl.style.color = '#ef4444';
+    }
+}
+
+async function handleApiLoggingChange(event) {
+    const selectEl = event.currentTarget;
+    const previousValue = selectEl.dataset.currentValue || 'off';
+    selectEl.disabled = true;
+
+    try {
+        const config = await ExtraHopAPI.updateApiLogging(selectEl.value);
+        renderApiLoggingStatus(config);
+        showStatus(`API logging set to ${config.verbosity}`, false);
+    } catch (error) {
+        selectEl.value = previousValue;
+        const statusEl = document.getElementById('apiLoggingStatus');
+        if (statusEl) {
+            statusEl.textContent = `Could not update logging: ${error.message}`;
+            statusEl.style.color = '#ef4444';
+        }
+    } finally {
+        selectEl.disabled = false;
+    }
+}
+
+function renderApiLoggingStatus(config) {
+    const statusEl = document.getElementById('apiLoggingStatus');
+    const selectEl = document.getElementById('apiLoggingVerbosity');
+    if (!statusEl || !selectEl || !config) return;
+
+    selectEl.value = config.verbosity || 'off';
+    selectEl.dataset.currentValue = selectEl.value;
+    statusEl.textContent = config.enabled
+        ? `Writing ${config.verbosity} responses to ${config.path}`
+        : `Log file: ${config.path}`;
+    statusEl.style.color = 'var(--text-muted)';
 }

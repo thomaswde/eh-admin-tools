@@ -8,6 +8,7 @@ class ModuleLoader {
             'users': 'user-manager.js',
             'crs-usage': 'records-report.js',
             'device-discovery': 'device-discovery.js',
+            'system-health': 'system-health-report.js',
             'localities': 'network-localities.js',
             'audit-logs': 'audit-logs.js',
             'nodemap': 'nodemap.js'
@@ -27,23 +28,33 @@ class ModuleLoader {
 
         try {
             console.log(`Loading module: ${moduleName}`);
-            
+
+            const existingScript = document.querySelector(`script[data-module-name="${moduleName}"]`);
+            if (existingScript && existingScript.dataset.moduleLoaded === 'true') {
+                this.loadedModules.add(moduleName);
+                return true;
+            }
+            if (existingScript) existingScript.remove();
+
             // Create script element and load the module
             const script = document.createElement('script');
-            script.src = `js/modules/${moduleFile}`;
+            script.src = `js/modules/${moduleFile}?v=${Date.now()}`;
             script.async = true;
+            script.dataset.moduleName = moduleName;
             
             // Return a promise that resolves when the script loads
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
                 script.onload = () => {
+                    script.dataset.moduleLoaded = 'true';
                     this.loadedModules.add(moduleName);
-                    console.log(`Module '${moduleName}' loaded successfully`);
+                    console.log(`Module '${moduleName}' loaded successfully from ${script.src}`);
                     resolve(true);
                 };
                 
                 script.onerror = (error) => {
-                    console.error(`Failed to load module '${moduleName}':`, error);
-                    reject(false);
+                    console.error(`Failed to load module '${moduleName}' from ${script.src}:`, error);
+                    script.remove();
+                    resolve(false);
                 };
                 
                 document.head.appendChild(script);
@@ -56,7 +67,13 @@ class ModuleLoader {
 
     async switchToModule(moduleName) {
         // First, ensure the module is loaded
-        const loaded = await this.loadModule(moduleName);
+        let loaded = false;
+        try {
+            loaded = await this.loadModule(moduleName);
+        } catch (error) {
+            console.error(`Failed to load module '${moduleName}':`, error);
+            return false;
+        }
         
         if (!loaded) {
             console.error(`Failed to load module '${moduleName}'`);
@@ -79,6 +96,8 @@ class ModuleLoader {
                 await window[initFunctionName]();
             } catch (error) {
                 console.error(`Error initializing module '${moduleName}':`, error);
+                this.loadedModules.delete(moduleName);
+                return false;
             }
         } else {
             console.warn(`Init function ${initFunctionName} not found for module '${moduleName}'`);

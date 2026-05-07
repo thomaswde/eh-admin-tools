@@ -13,7 +13,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
     
     <!-- Load modular CSS -->
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=20260505-system-health">
 </head>
 
 <body>
@@ -75,13 +75,6 @@
                             <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Secret</label>
                             <input type="password" id="apiSecret" class="w-full px-3 py-2 rounded border">
                         </div>
-                        <div class="mb-4">
-                            <label class="flex items-center cursor-pointer">
-                                <input type="checkbox" id="useAwsProxy" checked class="mr-2">
-                                <span class="text-sm" style="color: var(--text-secondary);">Use AWS Proxy</span>
-                            </label>
-                            <p class="text-xs mt-1 ml-6" style="color: var(--text-muted);">Unchecking requires CORS configuration on tenant, when used requests are proxied through ExtraHop's AWS account using an API Gateway.</p>
-                        </div>
                     </div>
 
                     <!-- Enterprise Configuration -->
@@ -94,21 +87,17 @@
                             <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Key</label>
                             <input type="password" id="enterpriseApiKey" class="w-full px-3 py-2 rounded border">
                         </div>
-                        <div class="mb-4 p-3 rounded" style="background-color: var(--bg-subtle);">
-                            <p class="text-xs mb-2" style="color: var(--text-muted);">
-                                <strong>Note:</strong> Web-based API requests require CORS to be configured on your RevealX Enterprise appliance.
-                            </p>
-                            <a href="https://docs.extrahop.com/current/rest-api-guide/#:~:text=Configure%20cross%2Dorigin%20resource%20sharing%20(CORS)" 
-                               target="_blank" 
-                               rel="noopener noreferrer" 
-                               class="text-xs flex items-center gap-1" 
-                               style="color: var(--cyan);">
-                                <span>Configure CORS on RevealX Enterprise</span>
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                </svg>
-                            </a>
-                        </div>
+                        <details class="optional-auth-details">
+                            <summary>
+                                <span>Remote access proxy token</span>
+                                <span class="auth-tooltip" tabindex="0" aria-label="This header is for use only with ExtraHop remote access via ExtraHop Cloud Services.">?</span>
+                            </summary>
+                            <div class="mt-3">
+                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Proxy Token Header</label>
+                                <input type="password" id="enterpriseProxyToken" autocomplete="off" class="w-full px-3 py-2 rounded border">
+                                <p class="text-xs mt-1" style="color: var(--text-muted);">Optional. Leave blank unless you are connecting through ExtraHop Cloud Services remote access.</p>
+                            </div>
+                        </details>
                     </div>
 
                     <button id="connectBtn" class="btn-primary w-full py-2 px-4 rounded font-semibold">
@@ -123,6 +112,20 @@
                 <div class="p-3 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
                     <p id="statusText" class="text-sm font-medium"></p>
                 </div>
+            </div>
+
+            <!-- API Response Logging -->
+            <div id="apiLoggingPanel" class="space-y-3 p-3 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                <div class="flex items-center justify-between gap-3">
+                    <h2 class="text-sm font-semibold" style="color: var(--text-primary);">API Logging</h2>
+                    <select id="apiLoggingVerbosity" class="px-2 py-1 rounded border text-sm">
+                        <option value="off">Off</option>
+                        <option value="errors">Errors</option>
+                        <option value="metadata">Metadata</option>
+                        <option value="full">Full</option>
+                    </select>
+                </div>
+                <p id="apiLoggingStatus" class="text-xs break-all" style="color: var(--text-muted);"></p>
             </div>
 
             <!-- Module Selection -->
@@ -173,6 +176,18 @@
                             <div>
                                 <div class="font-semibold">Devices Report</div>
                                 <div class="text-xs" style="color: var(--text-muted);">Active devices by node</div>
+                            </div>
+                        </div>
+                    </button>
+
+                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="system-health">
+                        <div class="flex items-center">
+                            <svg class="w-5 h-5 mr-3" style="color: var(--lime);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 13h4l3-8 4 16 3-8h4"></path>
+                            </svg>
+                            <div>
+                                <div class="font-semibold">System Health</div>
+                                <div class="text-xs" style="color: var(--text-muted);">Sensor capacity and pressure report</div>
                             </div>
                         </div>
                     </button>
@@ -688,6 +703,249 @@
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Health Module -->
+            <div id="system-healthModule" class="module-content" style="display: none;">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">System Health Report</h2>
+                    <p class="mt-2" style="color: var(--text-muted);">Review peak packet rate, throughput, and analysis-tier pressure across Discover sensors.</p>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Report Defaults</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Lookback Days</label>
+                                <input type="number" id="systemHealthLookback" min="1" max="30" value="7" class="w-full px-3 py-2 rounded border">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Metric Cycle</label>
+                                <select id="systemHealthCycle" class="w-full px-3 py-2 rounded border">
+                                    <option value="1hr" selected>1 hour</option>
+                                    <option value="24hr">24 hours</option>
+                                    <option value="5min">5 minutes</option>
+                                    <option value="30sec">30 seconds</option>
+                                    <option value="1sec">1 second</option>
+                                    <option value="auto">Auto</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p class="text-xs mt-3" style="color: var(--text-muted);">Metrics are calculated from peak values over the selected lookback.</p>
+                    </div>
+
+                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Collection</h3>
+                        <div id="systemHealthCatalogStatus" class="system-health-catalog-status is-missing">
+                            <span class="system-health-catalog-badge">Catalog not loaded</span>
+                            <span>Capacity comparisons will show observed values only until the catalog loads.</span>
+                        </div>
+                        <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Catalog Path (Optional)</label>
+                        <input type="text" id="systemHealthCatalogPath" placeholder="Use default resolution order" class="w-full px-3 py-2 rounded border mb-3">
+                        <div class="flex flex-wrap gap-3">
+                            <button id="runSystemHealthReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
+                                Run System Health Report
+                            </button>
+                            <button id="systemHealthLoadCsvButton" class="btn-secondary px-4 py-3 rounded font-semibold" type="button">
+                                Load CSV
+                            </button>
+                            <button id="systemHealthExportCsvButton" class="btn-secondary px-4 py-3 rounded font-semibold" type="button" disabled>
+                                Export CSV
+                            </button>
+                            <input id="systemHealthCsvInput" type="file" accept=".csv,text/csv" multiple class="hidden">
+                        </div>
+                        <p id="systemHealthCsvStatus" class="text-xs mt-3" style="color: var(--text-muted);">Load capture_bytes_summary.csv, capture_pkts_summary.csv, and device_analysis_summary.csv from a previous run.</p>
+                    </div>
+                </div>
+
+                <details class="system-health-style-panel mb-6">
+                    <summary>
+                        <span class="font-semibold" style="color: var(--text-primary);">Chart style</span>
+                        <span id="systemHealthStyleHint" class="text-xs" style="color: var(--text-muted);">Light · White background</span>
+                    </summary>
+                    <div class="system-health-style-grid">
+                        <label>
+                            <span>Theme</span>
+                            <select data-system-health-style-key="theme" class="w-full px-3 py-2 rounded border">
+                                <option value="light">Light</option>
+                                <option value="dark">Dark</option>
+                                <option value="mono">Monochrome</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <input data-system-health-style-key="transparent" type="checkbox">
+                            <span>Transparent PNG background</span>
+                        </label>
+                        <label data-system-health-style-when="theme=custom">
+                            <span>Background color</span>
+                            <input data-system-health-style-key="bgHex" type="color" value="#ffffff" class="w-full px-2 py-1 rounded border">
+                        </label>
+                        <label data-system-health-style-when="theme=custom">
+                            <span>Font color</span>
+                            <input data-system-health-style-key="textHex" type="color" value="#261f63" class="w-full px-2 py-1 rounded border">
+                        </label>
+                        <label data-system-health-style-when="theme=custom">
+                            <span>Tier 1 bar</span>
+                            <input data-system-health-style-key="advHex" type="color" value="#00aaef" class="w-full px-2 py-1 rounded border">
+                        </label>
+                        <label data-system-health-style-when="theme=custom">
+                            <span>Tier 2 bar</span>
+                            <input data-system-health-style-key="stdHex" type="color" value="#7f2854" class="w-full px-2 py-1 rounded border">
+                        </label>
+                        <label data-system-health-style-when="theme=custom">
+                            <span>Tier 3 bar</span>
+                            <input data-system-health-style-key="discHex" type="color" value="#f05918" class="w-full px-2 py-1 rounded border">
+                        </label>
+                        <button id="systemHealthStyleReset" class="btn-secondary px-4 py-2 rounded font-semibold" type="button">Reset</button>
+                    </div>
+                </details>
+
+                <div id="systemHealthLoading" class="text-center py-20" style="display: none;">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p id="systemHealthLoadingText" style="color: var(--text-muted);">Preparing report...</p>
+                </div>
+
+                <div id="systemHealthResults" style="display: none;">
+                    <div id="systemHealthSummary" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6 mb-6"></div>
+
+                    <div class="space-y-6">
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                                <div>
+                                    <h3 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">Packet Rate vs Model Capacity</h3>
+                                    <p class="text-sm" style="color: var(--text-muted);">Peak packet rate by sensor; catalog matches add capacity context when available.</p>
+                                </div>
+                                <button class="btn-secondary px-4 py-2 rounded font-semibold" type="button" data-system-health-export="systemHealthPacketChart">PNG</button>
+                            </div>
+                            <div class="system-health-pager mb-4" id="systemHealthPacketPager" style="display: none;">
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-prev>Prev Model</button>
+                                <span data-system-health-pager-label></span>
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-next>Next Model</button>
+                            </div>
+                            <div class="system-health-model-header">
+                                <div class="system-health-model-header-main">
+                                    <span class="system-health-model-name" id="systemHealthPacketModelName">-</span>
+                                    <span class="system-health-model-stats" id="systemHealthPacketModelStats"></span>
+                                </div>
+                                <span class="system-health-model-pager" id="systemHealthPacketPagerLabel"></span>
+                            </div>
+                            <div class="system-health-tier-legend">
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="low"></span>&lt;80%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>100%+</span>
+                            </div>
+                            <div class="system-health-pager mb-4" id="systemHealthPacketRowPager" style="display: none;">
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-prev>Prev page</button>
+                                <span data-system-health-row-pager-label></span>
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-next>Next page</button>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive">
+                                <canvas id="systemHealthPacketChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                                <div>
+                                    <h3 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">Throughput vs Model Capacity</h3>
+                                    <p class="text-sm" style="color: var(--text-muted);">Peak throughput by sensor; catalog matches add capacity context when available.</p>
+                                </div>
+                                <button class="btn-secondary px-4 py-2 rounded font-semibold" type="button" data-system-health-export="systemHealthThroughputChart">PNG</button>
+                            </div>
+                            <div class="system-health-pager mb-4" id="systemHealthThroughputPager" style="display: none;">
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-prev>Prev Model</button>
+                                <span data-system-health-pager-label></span>
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-next>Next Model</button>
+                            </div>
+                            <div class="system-health-model-header">
+                                <div class="system-health-model-header-main">
+                                    <span class="system-health-model-name" id="systemHealthThroughputModelName">-</span>
+                                    <span class="system-health-model-stats" id="systemHealthThroughputModelStats"></span>
+                                </div>
+                                <span class="system-health-model-pager" id="systemHealthThroughputPagerLabel"></span>
+                            </div>
+                            <div class="system-health-tier-legend">
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="low"></span>&lt;80%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>100%+</span>
+                            </div>
+                            <div class="system-health-pager mb-4" id="systemHealthThroughputRowPager" style="display: none;">
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-prev>Prev page</button>
+                                <span data-system-health-row-pager-label></span>
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-next>Next page</button>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive">
+                                <canvas id="systemHealthThroughputChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                                <div>
+                                    <h3 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">Analysis Tier Pressure</h3>
+                                    <p class="text-sm" style="color: var(--text-muted);">Advanced and Standard utilization by sensor, with Discovery shown as overflow.</p>
+                                </div>
+                                <button class="btn-secondary px-4 py-2 rounded font-semibold" type="button" data-system-health-export="systemHealthAnalysisChart">PNG</button>
+                            </div>
+                            <div class="system-health-pager mb-4" id="systemHealthAnalysisPager" style="display: none;">
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-prev>Prev Model</button>
+                                <span data-system-health-pager-label></span>
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-next>Next Model</button>
+                            </div>
+                            <div class="system-health-model-header">
+                                <div class="system-health-model-header-main">
+                                    <span class="system-health-model-name" id="systemHealthAnalysisModelName">-</span>
+                                    <span class="system-health-model-stats" id="systemHealthAnalysisModelStats"></span>
+                                </div>
+                                <span class="system-health-model-pager" id="systemHealthAnalysisPagerLabel"></span>
+                            </div>
+                            <div class="system-health-tier-legend">
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="low"></span>Under 80%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>At or over 100%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="discovery"></span>Discovery overflow</span>
+                            </div>
+                            <div class="system-health-pager mb-4" id="systemHealthAnalysisRowPager" style="display: none;">
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-prev>Prev page</button>
+                                <span data-system-health-row-pager-label></span>
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-next>Next page</button>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive">
+                                <canvas id="systemHealthAnalysisChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Sensor Detail</h3>
+                            <div class="table-container rounded-lg overflow-x-auto">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Sensor</th>
+                                            <th>Model</th>
+                                            <th>Packet Peak</th>
+                                            <th>Packet Capacity</th>
+                                            <th>Throughput Peak</th>
+                                            <th>Throughput Capacity</th>
+                                            <th>Advanced</th>
+                                            <th>Standard</th>
+                                            <th>Discovery</th>
+                                            <th>Analysis Capacity</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="systemHealthTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div id="systemHealthNotes" class="p-6 rounded-lg" style="display: none; background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Collector Notes</h3>
+                            <ul id="systemHealthErrorList" class="list-disc pl-5 space-y-2 text-sm" style="color: var(--text-secondary);"></ul>
                         </div>
                     </div>
                 </div>
@@ -1317,11 +1575,11 @@
 
 
     <!-- Load JavaScript Modules -->
-    <script src="js/utils/app-state.js"></script>
-    <script src="js/api-client/extrahop-api.js"></script>
-    <script src="js/utils/common.js"></script>
-    <script src="js/auth/auth-manager.js"></script>
-    <script src="js/utils/module-loader.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/utils/app-state.js?v=20260505-system-health"></script>
+    <script src="js/api-client/extrahop-api.js?v=20260505-system-health"></script>
+    <script src="js/utils/common.js?v=20260505-system-health"></script>
+    <script src="js/auth/auth-manager.js?v=20260505-system-health"></script>
+    <script src="js/utils/module-loader.js?v=20260505-system-health"></script>
+    <script src="js/app.js?v=20260505-system-health"></script>
 </body>
 </html>

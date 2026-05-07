@@ -41,24 +41,27 @@ async function handleConnect() {
 
         let config;
         if (deploymentType === '360') {
-            const useProxy = document.getElementById('useAwsProxy').checked;
             config = {
                 type: '360',
                 tenant: document.getElementById('tenantName').value.trim(),
                 apiId: document.getElementById('apiId').value.trim(),
-                apiSecret: document.getElementById('apiSecret').value.trim(),
-                useProxy: useProxy
+                apiSecret: document.getElementById('apiSecret').value.trim()
             };
 
             if (!config.tenant || !config.apiId || !config.apiSecret) {
                 throw new Error('Please fill in all fields');
             }
         } else {
+            const proxyToken = document.getElementById('enterpriseProxyToken')?.value.trim();
             config = {
                 type: 'enterprise',
                 host: document.getElementById('enterpriseHost').value.trim(),
                 apiKey: document.getElementById('enterpriseApiKey').value.trim()
             };
+
+            if (proxyToken) {
+                config.proxyToken = proxyToken;
+            }
 
             if (!config.host || !config.apiKey) {
                 throw new Error('Please fill in all fields');
@@ -72,9 +75,9 @@ async function handleConnect() {
             window.apiClient.dispose();
         }
 
-        state.apiConfig = config;
+        state.apiConfig = api.config;
         state.connected = true;
-        sessionStorage.setItem('eh_config', JSON.stringify(config));
+        sessionStorage.setItem('eh_config', JSON.stringify(api.config));
         window.apiClient = api;
 
         showStatus('✓ Connected successfully', false);
@@ -89,7 +92,19 @@ async function handleConnect() {
 
     } catch (error) {
         showStatus('✖ ' + error.message, true);
+        showConnectionError(error);
         connectBtn.textContent = 'Connect';
         connectBtn.disabled = false;
     }
+}
+
+function showConnectionError(error) {
+    const details = error.details || {};
+    showErrorModal(error.message || 'Connection failed', {
+        url: details.url || '/backend/session',
+        headers: details.headers || { 'Content-Type': 'application/json' },
+        body: 'Credentials omitted',
+        status: details.status || (error.status ? String(error.status) : 'Connection Error'),
+        response: details.response || error.message || 'No additional response details'
+    });
 }
