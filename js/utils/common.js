@@ -3,48 +3,58 @@
 function showStatus(message, isError = false) {
     const statusDiv = document.getElementById('connectionStatus');
     const statusText = document.getElementById('statusText');
+    const notice = statusDiv.querySelector('.notice');
+
     statusDiv.style.display = 'block';
     statusText.textContent = message;
-    statusText.style.color = isError ? '#ef4444' : 'var(--cyan)';
+    notice.classList.toggle('notice-danger', isError);
+    notice.classList.toggle('notice-ok', !isError);
+
+    // Status lives inside the connection popover, so an error is only useful
+    // if the popover is open.
+    if (isError) setConnectionPanelOpen(true);
 }
 
 function toggleApiConfig() {
-    const configForm = document.getElementById('configForm');
-    setApiConfigExpanded(configForm.style.display === 'none');
+    setConnectionPanelOpen(document.getElementById('connPanel').hidden);
 }
 
-function setApiConfigExpanded(expanded) {
-    const configForm = document.getElementById('configForm');
-    const apiLoggingPanel = document.getElementById('apiLoggingPanel');
-    const expandIcon = document.getElementById('expandIcon');
-    const toggle = document.getElementById('apiConfigToggle');
-
-    configForm.style.display = expanded ? 'block' : 'none';
-    apiLoggingPanel.style.display = expanded ? 'block' : 'none';
-    expandIcon.style.transform = expanded ? 'rotate(0deg)' : 'rotate(-90deg)';
-    toggle.setAttribute('aria-expanded', String(expanded));
+function setConnectionPanelOpen(open) {
+    document.getElementById('connPanel').hidden = !open;
+    document.getElementById('apiConfigToggle').setAttribute('aria-expanded', String(open));
 }
 
 function showConnectedState() {
-    const connectedState = document.getElementById('connectedState');
-    const connectedInfo = document.getElementById('connectedInfo');
-    
-    connectedState.classList.remove('hidden');
-    setApiConfigExpanded(false);
-    
-    if (state.apiConfig.type === '360') {
-        connectedInfo.textContent = `RevealX 360: ${state.apiConfig.tenant}`;
-    } else {
-        connectedInfo.textContent = `RevealX Enterprise: ${state.apiConfig.host}`;
-    }
-    
+    const chip = document.getElementById('apiConfigToggle');
+    const is360 = state.apiConfig.type === '360';
+
+    document.getElementById('connectedState').classList.remove('hidden');
+    document.getElementById('configForm').style.display = 'none';
+    document.getElementById('moduleSelection').style.display = 'block';
+
+    document.getElementById('connectedInfo').textContent = is360
+        ? `${state.apiConfig.tenant}.api.cloud.extrahop.com`
+        : state.apiConfig.host;
+
+    chip.classList.add('is-connected');
+    document.getElementById('connChipLabel').textContent = is360 ? state.apiConfig.tenant : state.apiConfig.host;
+    document.getElementById('connChipMeta').textContent = is360 ? 'RevealX 360' : 'Enterprise';
+
+    setConnectionPanelOpen(false);
 }
 
 function hideConnectedState() {
-    const connectedState = document.getElementById('connectedState');
-    
-    connectedState.classList.add('hidden');
-    setApiConfigExpanded(true);
+    const chip = document.getElementById('apiConfigToggle');
+
+    document.getElementById('connectedState').classList.add('hidden');
+    document.getElementById('configForm').style.display = 'block';
+    document.getElementById('moduleSelection').style.display = 'none';
+
+    chip.classList.remove('is-connected');
+    document.getElementById('connChipLabel').textContent = 'Not connected';
+    document.getElementById('connChipMeta').textContent = '';
+
+    setConnectionPanelOpen(true);
 }
 
 function showErrorModal(message, details) {
@@ -58,7 +68,7 @@ function showErrorModal(message, details) {
         : details.response || 'N/A';
     
     document.getElementById('errorDetails').style.display = 'none';
-    document.getElementById('toggleErrorDetails').textContent = 'Show Technical Details';
+    document.getElementById('toggleErrorDetails').textContent = 'Show technical details';
     showModal('errorModal');
 }
 
@@ -100,6 +110,11 @@ function showModal(modalId) {
 
 function hideModal(modalId) {
     document.getElementById(modalId).classList.remove('show');
+}
+
+// A labelled read-only value, used inside .detail-panel blocks.
+function detailItem(label, value) {
+    return `<div><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(value)}</span></div>`;
 }
 
 function escapeHtml(text) {

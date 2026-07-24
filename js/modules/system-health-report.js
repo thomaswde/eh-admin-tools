@@ -637,10 +637,10 @@ function renderSystemHealthSummary(report, rows) {
     ];
 
     document.getElementById('systemHealthSummary').innerHTML = cards.map(([label, value, note]) => `
-        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--cyan);">
-            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">${label}</div>
-            <div class="text-3xl font-bold" style="color: var(--sapphire);">${value}</div>
-            <div class="text-xs mt-2" style="color: var(--text-muted);">${note}</div>
+        <div class="stat">
+            <div class="stat-label">${escapeHtml(label)}</div>
+            <div class="stat-value">${escapeHtml(value)}</div>
+            <div class="stat-sub">${escapeHtml(note)}</div>
         </div>
     `).join('');
 }

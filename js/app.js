@@ -10,7 +10,9 @@ window.addEventListener('DOMContentLoaded', () => {
 
 async function initializeApp() {
     console.log('Initializing ExtraHop Admin Tools...');
-    
+
+    initTheme();
+
     // Load saved config on page load
     loadSavedConfig();
 
@@ -40,9 +42,8 @@ async function restoreBackendSession() {
         sessionStorage.setItem('eh_config', JSON.stringify(config));
         window.apiClient = api;
 
-        document.getElementById('moduleSelection').style.display = 'block';
         showConnectedState();
-        showStatus('✓ Reconnected to existing session', false);
+        showStatus('Reconnected to the existing session.', false);
     } catch (error) {
         console.warn('No existing backend session to restore:', error);
     }
@@ -87,6 +88,8 @@ function loadSavedConfig() {
 }
 
 function setupGlobalEventListeners() {
+    setupConnectionPanel();
+
     // Deployment type change
     document.getElementById('deploymentType').addEventListener('change', (e) => {
         const is360 = e.target.value === '360';
@@ -141,20 +144,7 @@ function setupGlobalEventListeners() {
         }
     });
 
-    // Other Tools toggle
-    const otherToolsToggle = document.getElementById('otherToolsToggle');
-    const otherToolsContainer = document.getElementById('otherToolsContainer');
-    const otherToolsCaret = document.getElementById('otherToolsCaret');
-
-    if (otherToolsToggle && otherToolsContainer && otherToolsCaret) {
-        otherToolsToggle.addEventListener('click', () => {
-            const isHidden = otherToolsContainer.style.display === 'none' || otherToolsContainer.style.display === '';
-            otherToolsContainer.style.display = isHidden ? 'block' : 'none';
-            otherToolsCaret.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
-        });
-    }
-
-    // Other Tools external links
+    // Reference links
     const productCatalogBtn = document.getElementById('productCatalogBtn');
     if (productCatalogBtn) {
         productCatalogBtn.addEventListener('click', () => {
@@ -172,6 +162,32 @@ function setupGlobalEventListeners() {
             window.open(url, '_blank');
         });
     }
+}
+
+// The connection form lives in a popover anchored to the header chip.
+function setupConnectionPanel() {
+    const chip = document.getElementById('apiConfigToggle');
+    const panel = document.getElementById('connPanel');
+
+    chip.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleApiConfig();
+    });
+
+    // Clicks inside the panel must not close it.
+    panel.addEventListener('click', (event) => event.stopPropagation());
+
+    document.addEventListener('click', () => setConnectionPanelOpen(false));
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') setConnectionPanelOpen(false);
+    });
+
+    document.getElementById('welcomeConnectBtn').addEventListener('click', (event) => {
+        event.stopPropagation();
+        setConnectionPanelOpen(true);
+        document.getElementById('tenantName').focus();
+    });
 }
 
 async function loadApiLoggingStatus() {

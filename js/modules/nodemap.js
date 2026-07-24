@@ -86,17 +86,17 @@ function getStatusInfo(appliance) {
     }
 
     let circleColor = '#9ca3af';
-    let badgeClass = 'bg-gray-100 text-gray-800';
+    let badgeClass = 'badge';
 
     if (level === 'online') {
-        circleColor = '#10b981'; // green-500
-        badgeClass = 'bg-green-100 text-green-800';
+        circleColor = '#10b981';
+        badgeClass = 'badge badge-success';
     } else if (level === 'error') {
-        circleColor = '#ef4444'; // red-500
-        badgeClass = 'bg-red-100 text-red-800';
+        circleColor = '#ef4444';
+        badgeClass = 'badge badge-danger';
     } else if (level === 'warning') {
-        circleColor = '#f59e0b'; // amber-500
-        badgeClass = 'bg-yellow-100 text-yellow-800';
+        circleColor = '#f59e0b';
+        badgeClass = 'badge badge-warning';
     }
 
     const statusText = rawStatus || 'Unknown';
@@ -564,14 +564,14 @@ function showNodeDetailsPanel() {
     const panel = document.getElementById('nodeDetailsPanel');
     const graphArea = document.getElementById('graphMainArea');
     
-    panel.style.display = 'block';
-    // Trigger reflow before adding transform
+    panel.style.display = 'flex';
+    // Trigger reflow so the slide-in transition runs
     panel.offsetHeight;
-    panel.style.transform = 'translateX(0)';
-    
-    // Adjust graph area width
-    graphArea.style.width = 'calc(100% - 384px)'; // 384px = w-96
-    
+    panel.classList.add('is-open');
+
+    // Give the graph the remaining width
+    graphArea.style.width = 'calc(100% - 384px)';
+
     // Re-render graph to fit new container size
     setTimeout(() => {
         renderGraph();
@@ -582,7 +582,7 @@ function hideNodeDetailsPanel() {
     const panel = document.getElementById('nodeDetailsPanel');
     const graphArea = document.getElementById('graphMainArea');
     
-    panel.style.transform = 'translateX(100%)';
+    panel.classList.remove('is-open');
     graphArea.style.width = '100%';
     
     // Re-render graph to fit new container size
@@ -604,78 +604,51 @@ function showNodeDetails(appliance) {
     const displayName = appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`;
     
     content.innerHTML = `
-        <div class="space-y-6">
-            <!-- Basic Information Section -->
-            <div class="space-y-4">
-                <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Basic Information</h4>
-                <div class="space-y-4">
+        <div class="stack">
+            <div>
+                <div class="filter-group-title">Basic information</div>
+                <div class="detail-panel stack-sm">
+                    ${detailItem('Name', displayName)}
+                    ${detailItem('Model', appliance.license_platform || 'Unknown')}
+                    ${detailItem('Platform', appliance.platform || 'Unknown')}
+                    ${detailItem('Firmware', appliance.firmware_version || 'Unknown')}
                     <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Name</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(displayName)}</span>
+                        <span class="detail-label">Status</span>
+                        <span class="${statusInfo.badgeClass}"><span class="badge-dot"></span>${escapeHtml(statusInfo.statusText)}</span>
                     </div>
                     <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Model</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.license_platform || 'Unknown')}</span>
-                    </div>
-                    <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Platform</span>
-                        <span class="block text-sm p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.platform || 'Unknown')}</span>
-                    </div>
-                    <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Firmware</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.firmware_version || 'Unknown')}</span>
-                    </div>
-                    <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Status</span>
-                        <span class="inline-block text-sm px-3 py-1 rounded-full ${statusInfo.badgeClass}">${escapeHtml(statusInfo.statusText)}</span>
-                    </div>
-                    <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Type</span>
-                        <span class="inline-block text-sm px-3 py-1 rounded-full ${info.isVirtual ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}">${info.isVirtual ? 'Virtual' : 'Physical'}</span>
+                        <span class="detail-label">Type</span>
+                        <span class="badge">${info.isVirtual ? 'Virtual' : 'Physical'}</span>
                     </div>
                     ${info.hasIntegratedTrace ? `
                     <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Features</span>
-                        <span class="inline-block text-sm px-3 py-1 rounded-full bg-orange-100 text-orange-800">Integrated PCAP</span>
+                        <span class="detail-label">Features</span>
+                        <span class="badge">Integrated PCAP</span>
                     </div>
                     ` : ''}
                 </div>
             </div>
-            
-            <!-- Technical Details Section -->
-            <div class="space-y-4">
-                <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Technical Details</h4>
-                <div class="space-y-4">
+
+            <div>
+                <div class="filter-group-title">Technical details</div>
+                <div class="detail-panel stack-sm">
                     <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">UUID</span>
-                        <span class="block text-xs font-mono break-all p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.uuid || 'N/A')}</span>
+                        <span class="detail-label">UUID</span>
+                        <span class="detail-value mono xsmall">${escapeHtml(appliance.uuid || 'N/A')}</span>
                     </div>
-                    <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">ID</span>
-                        <span class="block text-sm p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.id)}</span>
-                    </div>
-                    <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Hostname</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.hostname || 'N/A')}</span>
-                    </div>
-                    ${appliance.nickname ? `
-                    <div>
-                        <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Nickname</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.nickname)}</span>
-                    </div>
-                    ` : ''}
+                    ${detailItem('ID', appliance.id)}
+                    ${detailItem('Hostname', appliance.hostname || 'N/A')}
+                    ${appliance.nickname ? detailItem('Nickname', appliance.nickname) : ''}
                 </div>
             </div>
-            
+
             ${appliance.product_modules && appliance.product_modules.length > 0 ? `
-            <div class="space-y-4">
-                <h4 class="font-semibold text-base border-b pb-2" style="color: var(--text-primary); border-color: var(--border-color);">Product Modules</h4>
-                <div class="flex flex-wrap gap-2">
+            <div>
+                <div class="filter-group-title">Product modules</div>
+                <div class="row-tight">
                     ${appliance.product_modules.map(module => {
                         const label = (module == null ? '' : module.toString()).toUpperCase();
-                        return `
-                        <span class="px-3 py-1 text-sm rounded-full" style="background-color: var(--cyan); color: white;">${escapeHtml(label)}</span>
-                        `;
+                        return `<span class="badge">${escapeHtml(label)}</span>`;
                     }).join('')}
                 </div>
             </div>

@@ -1,522 +1,505 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ExtraHop Admin Tools</title>
     <link rel="icon" href="favicon.png" type="image/png">
-    <link rel="stylesheet" href="css/tailwind.min.css?v=20260724">
+    <script src="js/theme-init.js?v=20260724-ui"></script>
+    <link rel="stylesheet" href="css/styles.css?v=20260724-ui">
     <script src="js/vendor/chart.umd.min.js?v=4.4.0"></script>
     <script src="js/vendor/d3.min.js?v=7.9.0"></script>
-    
-    <!-- Load modular CSS -->
-    <link rel="stylesheet" href="css/styles.css?v=20260724-dist">
 </head>
 
 <body>
-    <!-- TOP RIBBON -->
-    <div class="top-ribbon">
-        <img src="eh_logo.png" alt="ExtraHop" class="ribbon-logo">
-        <span class="ribbon-title">Admin Tools</span>
-        <span id="lastModified" class="ribbon-last-modified"></span>
-    </div>
+<div class="app">
 
-    <!-- MAIN CONTENT -->
-    <div class="content-wrapper flex flex-col lg:flex-row min-h-screen">
-        <!-- SIDEBAR -->
-        <aside class="w-full lg:w-80 border-r p-6 space-y-6 lg:fixed lg:h-full lg:overflow-y-auto">
-            <!-- API Configuration Section -->
-            <div id="apiConfigSection" class="space-y-4">
-                <!-- Connected State (Hidden Initially) -->
+    <!-- ============================== TOPBAR ============================== -->
+    <header class="topbar">
+        <div class="brand">
+            <img class="brand-logo brand-logo--light" src="assets/eh-logo-black.svg" alt="ExtraHop">
+            <img class="brand-logo brand-logo--dark" src="assets/eh-logo-white.svg" alt="ExtraHop">
+            <span class="brand-sub">Admin Tools</span>
+        </div>
+
+        <div class="topbar-spacer"></div>
+
+        <span id="lastModified" class="topbar-meta"></span>
+
+        <!-- Connection status chip, details in the popover below -->
+        <div class="conn" id="apiConfigSection">
+            <button type="button" id="apiConfigToggle" class="conn-chip" aria-expanded="false" aria-controls="connPanel">
+                <span class="conn-dot"></span>
+                <span class="conn-label" id="connChipLabel">Not connected</span>
+                <span class="conn-meta" id="connChipMeta"></span>
+                <svg class="conn-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+                    <path d="M6 9l6 6 6-6"></path>
+                </svg>
+            </button>
+
+            <div class="conn-panel" id="connPanel" hidden>
+                <h2>Connection</h2>
+                <p class="field-hint" style="margin-bottom: 14px;">Credentials stay server-side. This browser only holds a session cookie.</p>
+
+                <!-- Connected state -->
                 <div id="connectedState" class="hidden">
-                    <button id="apiConfigToggle" type="button" class="flex w-full items-center justify-between p-3 rounded cursor-pointer" style="background-color: var(--bg-subtle);" onclick="toggleApiConfig()" aria-expanded="false" aria-controls="configForm apiLoggingPanel">
-                        <div class="flex items-center">
-                            <svg class="w-5 h-5 mr-2" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                            </svg>
-                            <span class="font-semibold" style="color: var(--text-primary);">Connected</span>
-                        </div>
-
-                        <svg id="expandIcon" class="w-5 h-5 transition-transform" style="color: var(--text-secondary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                        </svg>
-                    </button>
-                    <p class="text-xs mt-2 text-center" style="color: var(--text-muted);" id="connectedInfo"></p>
-                    <button id="disconnectBtn" class="btn-secondary w-full py-2 px-4 rounded text-sm font-semibold mt-3" type="button">
-                        Disconnect
-                    </button>
+                    <div class="notice notice-ok" style="margin-bottom: 12px;">
+                        <span class="notice-label">Connected</span>
+                        <span id="connectedInfo"></span>
+                    </div>
+                    <button type="button" id="disconnectBtn" class="btn btn-block" style="margin-bottom: 4px;">Disconnect</button>
                 </div>
 
-                <!-- Configuration Form -->
-                <div id="configForm">
-                    <h2 class="text-lg font-semibold" style="color: var(--text-primary);">API Configuration</h2>
-                    
-                    <!-- Deployment Type -->
-                    <div class="mb-4">
-                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Deployment Type</label>
-                        <select id="deploymentType" class="w-full px-3 py-2 rounded border">
+                <!-- Connection status message -->
+                <div id="connectionStatus" style="display: none;">
+                    <div class="notice" style="margin-bottom: 12px;">
+                        <span id="statusText"></span>
+                    </div>
+                </div>
+
+                <!-- Configuration form -->
+                <div id="configForm" class="stack-sm">
+                    <div class="field">
+                        <label for="deploymentType">Deployment type</label>
+                        <select id="deploymentType">
                             <option value="360">RevealX 360 (Cloud)</option>
                             <option value="enterprise">RevealX Enterprise (On-Premises)</option>
                         </select>
                     </div>
 
-                    <!-- 360 Configuration -->
-                    <div id="config360" class="space-y-3">
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Tenant Name</label>
-                            <input type="text" id="tenantName" placeholder="e.g., hoolicorp" class="w-full px-3 py-2 rounded border">
-                            <p class="text-xs mt-1" style="color: var(--text-muted);">From: tenant.api.cloud.extrahop.com</p>
+                    <!-- 360 configuration -->
+                    <div id="config360" class="stack-sm">
+                        <div class="field">
+                            <label for="tenantName">Tenant name</label>
+                            <input type="text" id="tenantName" placeholder="e.g. hoolicorp">
+                            <span class="field-hint">From tenant.api.cloud.extrahop.com</span>
                         </div>
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API ID</label>
-                            <input type="text" id="apiId" class="w-full px-3 py-2 rounded border">
+                        <div class="field">
+                            <label for="apiId">API ID</label>
+                            <input type="text" id="apiId">
                         </div>
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Secret</label>
-                            <input type="password" id="apiSecret" class="w-full px-3 py-2 rounded border">
+                        <div class="field">
+                            <label for="apiSecret">API secret</label>
+                            <input type="password" id="apiSecret">
                         </div>
                     </div>
 
-                    <!-- Enterprise Configuration -->
-                    <div id="configEnterprise" class="space-y-3" style="display: none;">
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Hostname or IP</label>
-                            <input type="text" id="enterpriseHost" placeholder="e.g., extrahop.company.com" class="w-full px-3 py-2 rounded border">
+                    <!-- Enterprise configuration -->
+                    <div id="configEnterprise" class="stack-sm" style="display: none;">
+                        <div class="field">
+                            <label for="enterpriseHost">Hostname or IP</label>
+                            <input type="text" id="enterpriseHost" placeholder="e.g. extrahop.company.com">
                         </div>
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">API Key</label>
-                            <input type="password" id="enterpriseApiKey" class="w-full px-3 py-2 rounded border">
+                        <div class="field">
+                            <label for="enterpriseApiKey">API key</label>
+                            <input type="password" id="enterpriseApiKey">
                         </div>
+
                         <details class="optional-auth-details">
                             <summary>
                                 <span>Remote access proxy token</span>
                                 <span class="auth-tooltip" tabindex="0" aria-label="This header is for use only with ExtraHop remote access via ExtraHop Cloud Services.">?</span>
                             </summary>
-                            <div class="mt-3">
-                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Proxy Token Header</label>
-                                <input type="password" id="enterpriseProxyToken" autocomplete="off" class="w-full px-3 py-2 rounded border">
-                                <p class="text-xs mt-1" style="color: var(--text-muted);">Optional. Leave blank unless you are connecting through ExtraHop Cloud Services remote access.</p>
+                            <div class="field" style="margin-top: 12px;">
+                                <label for="enterpriseProxyToken">Proxy token header</label>
+                                <input type="password" id="enterpriseProxyToken" autocomplete="off">
+                                <span class="field-hint">Optional. Leave blank unless you are connecting through ExtraHop Cloud Services remote access.</span>
                             </div>
                         </details>
-                        <label class="flex items-start gap-2 mt-3 text-xs" style="color: var(--text-secondary);">
-                            <input type="checkbox" id="enterpriseAllowUntrustedTls" class="mt-1">
+
+                        <label class="check-block">
+                            <input type="checkbox" id="enterpriseAllowUntrustedTls">
                             <span>
-                                Allow an untrusted or self-signed TLS certificate
-                                <span class="block mt-1" style="color: var(--text-muted);">Use only for a known lab appliance. Certificate verification remains enabled by default.</span>
+                                <span class="check-title">Allow an untrusted or self-signed TLS certificate</span>
+                                <span class="check-desc">Use only for a known lab appliance. Certificate verification remains enabled by default.</span>
                             </span>
                         </label>
                     </div>
 
-                    <button id="connectBtn" class="btn-primary w-full py-2 px-4 rounded font-semibold">
-                        Connect
-                    </button>
+                    <button type="button" id="connectBtn" class="btn-primary btn-block">Connect</button>
                 </div>
 
-                <!-- API Response Logging -->
-                <div id="apiLoggingPanel" class="space-y-3 p-3 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                    <div class="flex items-center justify-between gap-3">
-                        <h2 class="text-sm font-semibold" style="color: var(--text-primary);">API Logging</h2>
-                        <select id="apiLoggingVerbosity" class="px-2 py-1 rounded border text-sm">
-                            <option value="off">Off</option>
-                            <option value="errors">Errors</option>
-                            <option value="metadata">Metadata</option>
-                            <option value="full">Full</option>
-                        </select>
-                    </div>
-                    <p id="apiLoggingStatus" class="text-xs break-all" style="color: var(--text-muted);"></p>
-                    <p class="text-xs" style="color: var(--text-muted);">Full logging can contain sensitive operational data. Share log files only after review.</p>
+                <div class="conn-divider"></div>
+
+                <!-- API response logging -->
+                <div id="apiLoggingPanel" class="field">
+                    <label for="apiLoggingVerbosity">API response logging</label>
+                    <select id="apiLoggingVerbosity">
+                        <option value="off">Off</option>
+                        <option value="errors">Errors</option>
+                        <option value="metadata">Metadata</option>
+                        <option value="full">Full</option>
+                    </select>
+                    <span id="apiLoggingStatus" class="field-hint break-any"></span>
+                    <span class="field-hint">Full logging can contain sensitive operational data. Share log files only after review.</span>
                 </div>
             </div>
+        </div>
 
-            
-            <!-- Connection Status -->
-            <div id="connectionStatus" style="display: none;">
-                <div class="p-3 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                    <p id="statusText" class="text-sm font-medium"></p>
-                </div>
+        <!-- Theme -->
+        <div class="seg" id="themeSeg" role="group" aria-label="Theme">
+            <button type="button" class="seg-btn" data-value="light" title="Light theme" aria-label="Light theme">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+                </svg>
+            </button>
+            <button type="button" class="seg-btn" data-value="system" title="Match system theme">Auto</button>
+            <button type="button" class="seg-btn" data-value="dark" title="Dark theme" aria-label="Dark theme">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"></path>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- =============================== RAIL =============================== -->
+    <nav class="rail" aria-label="Tools">
+        <div id="moduleSelection" style="display: none;">
+            <div class="rail-group-label">Tools</div>
+            <div class="rail-nav">
+
+                <button type="button" class="nav-item module-btn" data-module="dashboards">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+                        <rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+                    </svg>
+                    <span class="nav-text">
+                        <span class="nav-title">Dashboard Manager</span>
+                        <span class="nav-desc">Ownership, sharing, deletion</span>
+                    </span>
+                </button>
+
+                <button type="button" class="nav-item module-btn" data-module="users">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                        <path d="M16 20v-1.5a4 4 0 00-4-4H7a4 4 0 00-4 4V20"></path><circle cx="9.5" cy="7.5" r="3.5"></circle>
+                        <path d="M17 11a3 3 0 100-6M21 20v-1.5a4 4 0 00-3-3.87"></path>
+                    </svg>
+                    <span class="nav-text">
+                        <span class="nav-title">User Manager</span>
+                        <span class="nav-desc">Accounts, privileges, API keys</span>
+                    </span>
+                </button>
+
+                <button type="button" class="nav-item module-btn" data-module="crs-usage">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2"></path>
+                    </svg>
+                    <span class="nav-text">
+                        <span class="nav-title">Records Report</span>
+                        <span class="nav-desc">CRS usage analysis</span>
+                    </span>
+                </button>
+
+                <button type="button" class="nav-item module-btn" data-module="device-discovery">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M12 3l9 4.5-9 4.5-9-4.5L12 3z"></path><path d="M3 16.5L12 21l9-4.5"></path><path d="M3 12l9 4.5 9-4.5"></path>
+                    </svg>
+                    <span class="nav-text">
+                        <span class="nav-title">Devices Report</span>
+                        <span class="nav-desc">Active devices by node</span>
+                    </span>
+                </button>
+
+                <button type="button" class="nav-item module-btn" data-module="system-health">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M3 13h3.5l2.5-7 4 14 2.5-7H21"></path>
+                    </svg>
+                    <span class="nav-text">
+                        <span class="nav-title">System Health</span>
+                        <span class="nav-desc">Sensor capacity and pressure</span>
+                    </span>
+                </button>
+
+                <button type="button" class="nav-item module-btn" data-module="localities">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"></path>
+                    </svg>
+                    <span class="nav-text">
+                        <span class="nav-title">Network Localities</span>
+                        <span class="nav-desc">Locality definitions</span>
+                    </span>
+                </button>
+
+                <button type="button" class="nav-item module-btn" data-module="audit-logs">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M13 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V9l-6-6z"></path><path d="M13 3v6h6M9 13h6M9 17h4"></path>
+                    </svg>
+                    <span class="nav-text">
+                        <span class="nav-title">Audit Logs</span>
+                        <span class="nav-desc">Analyze audit log data</span>
+                    </span>
+                </button>
+
+                <button type="button" class="nav-item module-btn" data-module="nodemap">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <circle cx="6" cy="6" r="2.2"></circle><circle cx="18" cy="6" r="2.2"></circle><circle cx="12" cy="18" r="2.2"></circle>
+                        <path d="M7.4 7.9l3.5 8.2M16.6 7.9l-3.5 8.2"></path>
+                    </svg>
+                    <span class="nav-text">
+                        <span class="nav-title">Connected Appliances</span>
+                        <span class="nav-desc">Appliance topology</span>
+                    </span>
+                </button>
+            </div>
+        </div>
+
+        <div>
+            <div class="rail-group-label">Reference</div>
+            <div class="rail-nav">
+                <button type="button" class="nav-item" id="productCatalogBtn">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                        <path d="M14 4h6v6M20 4l-8 8"></path><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"></path>
+                    </svg>
+                    <span class="nav-text"><span class="nav-title">Product Catalog</span></span>
+                </button>
+                <button type="button" class="nav-item" id="restApiGuideBtn">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+                        <path d="M14 4h6v6M20 4l-8 8"></path><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"></path>
+                    </svg>
+                    <span class="nav-text"><span class="nav-title">REST API Guide</span></span>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- =============================== MAIN =============================== -->
+    <main class="main">
+
+        <!-- ---------------------- Welcome ---------------------- -->
+        <div id="welcomeScreen" class="page" style="height: 100%;">
+            <div class="empty">
+                <img class="empty-mark" src="assets/eh-monogram-primary.svg" alt="">
+                <h1>ExtraHop Admin Tools</h1>
+                <p>Connect to a RevealX deployment to open the tools. Credentials stay on this machine — the browser never talks to ExtraHop directly.</p>
+                <button type="button" class="btn-primary" id="welcomeConnectBtn" style="margin-top: 14px;">Set up connection</button>
+            </div>
+        </div>
+
+        <!-- ---------------------- Dashboard Manager ---------------------- -->
+        <div id="dashboardsModule" class="module-content page" style="display: none;">
+            <div class="page-head">
+                <h1 class="page-title">Dashboard Manager</h1>
+                <p class="page-desc">Manage dashboard ownership, sharing, and deletion at scale.</p>
             </div>
 
-            <!-- Module Selection -->
-            <div id="moduleSelection" style="display: none;">
-                <h2 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Tools</h2>
-                <nav class="space-y-2">
-                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="dashboards">
-                        <div class="flex items-center">
-                            <svg class="w-5 h-5 mr-3" style="color: var(--sapphire);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path>
-                            </svg>
-                            <div>
-                                <div class="font-semibold">Dashboard Manager</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Manage dashboards at scale</div>
-                            </div>
-                        </div>
-                    </button>
-
-                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="users">
-                        <div class="flex items-center">
-                            <svg class="w-5 h-5 mr-3" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5V18a4 4 0 00-5-3.87M17 20H7m10 0v-2c0-.65-.11-1.27-.31-1.84M7 20H2V18a4 4 0 015-3.87M7 20v-2c0-.65.11-1.27.31-1.84m0 0a5 5 0 019.38 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 2a2 2 0 11-4 0 2 2 0 014 0zM7 9a2 2 0 11-4 0 2 2 0 014 0z"></path>
-                            </svg>
-                            <div>
-                                <div class="font-semibold">User Manager</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Manage users, privileges, and access</div>
-                            </div>
-                        </div>
-                    </button>
-                    
-                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="crs-usage">
-                        <div class="flex items-center">
-                            <svg class="w-5 h-5 mr-3" style="color: var(--plum);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-                            </svg>
-                            <div>
-                                <div class="font-semibold">Records Report</div>
-                                <div class="text-xs" style="color: var(--text-muted);">CRS usage analysis</div>
-                            </div>
-                        </div>
-                    </button>
-
-                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="device-discovery">
-                        <div class="flex items-center">
-                            <svg class="w-5 h-5 mr-3" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 20l9-5-9-5-9 5 9 5zM12 12l9-5-9-5-9 5 9 5z"></path>
-                            </svg>
-                            <div>
-                                <div class="font-semibold">Devices Report</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Active devices by node</div>
-                            </div>
-                        </div>
-                    </button>
-
-                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="system-health">
-                        <div class="flex items-center">
-                            <svg class="w-5 h-5 mr-3" style="color: var(--lime);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 13h4l3-8 4 16 3-8h4"></path>
-                            </svg>
-                            <div>
-                                <div class="font-semibold">System Health</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Sensor capacity and pressure report</div>
-                            </div>
-                        </div>
-                    </button>
-
-                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="localities">
-                        <div class="flex items-center">
-                            <svg class="w-5 h-5 mr-3" style="color: var(--tangerine);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
-                            </svg>
-                            <div>
-                                <div class="font-semibold">Network Localities</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Manage network locality definitions</div>
-                            </div>
-                        </div>
-                    </button>
-
-                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="audit-logs">
-                        <div class="flex items-center">
-                            <svg class="w-5 h-5 mr-3" style="color: var(--magenta);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                            <div>
-                                <div class="font-semibold">Audit Logs</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Analyze audit log data</div>
-                            </div>
-                        </div>
-                    </button>
-
-                    <button class="module-btn w-full text-left px-4 py-3 rounded" data-module="nodemap">
-                        <div class="flex items-center">
-                            <svg class="w-5 h-5 mr-3" style="color: var(--tangerine);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <circle cx="6" cy="6" r="2" stroke-width="2"></circle>
-                                <circle cx="18" cy="6" r="2" stroke-width="2"></circle>
-                                <circle cx="12" cy="18" r="2" stroke-width="2"></circle>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7.5 7.5L10.5 16.5M16.5 7.5L13.5 16.5"></path>
-                            </svg>
-                            <div>
-                                <div class="font-semibold">Connected Appliances</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Visualize appliance topology</div>
-                            </div>
-                        </div>
-                    </button>
-                </nav>
-
-                <!-- Other Tools (external links) -->
-                <div class="mt-6">
-                    <button id="otherToolsToggle" class="w-full flex items-center justify-between px-4 py-2 rounded text-sm" style="color: var(--text-secondary); background-color: transparent;">
-                        <span class="font-semibold">Other Tools</span>
-                        <span id="otherToolsCaret" class="text-xs">▶</span>
-                    </button>
-                    <div id="otherToolsContainer" class="mt-2 space-y-2" style="display: none;">
-                        <button id="productCatalogBtn" class="w-full text-left px-4 py-2 rounded border text-sm" style="border-color: var(--border-color);">
-                            Product Catalog
-                        </button>
-                        <button id="restApiGuideBtn" class="w-full text-left px-4 py-2 rounded border text-sm" style="border-color: var(--border-color);">
-                            REST API Guide
-                        </button>
-                    </div>
+            <div class="toolbar">
+                <div class="search-wrap">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                        <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>
+                    </svg>
+                    <input type="search" id="searchDashboards" placeholder="Search dashboards…">
                 </div>
-            </div>
-        </aside>
-
-        <!-- MAIN CONTENT AREA -->
-        <main class="flex-1 lg:ml-80 min-h-screen p-6" style="background-color: var(--bg-primary);">
-            <!-- Welcome Screen -->
-            <div id="welcomeScreen" class="flex items-center justify-center h-full">
-                <div class="text-center p-8">
-                    <img src="eh_logo.png" alt="ExtraHop" class="mx-auto mb-6 h-16">
-                    <h1 class="text-3xl font-bold mb-4" style="color: var(--sapphire);">ExtraHop Admin Tools</h1>
-                    <p class="text-lg mb-6" style="color: var(--text-secondary);">Connect to your ExtraHop deployment to get started</p>
-                    <div class="max-w-md mx-auto" style="color: var(--text-muted);">
-                        <p class="text-sm">This tool provides a web-based interface for managing ExtraHop resources via API. Configure your connection in the sidebar to begin.</p>
-                    </div>
-                </div>
+                <div class="grow"><input type="text" id="filterOwner" placeholder="Filter by owner…"></div>
+                <button type="button" id="loadDashboardsBtn" class="btn-primary">Load dashboards</button>
+                <div class="spacer"></div>
+                <span id="dashboardFilterCount" class="small muted"></span>
             </div>
 
-            <!-- Dashboard Manager Module -->
-            <div id="dashboardsModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Dashboard Manager</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Manage dashboard ownership, sharing, and deletion at scale</p>
+            <div class="selection-bar">
+                <span id="selectedCount" class="selection-count">0 selected</span>
+                <div id="bulkActions" class="row-tight" style="display: none;">
+                    <button type="button" id="bulkChangeOwnerBtn" class="btn btn-sm">Change owner</button>
+                    <button type="button" id="bulkShareBtn" class="btn btn-sm">Modify sharing</button>
+                    <button type="button" id="bulkDeleteBtn" class="btn-danger btn-sm">Delete</button>
                 </div>
-
-                <!-- Controls -->
-                <div class="mb-6 space-y-4">
-                    <div class="flex flex-wrap gap-4">
-                        <input type="text" id="searchDashboards" placeholder="Search dashboards..." class="flex-1 min-w-[200px] px-4 py-2 rounded border">
-                        <input type="text" id="filterOwner" placeholder="Filter by owner..." class="flex-1 min-w-[200px] px-4 py-2 rounded border">
-                        <button id="loadDashboardsBtn" class="btn-primary px-6 py-2 rounded font-semibold">
-                            Load Dashboards
-                        </button>
-                    </div>
-
-                    <div class="flex flex-wrap items-center gap-3">
-                        <button id="selectAllFilteredBtn" class="btn-primary px-4 py-2 rounded font-semibold">
-                            Select All
-                        </button>
-                        <button id="clearDashboardSelectionBtn" class="btn-secondary px-4 py-2 rounded font-semibold" disabled>
-                            Clear Selection
-                        </button>
-                        <span id="dashboardFilterCount" class="text-sm" style="color: var(--text-muted);"></span>
-                    </div>
-
-                    <!-- Bulk Actions -->
-                    <div id="bulkActions" class="flex flex-wrap gap-3" style="display: none;">
-                        <button id="bulkChangeOwnerBtn" class="btn-secondary px-4 py-2 rounded font-semibold">
-                            Change Owner
-                        </button>
-                        <button id="bulkShareBtn" class="btn-secondary px-4 py-2 rounded font-semibold">
-                            Modify Sharing
-                        </button>
-                        <button id="bulkDeleteBtn" class="btn-danger px-4 py-2 rounded font-semibold">
-                            Delete Selected
-                        </button>
-                        <span id="selectedCount" class="px-4 py-2 font-semibold" style="color: var(--text-secondary);"></span>
-                    </div>
-                </div>
-
-                <!-- Loading State -->
-                <div id="dashboardsLoading" class="text-center py-20" style="display: none;">
-                    <div class="spinner mx-auto mb-4"></div>
-                    <p style="color: var(--text-muted);">Loading dashboards...</p>
-                </div>
-
-                <!-- Dashboard Table -->
-                <div id="dashboardsTableContainer" class="table-container rounded-lg overflow-hidden" style="display: none;">
-                    <table id="dashboardsTable">
-                        <thead>
-                            <tr>
-                                <th width="40">
-                                    <input type="checkbox" id="selectAll">
-                                </th>
-                                <th>Dashboard Name</th>
-                                <th width="150">Owner</th>
-                                <th width="200">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="dashboardsTableBody">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
-                </div>
-
-                <!-- Pagination -->
-                <div id="paginationContainer" class="mt-6 flex justify-between items-center" style="display: none;">
-                    <div style="color: var(--text-secondary);">
-                        <span id="paginationInfo"></span>
-                    </div>
-                    <div class="flex gap-2">
-                        <button id="prevPageBtn" class="btn-secondary px-4 py-2 rounded">Previous</button>
-                        <button id="nextPageBtn" class="btn-secondary px-4 py-2 rounded">Next</button>
-                    </div>
-                </div>
+                <div class="spacer"></div>
+                <button type="button" id="selectAllFilteredBtn" class="btn-link">Select all filtered</button>
+                <span class="small muted">·</span>
+                <button type="button" id="clearDashboardSelectionBtn" class="btn-link" disabled>Clear</button>
             </div>
 
-            <!-- User Manager Module -->
-            <div id="usersModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">User Manager</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Manage user accounts, privileges, API keys, and lock status</p>
-                </div>
-
-                <div class="mb-6 space-y-4">
-                    <div class="flex flex-wrap gap-4">
-                        <input type="search" id="searchUsers" placeholder="Search users..." class="flex-1 min-w-[220px] px-4 py-2 rounded border">
-                        <select id="filterUserType" class="min-w-[180px] px-4 py-2 rounded border">
-                            <option value="">All Types</option>
-                            <option value="local">Local</option>
-                            <option value="remote">Remote</option>
-                        </select>
-                        <select id="filterUserState" class="min-w-[180px] px-4 py-2 rounded border">
-                            <option value="">All States</option>
-                            <option value="enabled">Enabled</option>
-                            <option value="disabled">Disabled</option>
-                        </select>
-                        <button id="loadUsersBtn" class="btn-secondary px-6 py-2 rounded font-semibold">
-                            Refresh
-                        </button>
-                        <button id="createUserBtn" class="btn-primary px-6 py-2 rounded font-semibold">
-                            Create User
-                        </button>
-                    </div>
-                </div>
-
-                <div id="usersLoading" class="text-center py-20" style="display: none;">
-                    <div class="spinner mx-auto mb-4"></div>
-                    <p style="color: var(--text-muted);">Loading users...</p>
-                </div>
-
-                <div id="usersTableContainer" class="table-container rounded-lg overflow-hidden" style="display: none;">
-                    <table id="usersTable">
-                        <thead>
-                            <tr>
-                                <th>Username</th>
-                                <th>Name</th>
-                                <th width="120">Type</th>
-                                <th width="150">Base Access</th>
-                                <th width="110">Enabled</th>
-                                <th width="170">Last UI Login</th>
-                                <th width="220">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="usersTableBody">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
-                </div>
-
-                <div id="usersPaginationContainer" class="mt-6 flex justify-between items-center" style="display: none;">
-                    <div style="color: var(--text-secondary);">
-                        <span id="usersPaginationInfo"></span>
-                    </div>
-                    <div class="flex gap-2">
-                        <button id="usersPrevPageBtn" class="btn-secondary px-4 py-2 rounded">Previous</button>
-                        <button id="usersNextPageBtn" class="btn-secondary px-4 py-2 rounded">Next</button>
-                    </div>
-                </div>
+            <div id="dashboardsLoading" class="loading-state" style="display: none;">
+                <div class="spinner"></div>
+                <p>Loading dashboards…</p>
             </div>
 
-            <!-- Device Discovery Module -->
-            <div id="device-discoveryModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Device Discovery Report</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Understand how many devices were active and where they were discovered.</p>
-                </div>
+            <div id="dashboardsTableContainer" class="table-container" style="display: none;">
+                <table id="dashboardsTable">
+                    <thead>
+                        <tr>
+                            <th class="col-check"><input type="checkbox" id="selectAll" aria-label="Select all on this page"></th>
+                            <th>Dashboard name</th>
+                            <th style="width: 180px;">Owner</th>
+                            <th style="width: 200px;" class="actions">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dashboardsTableBody"></tbody>
+                </table>
+            </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Time Period</h3>
-                        <div class="space-y-3">
-                            <button class="device-period-btn w-full text-left px-4 py-3 rounded border active" data-period="yesterday">
-                                <div class="font-semibold">Yesterday</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Previous day (midnight to midnight)</div>
+            <div id="paginationContainer" class="pager" style="display: none;">
+                <span id="paginationInfo"></span>
+                <div class="row-tight">
+                    <button type="button" id="prevPageBtn" class="btn btn-sm">Previous</button>
+                    <button type="button" id="nextPageBtn" class="btn btn-sm">Next</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------------------- User Manager ---------------------- -->
+        <div id="usersModule" class="module-content page" style="display: none;">
+            <div class="page-head">
+                <h1 class="page-title">User Manager</h1>
+                <p class="page-desc">Manage user accounts, privileges, API keys, and lock status.</p>
+            </div>
+
+            <div class="toolbar">
+                <div class="search-wrap">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                        <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>
+                    </svg>
+                    <input type="search" id="searchUsers" placeholder="Search users…">
+                </div>
+                <select id="filterUserType" style="width: 150px;">
+                    <option value="">All types</option>
+                    <option value="local">Local</option>
+                    <option value="remote">Remote</option>
+                </select>
+                <select id="filterUserState" style="width: 150px;">
+                    <option value="">All states</option>
+                    <option value="enabled">Enabled</option>
+                    <option value="disabled">Disabled</option>
+                </select>
+                <button type="button" id="loadUsersBtn" class="btn">Refresh</button>
+                <button type="button" id="createUserBtn" class="btn-primary">Create user</button>
+            </div>
+
+            <div id="usersLoading" class="loading-state" style="display: none;">
+                <div class="spinner"></div>
+                <p>Loading users…</p>
+            </div>
+
+            <div id="usersTableContainer" class="table-container table-scroll" style="display: none;">
+                <table id="usersTable">
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Name</th>
+                            <th style="width: 100px;">Type</th>
+                            <th style="width: 150px;">Base access</th>
+                            <th style="width: 110px;">Enabled</th>
+                            <th style="width: 160px;">Last UI login</th>
+                            <th style="width: 220px;" class="actions">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody"></tbody>
+                </table>
+            </div>
+
+            <div id="usersPaginationContainer" class="pager" style="display: none;">
+                <span id="usersPaginationInfo"></span>
+                <div class="row-tight">
+                    <button type="button" id="usersPrevPageBtn" class="btn btn-sm">Previous</button>
+                    <button type="button" id="usersNextPageBtn" class="btn btn-sm">Next</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ---------------------- Devices Report ---------------------- -->
+        <div id="device-discoveryModule" class="module-content page" style="display: none;">
+            <div class="page-head">
+                <h1 class="page-title">Device Discovery Report</h1>
+                <p class="page-desc">Understand how many devices were active and where they were discovered.</p>
+            </div>
+
+            <div class="stack">
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Time period</h2>
+                        </div>
+                        <div class="option-list">
+                            <button type="button" class="device-period-btn active" data-period="yesterday">
+                                <span class="option-title">Yesterday</span>
+                                <span class="option-desc">Previous day, midnight to midnight</span>
                             </button>
-                            <button class="device-period-btn w-full text-left px-4 py-3 rounded border" data-period="week">
-                                <div class="font-semibold">Last 7 Days</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Rolling seven-day lookback</div>
+                            <button type="button" class="device-period-btn" data-period="week">
+                                <span class="option-title">Last 7 days</span>
+                                <span class="option-desc">Rolling seven-day lookback</span>
                             </button>
-                            <button class="device-period-btn w-full text-left px-4 py-3 rounded border" data-period="month">
-                                <div class="font-semibold">Last 30 Days</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Rolling thirty-day lookback</div>
+                            <button type="button" class="device-period-btn" data-period="month">
+                                <span class="option-title">Last 30 days</span>
+                                <span class="option-desc">Rolling thirty-day lookback</span>
                             </button>
                         </div>
-                        
-                        <div class="mt-6 pt-4 border-t" style="border-color: var(--border-color);">
-                            <label class="flex items-center cursor-pointer">
-                                <input type="checkbox" id="includeEfcToggle" class="mr-3">
-                                <div>
-                                    <div class="font-semibold text-sm" style="color: var(--text-primary);">Include devices discovered by Flow Sensors (EFC)</div>
-                                    <div class="text-xs" style="color: var(--text-muted);">Uncheck to skip Netflow/Sflow discovered devices which don't count against license band</div>
-                                </div>
+
+                        <div class="stack-sm" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--hairline);">
+                            <label class="check-block">
+                                <input type="checkbox" id="includeEfcToggle">
+                                <span>
+                                    <span class="check-title">Include devices discovered by Flow Sensors (EFC)</span>
+                                    <span class="check-desc">Uncheck to skip Netflow/sFlow discovered devices, which do not count against the license band.</span>
+                                </span>
                             </label>
-                            <label class="flex items-center cursor-pointer mt-3">
-                                <input type="checkbox" id="includeDiscoveryToggle" class="mr-3">
-                                <div>
-                                    <div class="font-semibold text-sm" style="color: var(--text-primary);">Include devices in "Discovery" analysis level</div>
-                                    <div class="text-xs" style="color: var(--text-muted);">Uncheck to skip <code>discovery</code> devices which are not being analyzed, usually because there isn't room available (faster report).</div>
-                                </div>
+                            <label class="check-block">
+                                <input type="checkbox" id="includeDiscoveryToggle">
+                                <span>
+                                    <span class="check-title">Include devices in Discovery analysis level</span>
+                                    <span class="check-desc">Uncheck to skip <code>discovery</code> devices that are not being analyzed, usually because there is no room available. Faster report.</span>
+                                </span>
                             </label>
                         </div>
                     </div>
 
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">How this works</h3>
-                        <ul class="list-disc pl-5 space-y-2 text-sm" style="color: var(--text-secondary);">
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">How this works</h2>
+                        </div>
+                        <ul class="card-list">
                             <li>Fetches appliance inventory to map <code>node_id</code> values to node names and platforms.</li>
                             <li>Batches <code>/devices/search</code> calls in large chunks for the selected time range.</li>
-                            <li>Aggregates totals by node and analysis type (Standard, Advanced, Discovery, Flow Log).</li>
-                            <li>Visualizes KPIs, stacked bar charts, and a detailed breakdown similar to the Records Report layout.</li>
+                            <li>Aggregates totals by node and analysis type: Standard, Advanced, Discovery, Flow Log.</li>
+                            <li>Visualizes totals, a stacked bar chart, and a detailed breakdown.</li>
                         </ul>
                     </div>
                 </div>
 
-                <div class="mb-6">
-                    <button id="generateDeviceReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
-                        Generate Report
-                    </button>
+                <div class="row-tight">
+                    <button type="button" id="generateDeviceReport" class="btn-primary">Generate report</button>
                 </div>
 
-                <div id="deviceDiscoveryLoading" class="text-center py-20" style="display: none;">
-                    <div class="spinner mx-auto mb-4"></div>
-                    <p id="deviceLoadingText" style="color: var(--text-muted);">Collecting appliance inventory and device activity...</p>
-                    <button id="stopDeviceDiscoveryLoad" class="mt-4 px-4 py-2 rounded border text-sm" style="color: var(--text-secondary); border-color: var(--border-color); display: none;">
-                        Stop Loading
-                    </button>
+                <div id="deviceDiscoveryLoading" class="loading-state" style="display: none;">
+                    <div class="spinner"></div>
+                    <p id="deviceLoadingText">Collecting appliance inventory and device activity…</p>
+                    <button type="button" id="stopDeviceDiscoveryLoad" class="btn btn-sm" style="display: none;">Stop loading</button>
                 </div>
 
-                <div id="deviceDiscoveryResults" style="display: none;">
-                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-6">
-                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--cyan);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Total Devices</div>
-                            <div id="deviceTotalCount" class="text-4xl font-bold" style="color: var(--cyan);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">Active during selected period</div>
+                <div id="deviceDiscoveryResults" class="stack" style="display: none;">
+                    <div class="stats">
+                        <div class="stat">
+                            <div class="stat-label">Total devices</div>
+                            <div id="deviceTotalCount" class="stat-value">-</div>
+                            <div class="stat-sub">Active during selected period</div>
                         </div>
-                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--magenta);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Advanced</div>
-                            <div id="deviceAdvancedCount" class="text-4xl font-bold" style="color: var(--magenta);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">Fully analyzed devices, L2-L7 metrics</div>
+                        <div class="stat">
+                            <div class="stat-label">Advanced</div>
+                            <div id="deviceAdvancedCount" class="stat-value">-</div>
+                            <div class="stat-sub">Fully analyzed, L2–L7 metrics</div>
                         </div>
-                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--sapphire);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Standard</div>
-                            <div id="deviceStandardCount" class="text-4xl font-bold" style="color: var(--sapphire);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">L3 metrics, users, and metadata</div>
+                        <div class="stat">
+                            <div class="stat-label">Standard</div>
+                            <div id="deviceStandardCount" class="stat-value">-</div>
+                            <div class="stat-sub">L3 metrics, users, and metadata</div>
                         </div>
-                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Discovery</div>
-                            <div id="deviceDiscoveryCount" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">Discovered but not in analysis</div>
+                        <div class="stat">
+                            <div class="stat-label">Discovery</div>
+                            <div id="deviceDiscoveryCount" class="stat-value">-</div>
+                            <div class="stat-sub">Discovered but not in analysis</div>
                         </div>
                     </div>
 
-                    <div class="p-6 rounded-lg mb-6" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
+                    <div class="card">
+                        <div class="row row-top" style="margin-bottom: 14px;">
                             <div>
-                                <h3 class="text-lg font-semibold" style="color: var(--text-primary);">Devices by Node</h3>
-                                <p class="text-sm" style="color: var(--text-muted);">Stacked by analysis level, sorted by total device count</p>
+                                <h2 class="card-title">Devices by node</h2>
+                                <p class="card-desc">Stacked by analysis level, sorted by total device count.</p>
                             </div>
-                            <div class="text-sm" id="deviceReportRange" style="color: var(--text-secondary);"></div>
-                            <div class="text-sm" id="deviceNodeCount" style="color: var(--text-secondary);"></div>
+                            <div class="spacer"></div>
+                            <span id="deviceReportRange" class="small muted"></span>
+                            <span id="deviceNodeCount" class="small muted"></span>
                         </div>
-                        <div id="deviceNoDataMessage" class="text-center py-10" style="display: none; color: var(--text-muted);">
+                        <div id="deviceNoDataMessage" class="empty-inline" style="display: none;">
                             No devices matched the selected time period.
                         </div>
                         <div id="deviceChartWrapper" style="position: relative; height: 420px;">
@@ -524,216 +507,202 @@
                         </div>
                     </div>
 
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Breakdown</h3>
-                        <div id="deviceTableEmpty" class="text-center py-6" style="display: none; color: var(--text-muted);">
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Detailed breakdown</h2>
+                        </div>
+                        <div id="deviceTableEmpty" class="empty-inline" style="display: none;">
                             Nothing to show yet. Run the report to populate this table.
                         </div>
-                        <div class="table-container rounded-lg overflow-x-auto">
+                        <div class="table-container table-scroll">
                             <table id="deviceDetailsTable">
                                 <thead>
                                     <tr>
                                         <th>Node</th>
                                         <th>Platform</th>
-                                        <th>Advanced</th>
-                                        <th>Standard</th>
-                                        <th>Discovery</th>
-                                        <th>Total</th>
+                                        <th class="num">Advanced</th>
+                                        <th class="num">Standard</th>
+                                        <th class="num">Discovery</th>
+                                        <th class="num">Total</th>
                                     </tr>
                                 </thead>
-                                <tbody id="deviceDetailsBody">
-                                    <!-- Populated dynamically -->
-                                </tbody>
+                                <tbody id="deviceDetailsBody"></tbody>
                             </table>
                         </div>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <!-- Records Report Module -->
-            <div id="crs-usageModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Records Report</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Analyze record ingest rates by site and compression ratios achieved</p>
-                </div>
+        <!-- ---------------------- Records Report ---------------------- -->
+        <div id="crs-usageModule" class="module-content page" style="display: none;">
+            <div class="page-head">
+                <h1 class="page-title">Records Report</h1>
+                <p class="page-desc">Analyze record ingest rates by site and the compression ratios achieved.</p>
+            </div>
 
-                <!-- Configuration Section -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                    <!-- Time Period Selection -->
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Time Period</h3>
-                        <div class="space-y-3">
-                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border active" data-period="yesterday">
-                                <div class="font-semibold">Yesterday</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Previous day's data</div>
+            <div class="stack">
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Time period</h2>
+                        </div>
+                        <div class="option-list">
+                            <button type="button" class="crs-period-btn active" data-period="yesterday">
+                                <span class="option-title">Yesterday</span>
+                                <span class="option-desc">Previous day's data</span>
                             </button>
-                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="week">
-                                <div class="font-semibold">Last 7 Days</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Rolling seven-day lookback</div>
+                            <button type="button" class="crs-period-btn" data-period="week">
+                                <span class="option-title">Last 7 days</span>
+                                <span class="option-desc">Rolling seven-day lookback</span>
                             </button>
-                            <button class="crs-period-btn w-full text-left px-4 py-3 rounded border" data-period="month">
-                                <div class="font-semibold">Last 30 Days</div>
-                                <div class="text-xs" style="color: var(--text-muted);">Rolling thirty-day lookback</div>
+                            <button type="button" class="crs-period-btn" data-period="month">
+                                <span class="option-title">Last 30 days</span>
+                                <span class="option-desc">Rolling thirty-day lookback</span>
                             </button>
                         </div>
                     </div>
 
-                    <!-- Capacity Data Input -->
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Data (Optional)</h3>
-                        <p class="text-sm mb-4" style="color: var(--text-muted);">Provide capacity data to calculate compression ratios. Leave blank to view raw record bytes only.</p>
-                        
-                        <!-- Input Method Selection -->
-                        <div id="capacityInputSection" class="mb-4">
-                            <div class="flex gap-3 mb-4">
-                                <button class="capacity-input-btn flex-1 px-4 py-2 rounded border active" data-input="manual">
-                                    Manual Entry
-                                </button>
-                                <button class="capacity-input-btn flex-1 px-4 py-2 rounded border" data-input="csv">
-                                    CSV Upload
-                                </button>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Capacity data</h2>
+                            <p class="card-desc">Optional. Provide capacity data to calculate compression ratios, or leave blank to view raw record bytes only.</p>
+                        </div>
+
+                        <div id="capacityInputSection" style="margin-bottom: 14px;">
+                            <div class="option-row">
+                                <button type="button" class="capacity-input-btn active" data-input="manual">Manual entry</button>
+                                <button type="button" class="capacity-input-btn" data-input="csv">CSV upload</button>
                             </div>
                         </div>
 
-                        <!-- Manual Input Fields -->
-                        <div id="manualCapacityInput" class="space-y-3">
-                            <div>
-                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Reserved Capacity (GB)</label>
-                                <input type="number" id="reservedCapacity" placeholder="e.g., 1500" class="w-full px-3 py-2 rounded border">
+                        <div id="manualCapacityInput" class="stack-sm">
+                            <div class="field">
+                                <label for="reservedCapacity">Reserved capacity (GB)</label>
+                                <input type="number" id="reservedCapacity" placeholder="e.g. 1500">
                             </div>
-                            <div>
-                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Utilized Capacity (GB)</label>
-                                <input type="number" id="utilizedCapacity" placeholder="e.g., 817" class="w-full px-3 py-2 rounded border">
-                                <p class="text-xs mt-1" style="color: var(--text-muted);">From your data lake (BigQuery/LogScale/Elastic)</p>
-                                <p id="manualCapacityTip360" class="text-xs mt-1" style="color: var(--text-muted); display: none;">
-                                    For RevealX 360, you can find reserved and utilized capacity on the Administration page of your RevealX 360 Cloud Console.
-                                </p>
+                            <div class="field">
+                                <label for="utilizedCapacity">Utilized capacity (GB)</label>
+                                <input type="number" id="utilizedCapacity" placeholder="e.g. 817">
+                                <span class="field-hint">From your data lake: BigQuery, LogScale, or Elastic.</span>
+                                <span id="manualCapacityTip360" class="field-hint" style="display: none;">For RevealX 360, reserved and utilized capacity are on the Administration page of your RevealX 360 Cloud Console.</span>
                             </div>
                         </div>
 
-                        <!-- CSV Upload Fields -->
-                        <div id="csvCapacityInput" class="space-y-3" style="display: none;">
-                            <div>
-                                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Upload Usage CSV</label>
-                                <input type="file" id="csvFileInput" accept=".csv" class="w-full px-3 py-2 rounded border">
-                                <p class="text-xs mt-1" style="color: var(--text-muted);">CSV with "Summary Date UTC", "Utilized", and "Reserved" columns</p>
-                                <p id="csvCapacityTip360" class="text-xs mt-1" style="color: var(--text-muted); display: none;">
-                                    For RevealX 360, you can export this data as the "R(x) 360 Detailed Tenant CRS Usage" report from Salesforce. If you are not an ExtraHop employee, contact your ExtraHop CSM to obtain this CSV.
-                                </p>
+                        <div id="csvCapacityInput" class="stack-sm" style="display: none;">
+                            <div class="field">
+                                <label for="csvFileInput">Upload usage CSV</label>
+                                <input type="file" id="csvFileInput" accept=".csv">
+                                <span class="field-hint">CSV with "Summary Date UTC", "Utilized", and "Reserved" columns.</span>
+                                <span id="csvCapacityTip360" class="field-hint" style="display: none;">For RevealX 360, export this as the "R(x) 360 Detailed Tenant CRS Usage" report from Salesforce. If you are not an ExtraHop employee, contact your ExtraHop CSM for the CSV.</span>
                             </div>
                             <div id="csvPreview" style="display: none;">
-                                <p class="text-sm font-medium mb-2" style="color: var(--text-secondary);">Parsed Data:</p>
-                                <div class="p-3 rounded text-xs" style="background-color: var(--bg-subtle);">
-                                    <div id="csvSummary"></div>
-                                </div>
+                                <div class="label" style="margin-bottom: 6px;">Parsed data</div>
+                                <div class="detail-panel small"><div id="csvSummary"></div></div>
                             </div>
                         </div>
 
-                        <!-- CRS Trend Analysis Tool Link -->
-                        <div class="mt-4 pt-4" style="border-top: 1px solid var(--border-color);">
-                            <a href="https://thomaswde.github.io/crs-report/" target="_blank" rel="noopener noreferrer" class="btn-primary w-full px-4 py-2 rounded font-semibold flex items-center justify-center gap-2" style="display: flex;">
+                        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--hairline);">
+                            <a href="https://thomaswde.github.io/crs-report/" target="_blank" rel="noopener noreferrer" class="btn btn-block" style="text-decoration: none;">
                                 <span>Open CRS Trend Analysis Tool</span>
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                                    <path d="M14 4h6v6M20 4l-8 8"></path><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"></path>
                                 </svg>
                             </a>
                         </div>
                     </div>
                 </div>
 
-                <!-- Generate Report Button -->
-                <div class="mb-6">
-                    <button id="generateCrsReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
-                        Generate Report
-                    </button>
+                <div class="row-tight">
+                    <button type="button" id="generateCrsReport" class="btn-primary">Generate report</button>
                 </div>
 
-                <!-- Loading State -->
-                <div id="crsLoading" class="text-center py-20" style="display: none;">
-                    <div class="spinner mx-auto mb-4"></div>
-                    <p style="color: var(--text-muted);">Fetching appliance data and calculating metrics...</p>
+                <div id="crsLoading" class="loading-state" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Fetching appliance data and calculating metrics…</p>
                 </div>
 
-                <!-- Results Section -->
-                <div id="crsResults" style="display: none;">
-                    <!-- KPI Cards -->
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--cyan);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Compression Ratio</div>
-                            <div id="compressionRatio" class="text-4xl font-bold" style="color: var(--cyan);">-</div>
-                            <div id="compressionRatioSubtext" class="text-xs mt-2" style="color: var(--text-muted);">1 GB stored : X GB ingested</div>
+                <div id="crsResults" class="stack" style="display: none;">
+                    <div class="stats">
+                        <div class="stat">
+                            <div class="stat-label">Compression ratio</div>
+                            <div id="compressionRatio" class="stat-value">-</div>
+                            <div id="compressionRatioSubtext" class="stat-sub">1 GB stored : X GB ingested</div>
                         </div>
-                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--magenta);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Total Record Bytes</div>
-                            <div id="totalRecordBytes" class="text-4xl font-bold" style="color: var(--magenta);">-</div>
-                            <div class="text-xs mt-2" style="color: var(--text-muted);">From all discover appliances</div>
+                        <div class="stat">
+                            <div class="stat-label">Total record bytes</div>
+                            <div id="totalRecordBytes" class="stat-value">-</div>
+                            <div class="stat-sub">From all discover appliances</div>
                         </div>
-                        <div class="p-6 rounded-lg text-center" style="background-color: var(--bg-card); border: 2px solid var(--tangerine);">
-                            <div class="text-sm font-medium mb-2" style="color: var(--text-muted);">Capacity Utilization</div>
-                            <div id="capacityUtilization" class="text-4xl font-bold" style="color: var(--tangerine);">-</div>
-                            <div id="capacityUtilizationSubtext" class="text-xs mt-2" style="color: var(--text-muted);">Of reserved capacity</div>
+                        <div class="stat">
+                            <div class="stat-label">Capacity utilization</div>
+                            <div id="capacityUtilization" class="stat-value">-</div>
+                            <div id="capacityUtilizationSubtext" class="stat-sub">Of reserved capacity</div>
                         </div>
                     </div>
 
-                    <!-- Charts -->
-                    <div class="space-y-6">
-                        <!-- Stacked Bar Chart -->
-                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <h3 id="stackedChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Capacity Consumption by Sensor</h3>
-                            <div style="position: relative; height: 150px;">
-                                <canvas id="stackedBarChart"></canvas>
-                            </div>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title" id="stackedChartTitle">Capacity consumption by sensor</h2>
                         </div>
-
-                        <!-- Bar Chart -->
-                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <h3 id="barChartTitle" class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Utilization by Sensor</h3>
-                            <div style="position: relative; height: 400px;">
-                                <canvas id="sensorBarChart"></canvas>
-                            </div>
+                        <div style="position: relative; height: 150px;">
+                            <canvas id="stackedBarChart"></canvas>
                         </div>
+                    </div>
 
-                        <!-- Data Table -->
-                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Detailed Breakdown</h3>
-                            <div class="table-container rounded-lg overflow-hidden">
-                                <table id="crsDataTable">
-                                    <thead>
-                                        <tr>
-                                            <th>Sensor Name</th>
-                                            <th>Platform</th>
-                                            <th>Record Bytes (GB)</th>
-                                            <th>After Compression (GB)</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="crsDataTableBody">
-                                        <!-- Populated dynamically -->
-                                    </tbody>
-                                </table>
-                            </div>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title" id="barChartTitle">Utilization by sensor</h2>
+                        </div>
+                        <div style="position: relative; height: 400px;">
+                            <canvas id="sensorBarChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Detailed breakdown</h2>
+                        </div>
+                        <div class="table-container table-scroll">
+                            <table id="crsDataTable">
+                                <thead>
+                                    <tr>
+                                        <th>Sensor name</th>
+                                        <th>Platform</th>
+                                        <th class="num">Record bytes (GB)</th>
+                                        <th class="num">After compression (GB)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="crsDataTableBody"></tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <!-- System Health Module -->
-            <div id="system-healthModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">System Health Report</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Review peak packet rate, throughput, trigger capacity, and analysis-tier pressure across Discover sensors.</p>
-                </div>
+        <!-- ---------------------- System Health ---------------------- -->
+        <div id="system-healthModule" class="module-content page" style="display: none;">
+            <div class="page-head">
+                <h1 class="page-title">System Health Report</h1>
+                <p class="page-desc">Peak packet rate, throughput, trigger capacity, and analysis-tier pressure across Discover sensors.</p>
+            </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Report Defaults</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Lookback Days</label>
-                                <input type="number" id="systemHealthLookback" min="1" max="30" value="7" class="w-full px-3 py-2 rounded border">
+            <div class="stack">
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Report defaults</h2>
+                            <p class="card-desc">Metrics are calculated from peak values over the selected lookback.</p>
+                        </div>
+                        <div class="grid-fields">
+                            <div class="field">
+                                <label for="systemHealthLookback">Lookback days</label>
+                                <input type="number" id="systemHealthLookback" min="1" max="30" value="7">
                             </div>
-                            <div>
-                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Metric Cycle</label>
-                                <select id="systemHealthCycle" class="w-full px-3 py-2 rounded border">
+                            <div class="field">
+                                <label for="systemHealthCycle">Metric cycle</label>
+                                <select id="systemHealthCycle">
                                     <option value="1hr" selected>1 hour</option>
                                     <option value="24hr">24 hours</option>
                                     <option value="5min">5 minutes</option>
@@ -743,99 +712,96 @@
                                 </select>
                             </div>
                         </div>
-                        <p class="text-xs mt-3" style="color: var(--text-muted);">Metrics are calculated from peak values over the selected lookback.</p>
                     </div>
 
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Collection</h3>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Collection</h2>
+                            <p class="card-desc">Uses the product catalog bundled with this package.</p>
+                        </div>
                         <div id="systemHealthCatalogStatus" class="system-health-catalog-status is-missing">
                             <span class="system-health-catalog-badge">Catalog not loaded</span>
                             <span>Capacity comparisons will show observed values only until the catalog loads.</span>
                         </div>
-                        <p class="text-xs mb-3" style="color: var(--text-muted);">Uses the product catalog bundled with this package.</p>
-                        <div class="flex flex-wrap gap-3">
-                            <button id="runSystemHealthReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
-                                Run System Health Report
-                            </button>
-                            <button id="systemHealthLoadCsvButton" class="btn-secondary px-4 py-3 rounded font-semibold" type="button">
-                                Load CSV
-                            </button>
-                            <button id="systemHealthExportCsvButton" class="btn-secondary px-4 py-3 rounded font-semibold" type="button" disabled>
-                                Export CSV
-                            </button>
-                            <button id="systemHealthExportPdfButton" class="btn-secondary px-4 py-3 rounded font-semibold" type="button" disabled>
-                                Export PDF
-                            </button>
+                        <div class="row-tight">
+                            <button type="button" id="runSystemHealthReport" class="btn-primary">Run report</button>
+                            <button type="button" id="systemHealthLoadCsvButton" class="btn">Load CSV</button>
+                            <button type="button" id="systemHealthExportCsvButton" class="btn" disabled>Export CSV</button>
+                            <button type="button" id="systemHealthExportPdfButton" class="btn" disabled>Export PDF</button>
                             <input id="systemHealthCsvInput" type="file" accept=".csv,text/csv" multiple class="hidden">
                         </div>
-                        <p id="systemHealthCsvStatus" class="text-xs mt-3" style="color: var(--text-muted);">Load system health summary CSV files from a previous run.</p>
+                        <p id="systemHealthCsvStatus" class="field-hint" style="margin-top: 10px;">Load system health summary CSV files from a previous run.</p>
                     </div>
                 </div>
 
-                <details class="system-health-style-panel mb-6">
+                <details class="disclosure">
                     <summary>
-                        <span class="font-semibold" style="color: var(--text-primary);">Chart style</span>
-                        <span id="systemHealthStyleHint" class="text-xs" style="color: var(--text-muted);">Light · White background</span>
+                        Chart style
+                        <span id="systemHealthStyleHint" class="disclosure-hint">Light · White background</span>
                     </summary>
-                    <div class="system-health-style-grid">
-                        <label>
-                            <span>Theme</span>
-                            <select data-system-health-style-key="theme" class="w-full px-3 py-2 rounded border">
-                                <option value="light">Light</option>
-                                <option value="dark">Dark</option>
-                                <option value="mono">Monochrome</option>
-                                <option value="custom">Custom</option>
-                            </select>
-                        </label>
-                        <label class="flex items-center gap-2">
-                            <input data-system-health-style-key="transparent" type="checkbox">
-                            <span>Transparent PNG background</span>
-                        </label>
-                        <label data-system-health-style-when="theme=custom">
-                            <span>Background color</span>
-                            <input data-system-health-style-key="bgHex" type="color" value="#ffffff" class="w-full px-2 py-1 rounded border">
-                        </label>
-                        <label data-system-health-style-when="theme=custom">
-                            <span>Font color</span>
-                            <input data-system-health-style-key="textHex" type="color" value="#261f63" class="w-full px-2 py-1 rounded border">
-                        </label>
-                        <label data-system-health-style-when="theme=custom">
-                            <span>Tier 1 bar</span>
-                            <input data-system-health-style-key="advHex" type="color" value="#00aaef" class="w-full px-2 py-1 rounded border">
-                        </label>
-                        <label data-system-health-style-when="theme=custom">
-                            <span>Tier 2 bar</span>
-                            <input data-system-health-style-key="stdHex" type="color" value="#7f2854" class="w-full px-2 py-1 rounded border">
-                        </label>
-                        <label data-system-health-style-when="theme=custom">
-                            <span>Tier 3 bar</span>
-                            <input data-system-health-style-key="discHex" type="color" value="#f05918" class="w-full px-2 py-1 rounded border">
-                        </label>
-                        <button id="systemHealthStyleReset" class="btn-secondary px-4 py-2 rounded font-semibold" type="button">Reset</button>
+                    <div class="disclosure-body">
+                        <div class="system-health-style-grid">
+                            <div class="field">
+                                <label>Theme</label>
+                                <select data-system-health-style-key="theme">
+                                    <option value="light">Light</option>
+                                    <option value="dark">Dark</option>
+                                    <option value="mono">Monochrome</option>
+                                    <option value="custom">Custom</option>
+                                </select>
+                            </div>
+                            <label class="check" style="align-self: center;">
+                                <input data-system-health-style-key="transparent" type="checkbox">
+                                <span>Transparent PNG background</span>
+                            </label>
+                            <div class="field" data-system-health-style-when="theme=custom">
+                                <label>Background color</label>
+                                <input data-system-health-style-key="bgHex" type="color" value="#ffffff">
+                            </div>
+                            <div class="field" data-system-health-style-when="theme=custom">
+                                <label>Font color</label>
+                                <input data-system-health-style-key="textHex" type="color" value="#261f63">
+                            </div>
+                            <div class="field" data-system-health-style-when="theme=custom">
+                                <label>Tier 1 bar</label>
+                                <input data-system-health-style-key="advHex" type="color" value="#00aaef">
+                            </div>
+                            <div class="field" data-system-health-style-when="theme=custom">
+                                <label>Tier 2 bar</label>
+                                <input data-system-health-style-key="stdHex" type="color" value="#7f2854">
+                            </div>
+                            <div class="field" data-system-health-style-when="theme=custom">
+                                <label>Tier 3 bar</label>
+                                <input data-system-health-style-key="discHex" type="color" value="#f05918">
+                            </div>
+                            <button type="button" id="systemHealthStyleReset" class="btn">Reset</button>
+                        </div>
                     </div>
                 </details>
 
-                <div id="systemHealthLoading" class="text-center py-20" style="display: none;">
-                    <div class="spinner mx-auto mb-4"></div>
-                    <p id="systemHealthLoadingText" style="color: var(--text-muted);">Preparing report...</p>
+                <div id="systemHealthLoading" class="loading-state" style="display: none;">
+                    <div class="spinner"></div>
+                    <p id="systemHealthLoadingText">Preparing report…</p>
                 </div>
 
                 <div id="systemHealthResults" style="display: none;">
-                    <div id="systemHealthSummary" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-6 mb-6"></div>
+                    <div id="systemHealthSummary" class="stats" style="margin-bottom: 16px;"></div>
 
-                    <div class="space-y-6">
-                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                    <div class="stack">
+                        <!-- Packet rate -->
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h3 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">Packet Rate vs Model Capacity</h3>
-                                    <p class="text-sm" style="color: var(--text-muted);">Peak packet rate by sensor; catalog matches add capacity context when available.</p>
+                                    <h2 class="card-title">Packet Rate vs Model Capacity</h2>
+                                    <p class="card-desc">Peak packet rate by sensor; catalog matches add capacity context when available.</p>
                                 </div>
-                                <button class="btn-secondary px-4 py-2 rounded font-semibold" type="button" data-system-health-export="systemHealthPacketChart">PNG</button>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketChart">Export PNG</button>
                             </div>
-                            <div class="system-health-pager mb-4" id="systemHealthPacketPager" style="display: none;">
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-prev>Prev Model</button>
+                            <div class="system-health-pager" id="systemHealthPacketPager" style="display: none;">
+                                <button type="button" class="btn btn-sm" data-system-health-pager-prev>Prev model</button>
                                 <span data-system-health-pager-label></span>
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-next>Next Model</button>
+                                <button type="button" class="btn btn-sm" data-system-health-pager-next>Next model</button>
                             </div>
                             <div class="system-health-model-header">
                                 <div class="system-health-model-header-main">
@@ -849,28 +815,30 @@
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>100%+</span>
                             </div>
-                            <div class="system-health-pager mb-4" id="systemHealthPacketRowPager" style="display: none;">
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-prev>Prev page</button>
+                            <div class="system-health-pager" id="systemHealthPacketRowPager" style="display: none;">
+                                <button type="button" class="btn btn-sm" data-system-health-row-pager-prev>Prev page</button>
                                 <span data-system-health-row-pager-label></span>
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-next>Next page</button>
+                                <button type="button" class="btn btn-sm" data-system-health-row-pager-next>Next page</button>
                             </div>
                             <div class="system-health-chart-frame system-health-chart-frame-adaptive">
                                 <canvas id="systemHealthPacketChart"></canvas>
                             </div>
                         </div>
 
-                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                        <!-- Throughput -->
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h3 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">Throughput vs Model Capacity</h3>
-                                    <p class="text-sm" style="color: var(--text-muted);">Peak throughput by sensor; catalog matches add capacity context when available.</p>
+                                    <h2 class="card-title">Throughput vs Model Capacity</h2>
+                                    <p class="card-desc">Peak throughput by sensor; catalog matches add capacity context when available.</p>
                                 </div>
-                                <button class="btn-secondary px-4 py-2 rounded font-semibold" type="button" data-system-health-export="systemHealthThroughputChart">PNG</button>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthThroughputChart">Export PNG</button>
                             </div>
-                            <div class="system-health-pager mb-4" id="systemHealthThroughputPager" style="display: none;">
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-prev>Prev Model</button>
+                            <div class="system-health-pager" id="systemHealthThroughputPager" style="display: none;">
+                                <button type="button" class="btn btn-sm" data-system-health-pager-prev>Prev model</button>
                                 <span data-system-health-pager-label></span>
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-next>Next Model</button>
+                                <button type="button" class="btn btn-sm" data-system-health-pager-next>Next model</button>
                             </div>
                             <div class="system-health-model-header">
                                 <div class="system-health-model-header-main">
@@ -884,28 +852,30 @@
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>100%+</span>
                             </div>
-                            <div class="system-health-pager mb-4" id="systemHealthThroughputRowPager" style="display: none;">
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-prev>Prev page</button>
+                            <div class="system-health-pager" id="systemHealthThroughputRowPager" style="display: none;">
+                                <button type="button" class="btn btn-sm" data-system-health-row-pager-prev>Prev page</button>
                                 <span data-system-health-row-pager-label></span>
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-next>Next page</button>
+                                <button type="button" class="btn btn-sm" data-system-health-row-pager-next>Next page</button>
                             </div>
                             <div class="system-health-chart-frame system-health-chart-frame-adaptive">
                                 <canvas id="systemHealthThroughputChart"></canvas>
                             </div>
                         </div>
 
-                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                        <!-- Trigger cycles -->
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h3 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">Trigger Cycles vs Available Capacity</h3>
-                                    <p class="text-sm" style="color: var(--text-muted);">Peak trigger cycles consumed by sensor compared with available trigger cycles; drops are called out inline.</p>
+                                    <h2 class="card-title">Trigger Cycles vs Available Capacity</h2>
+                                    <p class="card-desc">Peak trigger cycles consumed by sensor compared with available trigger cycles; drops are called out inline.</p>
                                 </div>
-                                <button class="btn-secondary px-4 py-2 rounded font-semibold" type="button" data-system-health-export="systemHealthTriggersChart">PNG</button>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthTriggersChart">Export PNG</button>
                             </div>
-                            <div class="system-health-pager mb-4" id="systemHealthTriggersPager" style="display: none;">
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-prev>Prev Model</button>
+                            <div class="system-health-pager" id="systemHealthTriggersPager" style="display: none;">
+                                <button type="button" class="btn btn-sm" data-system-health-pager-prev>Prev model</button>
                                 <span data-system-health-pager-label></span>
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-next>Next Model</button>
+                                <button type="button" class="btn btn-sm" data-system-health-pager-next>Next model</button>
                             </div>
                             <div class="system-health-model-header">
                                 <div class="system-health-model-header-main">
@@ -919,28 +889,30 @@
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>100%+ or drops</span>
                             </div>
-                            <div class="system-health-pager mb-4" id="systemHealthTriggersRowPager" style="display: none;">
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-prev>Prev page</button>
+                            <div class="system-health-pager" id="systemHealthTriggersRowPager" style="display: none;">
+                                <button type="button" class="btn btn-sm" data-system-health-row-pager-prev>Prev page</button>
                                 <span data-system-health-row-pager-label></span>
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-next>Next page</button>
+                                <button type="button" class="btn btn-sm" data-system-health-row-pager-next>Next page</button>
                             </div>
                             <div class="system-health-chart-frame system-health-chart-frame-adaptive">
                                 <canvas id="systemHealthTriggersChart"></canvas>
                             </div>
                         </div>
 
-                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                        <!-- Analysis tier -->
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h3 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">Analysis Tier Pressure</h3>
-                                    <p class="text-sm" style="color: var(--text-muted);">Advanced and Standard utilization by sensor, with Discovery shown as overflow.</p>
+                                    <h2 class="card-title">Analysis Tier Pressure</h2>
+                                    <p class="card-desc">Advanced and Standard utilization by sensor, with Discovery shown as overflow.</p>
                                 </div>
-                                <button class="btn-secondary px-4 py-2 rounded font-semibold" type="button" data-system-health-export="systemHealthAnalysisChart">PNG</button>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthAnalysisChart">Export PNG</button>
                             </div>
-                            <div class="system-health-pager mb-4" id="systemHealthAnalysisPager" style="display: none;">
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-prev>Prev Model</button>
+                            <div class="system-health-pager" id="systemHealthAnalysisPager" style="display: none;">
+                                <button type="button" class="btn btn-sm" data-system-health-pager-prev>Prev model</button>
                                 <span data-system-health-pager-label></span>
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-next>Next Model</button>
+                                <button type="button" class="btn btn-sm" data-system-health-pager-next>Next model</button>
                             </div>
                             <div class="system-health-model-header">
                                 <div class="system-health-model-header-main">
@@ -955,34 +927,36 @@
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>At or over 100%</span>
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="discovery"></span>Discovery overflow</span>
                             </div>
-                            <div class="system-health-pager mb-4" id="systemHealthAnalysisRowPager" style="display: none;">
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-prev>Prev page</button>
+                            <div class="system-health-pager" id="systemHealthAnalysisRowPager" style="display: none;">
+                                <button type="button" class="btn btn-sm" data-system-health-row-pager-prev>Prev page</button>
                                 <span data-system-health-row-pager-label></span>
-                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-next>Next page</button>
+                                <button type="button" class="btn btn-sm" data-system-health-row-pager-next>Next page</button>
                             </div>
                             <div class="system-health-chart-frame system-health-chart-frame-adaptive">
                                 <canvas id="systemHealthAnalysisChart"></canvas>
                             </div>
                         </div>
 
-                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Sensor Detail</h3>
-                            <div class="table-container rounded-lg overflow-x-auto">
+                        <div class="card">
+                            <div class="card-head">
+                                <h2 class="card-title">Sensor detail</h2>
+                            </div>
+                            <div class="table-container table-scroll">
                                 <table>
                                     <thead>
                                         <tr>
                                             <th>Sensor</th>
                                             <th>Model</th>
-                                            <th>Packet Peak</th>
-                                            <th>Packet Capacity</th>
-                                            <th>Throughput Peak</th>
-                                            <th>Throughput Capacity</th>
-                                            <th>Trigger Capacity</th>
-                                            <th>Trigger Drops</th>
-                                            <th>Advanced</th>
-                                            <th>Standard</th>
-                                            <th>Discovery</th>
-                                            <th>Analysis Capacity</th>
+                                            <th class="num">Packet peak</th>
+                                            <th class="num">Packet capacity</th>
+                                            <th class="num">Throughput peak</th>
+                                            <th class="num">Throughput capacity</th>
+                                            <th class="num">Trigger capacity</th>
+                                            <th class="num">Trigger drops</th>
+                                            <th class="num">Advanced</th>
+                                            <th class="num">Standard</th>
+                                            <th class="num">Discovery</th>
+                                            <th class="num">Analysis capacity</th>
                                         </tr>
                                     </thead>
                                     <tbody id="systemHealthTableBody"></tbody>
@@ -990,643 +964,493 @@
                             </div>
                         </div>
 
-                        <div id="systemHealthNotes" class="p-6 rounded-lg" style="display: none; background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                            <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Collector Notes</h3>
-                            <ul id="systemHealthErrorList" class="list-disc pl-5 space-y-2 text-sm" style="color: var(--text-secondary);"></ul>
+                        <div id="systemHealthNotes" class="card" style="display: none;">
+                            <div class="card-head">
+                                <h2 class="card-title">Collector notes</h2>
+                            </div>
+                            <ul id="systemHealthErrorList" class="card-list"></ul>
                         </div>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <!-- Network Localities Module -->
-            <div id="localitiesModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Network Localities Manager</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Manage network locality entries to designate IP addresses and CIDR blocks as internal or external</p>
-                </div>
-
-                <!-- Action Buttons -->
-                <div class="flex flex-wrap gap-3 mb-6">
-                    <button id="loadLocalities" class="btn-primary px-6 py-2 rounded font-semibold">
-                        Refresh Localities
-                    </button>
-                    <button id="addLocalityRow" class="btn-secondary px-6 py-2 rounded font-semibold" style="display: none;">
-                        + Add Row
-                    </button>
-                    <button id="saveLocalityChanges" class="btn-primary px-6 py-2 rounded font-semibold" style="display: none;">
-                        Save Changes
-                    </button>
-                    <label class="btn-secondary px-6 py-2 rounded font-semibold cursor-pointer" style="display: none;" id="uploadCsvLabel">
-                        Upload CSV
-                        <input type="file" id="localityCsvInput" accept=".csv" class="hidden">
-                    </label>
-                </div>
-
-                <!-- Status Messages -->
-                <div id="localityStatus" class="mb-4" style="display: none;">
-                    <div class="p-4 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <p id="localityStatusText" class="text-sm"></p>
-                    </div>
-                </div>
-
-                <!-- Loading Indicator -->
-                <div id="localitiesLoading" class="text-center py-12" style="display: none;">
-                    <div class="spinner mx-auto mb-4"></div>
-                    <p style="color: var(--text-muted);">Loading network localities...</p>
-                </div>
-
-                <!-- Localities Table -->
-                <div id="localitiesTable" class="table-container rounded-lg overflow-x-auto" style="display: none;">
-                    <table id="localitiesDataTable" class="w-full">
-                        <thead>
-                            <tr>
-                                <th style="width: 20%;">Network Locality Name</th>
-                                <th style="width: 30%;">IP Addresses and CIDR Blocks</th>
-                                <th style="width: 15%;">Network Locality Type</th>
-                                <th style="width: 25%;">Description</th>
-                                <th style="width: 10%;">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="localitiesTableBody">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
-                </div>
+        <!-- ---------------------- Network Localities ---------------------- -->
+        <div id="localitiesModule" class="module-content page" style="display: none;">
+            <div class="page-head">
+                <h1 class="page-title">Network Localities</h1>
+                <p class="page-desc">Manage network locality entries to designate IP addresses and CIDR blocks as internal or external.</p>
             </div>
 
-            <!-- Audit Logs Module -->
-            <div id="audit-logsModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Audit Log Analysis</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Analyze audit log entries, user activity, and operation trends</p>
-                </div>
+            <div class="toolbar">
+                <button type="button" id="loadLocalities" class="btn-primary">Refresh localities</button>
+                <button type="button" id="addLocalityRow" class="btn" style="display: none;">Add row</button>
+                <button type="button" id="saveLocalityChanges" class="btn-primary" style="display: none;">Save changes</button>
+                <label class="btn" id="uploadCsvLabel" style="display: none; cursor: pointer;">
+                    Upload CSV
+                    <input type="file" id="localityCsvInput" accept=".csv" class="hidden">
+                </label>
+            </div>
 
-                <!-- Configuration Section -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                    <!-- Settings -->
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Settings</h3>
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Lookback Period (Days)</label>
-                                <input type="number" id="auditLogLookback" value="30" min="1" max="90" 
-                                    class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
-                                <p class="text-xs mt-1" style="color: var(--text-muted);">Maximum 90 days (ExtraHop audit log retention)</p>
+            <div id="localityStatus" style="display: none; margin-bottom: 14px;">
+                <div class="notice"><span id="localityStatusText"></span></div>
+            </div>
+
+            <div id="localitiesLoading" class="loading-state" style="display: none;">
+                <div class="spinner"></div>
+                <p>Loading network localities…</p>
+            </div>
+
+            <div id="localitiesTable" class="table-container table-scroll" style="display: none;">
+                <table id="localitiesDataTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 20%;">Name</th>
+                            <th style="width: 30%;">IP addresses and CIDR blocks</th>
+                            <th style="width: 15%;">Type</th>
+                            <th style="width: 25%;">Description</th>
+                            <th style="width: 10%;" class="actions">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="localitiesTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ---------------------- Audit Logs ---------------------- -->
+        <div id="audit-logsModule" class="module-content page" style="display: none;">
+            <div class="page-head">
+                <h1 class="page-title">Audit Log Analysis</h1>
+                <p class="page-desc">Analyze audit log entries, user activity, and operation trends.</p>
+            </div>
+
+            <div class="stack">
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Settings</h2>
+                        </div>
+                        <div class="grid-fields">
+                            <div class="field">
+                                <label for="auditLogLookback">Lookback period (days)</label>
+                                <input type="number" id="auditLogLookback" value="30" min="1" max="90">
+                                <span class="field-hint">Maximum 90 days, the ExtraHop audit log retention limit.</span>
                             </div>
-                            <div>
-                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Batch Size</label>
-                                <input type="number" id="auditLogBatchSize" value="1000" min="10" max="1000" 
-                                    class="w-full px-3 py-2 border rounded" style="background-color: var(--bg-input); border-color: var(--border-color);">
-                                <p class="text-xs mt-1" style="color: var(--text-muted);">Number of entries to fetch per request</p>
+                            <div class="field">
+                                <label for="auditLogBatchSize">Batch size</label>
+                                <input type="number" id="auditLogBatchSize" value="1000" min="10" max="1000">
+                                <span class="field-hint">Number of entries to fetch per request.</span>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Actions -->
-                    <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-lg font-semibold mb-4" style="color: var(--text-primary);">Actions</h3>
-                        <div class="space-y-3">
-                            <button id="loadAuditLog" class="btn-primary w-full px-4 py-3 rounded font-semibold">
-                                Load Audit Log
-                            </button>
-                            <button id="stopAuditLogLoad" class="btn-danger w-full px-4 py-3 rounded font-semibold" style="display: none;">
-                                Stop Loading
-                            </button>
+                    <div class="card">
+                        <div class="card-head">
+                            <h2 class="card-title">Actions</h2>
+                        </div>
+                        <div class="stack-sm">
+                            <div class="row-tight">
+                                <button type="button" id="loadAuditLog" class="btn-primary">Load audit log</button>
+                                <button type="button" id="stopAuditLogLoad" class="btn-danger" style="display: none;">Stop loading</button>
+                            </div>
+
                             <div id="exportAuditLogSection" style="display: none;">
-                                <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Export Operation Type</label>
-                                <select id="exportOperationType" class="w-full px-3 py-2 border rounded mb-2" style="background-color: var(--bg-input); border-color: var(--border-color);">
-                                    <option value="all">All Operations</option>
-                                </select>
-                                <button id="exportAuditLogCsv" class="btn-secondary w-full px-4 py-3 rounded font-semibold">
-                                    Export to CSV
-                                </button>
+                                <div class="field">
+                                    <label for="exportOperationType">Export operation type</label>
+                                    <select id="exportOperationType">
+                                        <option value="all">All operations</option>
+                                    </select>
+                                </div>
+                                <button type="button" id="exportAuditLogCsv" class="btn" style="margin-top: 10px;">Export to CSV</button>
                             </div>
-                        </div>
-                        <div id="auditLogLoadingStatus" class="mt-4 text-sm" style="color: var(--text-muted); display: none;">
-                            <div class="flex items-center">
-                                <div class="animate-spin mr-2" style="width: 16px; height: 16px; border: 2px solid var(--cyan); border-top-color: transparent; border-radius: 50%;"></div>
-                                <span id="auditLogLoadingText">Loading...</span>
+
+                            <div id="auditLogLoadingStatus" class="row-tight small muted" style="display: none;">
+                                <span class="spinner spinner-sm"></span>
+                                <span id="auditLogLoadingText">Loading…</span>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Status Display -->
-                <div id="auditLogStatus" style="display: none;" class="mb-6">
-                    <div class="p-4 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <div class="text-sm font-semibold" style="color: var(--text-primary);" id="auditLogStatusText"></div>
-                    </div>
+                <div id="auditLogStatus" style="display: none;">
+                    <div class="notice"><span id="auditLogStatusText"></span></div>
                 </div>
 
-                <!-- Charts Container -->
-                <div id="auditLogChartsContainer" style="display: none;">
-                    
-                    <!-- Chart 1: Logs per Event Type -->
-                    <div class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Logs per Event Type</h3>
-                        <div style="position: relative; height: 500px;">
-                            <canvas id="chartEventTypes"></canvas>
-                        </div>
+                <div id="auditLogChartsContainer" class="stack" style="display: none;">
+                    <div class="card">
+                        <div class="card-head"><h2 class="card-title">Logs per event type</h2></div>
+                        <div style="position: relative; height: 500px;"><canvas id="chartEventTypes"></canvas></div>
                     </div>
 
-                    <!-- Chart 2: Login Events per Day -->
-                    <div id="chartLoginPerDayContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
-                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Login Events per Day (All Users)</h3>
-                        <div style="position: relative; height: 400px;">
-                            <canvas id="chartLoginPerDay"></canvas>
-                        </div>
+                    <div id="chartLoginPerDayContainer" class="card" style="display: none;">
+                        <div class="card-head"><h2 class="card-title">Login events per day, all users</h2></div>
+                        <div style="position: relative; height: 400px;"><canvas id="chartLoginPerDay"></canvas></div>
                     </div>
 
-                    <!-- Chart 3: Total Login Events by Username -->
-                    <div id="chartLoginByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
-                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">Total Login Events by Username</h3>
-                        <div style="position: relative; height: 500px;">
-                            <canvas id="chartLoginByUser"></canvas>
-                        </div>
+                    <div id="chartLoginByUserContainer" class="card" style="display: none;">
+                        <div class="card-head"><h2 class="card-title">Total login events by username</h2></div>
+                        <div style="position: relative; height: 500px;"><canvas id="chartLoginByUser"></canvas></div>
                     </div>
 
-                    <!-- Chart 4: All Activity per Day by User -->
-                    <div id="chartActivityByUserContainer" class="mb-8 p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color); display: none;">
-                        <h3 class="text-xl font-semibold mb-4" style="color: var(--sapphire);">All Activity per Day Broken Down by User</h3>
-                        <div style="position: relative; height: 500px;">
-                            <canvas id="chartActivityByUser"></canvas>
-                        </div>
+                    <div id="chartActivityByUserContainer" class="card" style="display: none;">
+                        <div class="card-head"><h2 class="card-title">All activity per day, broken down by user</h2></div>
+                        <div style="position: relative; height: 500px;"><canvas id="chartActivityByUser"></canvas></div>
                     </div>
-
                 </div>
             </div>
+        </div>
 
-            <!-- Nodemap Module -->
-            <div id="nodemapModule" class="module-content" style="display: none;">
-                <div class="mb-6">
-                    <h2 class="text-2xl font-bold" style="color: var(--sapphire);">Appliance Node Map</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Visualize your ExtraHop appliance topology and relationships</p>
+        <!-- ---------------------- Connected Appliances ---------------------- -->
+        <div id="nodemapModule" class="module-content page" style="display: none;">
+            <div class="page-head">
+                <h1 class="page-title">Connected Appliances</h1>
+                <p class="page-desc">Visualize your ExtraHop appliance topology and relationships.</p>
+            </div>
+
+            <div id="graphContainer" class="graph-container" style="display: none;">
+                <div id="graphMainArea" class="graph-main">
+                    <svg id="nodeGraph"></svg>
                 </div>
 
-                <!-- Graph Container -->
-                <div id="graphContainer" class="w-full relative" style="display: none; min-height: 600px;">
-                    <!-- Main graph area that adjusts width when details panel is open -->
-                    <div id="graphMainArea" class="transition-all duration-300" style="width: 100%;">
-                        <svg id="nodeGraph" class="w-full"></svg>
-                    </div>
-                    
-                    <!-- Controls positioned absolutely over the graph -->
-                    <div id="nodemapControls" class="absolute top-8 left-4 flex gap-3 z-10" style="display: none;">
-                        <button id="showNodemapFilters" class="btn-secondary px-3 py-2 rounded text-sm flex items-center shadow-md">
-                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path>
-                            </svg>
-                            Filters
-                        </button>
-                        <input type="text" id="nodemapSearch" placeholder="Search appliances..." class="px-3 py-2 rounded border text-sm shadow-md" style="width: 200px;">
-                    </div>
-
-                    <!-- Node Details Right Panel -->
-                    <div id="nodeDetailsPanel" class="absolute top-0 right-0 w-96 transform translate-x-full transition-transform duration-300 ease-in-out z-20" style="background-color: var(--bg-card); border-left: 1px solid var(--border-color); display: none; bottom: 0;">
-                        <div class="flex flex-col h-full">
-                            <!-- Panel Header -->
-                            <div class="flex items-center justify-between p-4 border-b" style="border-color: var(--border-color);">
-                                <h3 class="text-lg font-semibold" style="color: var(--sapphire);">Appliance Details</h3>
-                                <button id="closeNodeDetailsPanel" class="text-gray-400 hover:text-gray-600 transition-colors">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                    </svg>
-                                </button>
-                            </div>
-                            
-                            <!-- Panel Content -->
-                            <div id="nodeDetailsPanelContent" class="flex-1 overflow-y-auto p-4"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Welcome Screen (shown when not connected/loaded) -->
-                <div id="nodemapWelcome" class="flex items-center justify-center h-96">
-                    <div class="text-center p-8">
-                        <svg class="w-16 h-16 mx-auto mb-4" style="color: var(--tangerine);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                <div id="nodemapControls" class="graph-controls" style="display: none;">
+                    <button type="button" id="showNodemapFilters" class="btn btn-sm">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path>
                         </svg>
-                        <h3 class="text-xl font-semibold mb-4" style="color: var(--text-primary);">Connect to View Node Map</h3>
-                        <p class="text-sm" style="color: var(--text-muted);">Connect to your ExtraHop deployment to visualize the appliance topology.</p>
+                        Filters
+                    </button>
+                    <input type="search" id="nodemapSearch" placeholder="Search appliances…">
+                </div>
+
+                <div id="nodeDetailsPanel" class="node-details-panel" style="display: none;">
+                    <div class="node-details-head">
+                        <h2 class="card-title">Appliance details</h2>
+                        <button type="button" id="closeNodeDetailsPanel" class="icon-btn" aria-label="Close panel">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                                <path d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
                     </div>
+                    <div id="nodeDetailsPanelContent" class="node-details-body"></div>
                 </div>
             </div>
-        </main>
-    </div>
 
-    <!-- Error Modal -->
-    <div id="errorModal" class="modal">
-        <div class="modal-content">
-            <h2 class="text-xl font-bold mb-4" style="color: var(--text-primary);">Connection Error</h2>
-            <p id="errorMessage" class="mb-4" style="color: var(--text-secondary);"></p>
-            
-            <div class="mb-4">
-                <button id="toggleErrorDetails" class="btn-secondary px-4 py-2 rounded text-sm">
-                    Show Technical Details
-                </button>
+            <div id="nodemapWelcome" class="empty-inline">
+                <p class="strong" style="margin-bottom: 6px;">Nothing loaded yet</p>
+                <p>Connect to your ExtraHop deployment to visualize the appliance topology.</p>
             </div>
-            
+        </div>
+    </main>
+</div>
+
+<!-- =============================== MODALS =============================== -->
+
+<!-- Connection error -->
+<div id="errorModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title">Connection error</h2>
+        <p id="errorMessage" class="modal-desc"></p>
+
+        <div class="modal-body">
+            <div>
+                <button type="button" id="toggleErrorDetails" class="btn btn-sm">Show technical details</button>
+            </div>
             <div id="errorDetails" style="display: none;">
-                <div class="bg-gray-50 p-3 rounded text-xs space-y-2">
-                    <div><strong>URL:</strong> <code id="errorUrl"></code></div>
-                    <div><strong>Headers:</strong> <pre id="errorHeaders" class="whitespace-pre-wrap"></pre></div>
-                    <div><strong>Body:</strong> <pre id="errorBody" class="whitespace-pre-wrap"></pre></div>
-                    <div><strong>Status:</strong> <code id="errorStatus"></code></div>
-                    <div><strong>Response:</strong> <pre id="errorResponse" class="whitespace-pre-wrap"></pre></div>
-                </div>
-            </div>
-            
-            <div class="flex justify-end mt-6">
-                <button id="closeErrorModal" class="btn-primary px-4 py-2 rounded">Close</button>
-            </div>
-        </div>
-    </div>
-
-    
-
-    <!-- Change Owner Modal -->
-    <div id="changeOwnerModal" class="modal">
-        <div class="modal-content">
-            <h3 class="text-xl font-bold mb-4" style="color: var(--sapphire);">Change Dashboard Owner</h3>
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">New Owner</label>
-                    <select id="newOwnerSelect" class="w-full px-3 py-2 rounded border">
-                        <option value="">Select a user...</option>
-                    </select>
-                </div>
-                <div class="flex items-center">
-                    <input type="checkbox" id="grantEditAccess" class="mr-2">
-                    <label for="grantEditAccess" class="text-sm" style="color: var(--text-secondary);">Grant previous owner edit access</label>
-                </div>
-                <div class="flex gap-3 mt-6">
-                    <button id="confirmChangeOwner" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
-                        Change Owner
-                    </button>
-                    <button id="cancelChangeOwner" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
-                        Cancel
-                    </button>
+                <div class="json-preview">
+                    <div><strong>URL:</strong> <span id="errorUrl"></span></div>
+                    <div><strong>Headers:</strong> <span id="errorHeaders"></span></div>
+                    <div><strong>Body:</strong> <span id="errorBody"></span></div>
+                    <div><strong>Status:</strong> <span id="errorStatus"></span></div>
+                    <div><strong>Response:</strong> <span id="errorResponse"></span></div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Modify Sharing Modal -->
-    <div id="modifySharingModal" class="modal">
-        <div class="modal-content">
-            <h3 class="text-xl font-bold mb-4" style="color: var(--sapphire);">Modify Dashboard Sharing</h3>
-            <div class="space-y-4">
-                <div class="flex items-center">
-                    <input type="checkbox" id="shareWithAll" class="mr-2">
-                    <label for="shareWithAll" class="text-sm" style="color: var(--text-secondary);">Share with all users (viewer access)</label>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Additional Editors</label>
-                    <select id="additionalEditorsSelect" multiple class="w-full px-3 py-2 rounded border" size="6">
-                    </select>
-                    <p class="text-xs mt-1" style="color: var(--text-muted);">Hold Ctrl/Cmd to select multiple users</p>
-                </div>
-                <div class="flex gap-3 mt-6">
-                    <button id="confirmModifySharing" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
-                        Update Sharing
-                    </button>
-                    <button id="cancelModifySharing" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
-                        Cancel
-                    </button>
-                </div>
-            </div>
+        <div class="modal-foot">
+            <button type="button" id="closeErrorModal" class="btn-primary">Close</button>
         </div>
     </div>
+</div>
 
-    <!-- Delete Confirmation Modal -->
-    <div id="deleteConfirmModal" class="modal">
-        <div class="modal-content">
-            <h3 class="text-xl font-bold mb-4" style="color: #ef4444;">Confirm Deletion</h3>
-            <p class="mb-6" style="color: var(--text-secondary);">
-                Are you sure you want to delete <strong id="deleteCount"></strong>?
-            </p>
-            <p class="mb-6 text-sm" style="color: var(--text-muted);">
-                This action cannot be undone.
-            </p>
-            <div class="flex gap-3">
-                <button id="confirmDelete" class="btn-danger flex-1 px-4 py-2 rounded font-semibold">
-                    Delete
-                </button>
-                <button id="cancelDelete" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
-                    Cancel
-                </button>
+<!-- Change dashboard owner -->
+<div id="changeOwnerModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title">Change dashboard owner</h2>
+        <div class="modal-body">
+            <div class="field">
+                <label for="newOwnerSelect">New owner</label>
+                <select id="newOwnerSelect">
+                    <option value="">Select a user…</option>
+                </select>
             </div>
+            <label class="check">
+                <input type="checkbox" id="grantEditAccess">
+                <span>Grant previous owner edit access</span>
+            </label>
+        </div>
+        <div class="modal-foot">
+            <button type="button" id="cancelChangeOwner" class="btn">Cancel</button>
+            <button type="button" id="confirmChangeOwner" class="btn-primary">Change owner</button>
         </div>
     </div>
+</div>
 
-    <!-- Create User Modal -->
-    <div id="createUserModal" class="modal">
-        <div class="modal-content" style="max-width: 760px;">
-            <h3 class="text-xl font-bold mb-4" style="color: var(--sapphire);">Create User</h3>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Username</label>
-                    <input type="text" id="createUserUsername" class="w-full px-3 py-2 rounded border">
+<!-- Modify dashboard sharing -->
+<div id="modifySharingModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title">Modify dashboard sharing</h2>
+        <div class="modal-body">
+            <label class="check">
+                <input type="checkbox" id="shareWithAll">
+                <span>Share with all users, viewer access</span>
+            </label>
+            <div class="field">
+                <label for="additionalEditorsSelect">Additional editors</label>
+                <select id="additionalEditorsSelect" multiple size="6"></select>
+                <span class="field-hint">Hold Ctrl or Cmd to select multiple users.</span>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button type="button" id="cancelModifySharing" class="btn">Cancel</button>
+            <button type="button" id="confirmModifySharing" class="btn-primary">Update sharing</button>
+        </div>
+    </div>
+</div>
+
+<!-- Delete dashboards -->
+<div id="deleteConfirmModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title modal-title-danger">Confirm deletion</h2>
+        <p class="modal-desc">Are you sure you want to delete <strong id="deleteCount"></strong>? This cannot be undone.</p>
+        <div class="modal-foot" style="margin-top: 20px;">
+            <button type="button" id="cancelDelete" class="btn">Cancel</button>
+            <button type="button" id="confirmDelete" class="btn-danger">Delete</button>
+        </div>
+    </div>
+</div>
+
+<!-- Create user -->
+<div id="createUserModal" class="modal">
+    <div class="modal-content modal-wide">
+        <h2 class="modal-title">Create user</h2>
+        <div class="modal-body">
+            <div class="grid-fields">
+                <div class="field">
+                    <label for="createUserUsername">Username</label>
+                    <input type="text" id="createUserUsername">
                 </div>
-                <div>
-                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Friendly Name</label>
-                    <input type="text" id="createUserName" class="w-full px-3 py-2 rounded border">
+                <div class="field">
+                    <label for="createUserName">Friendly name</label>
+                    <input type="text" id="createUserName">
                 </div>
-                <div>
-                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Password</label>
-                    <input type="password" id="createUserPassword" class="w-full px-3 py-2 rounded border">
+                <div class="field">
+                    <label for="createUserPassword">Password</label>
+                    <input type="password" id="createUserPassword">
                 </div>
-                <div>
-                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Authentication Type</label>
-                    <select id="createUserType" class="w-full px-3 py-2 rounded border">
+                <div class="field">
+                    <label for="createUserType">Authentication type</label>
+                    <select id="createUserType">
                         <option value="local">Local</option>
                         <option value="remote">Remote</option>
                     </select>
                 </div>
             </div>
 
-            <div class="mt-4 flex flex-wrap gap-6">
-                <label class="flex items-center cursor-pointer">
-                    <input type="checkbox" id="createUserEnabled" class="mr-2" checked>
-                    <span class="text-sm" style="color: var(--text-secondary);">Enabled</span>
-                </label>
-                <label class="flex items-center cursor-pointer">
-                    <input type="checkbox" id="createUserCreateApiKey" class="mr-2">
-                    <span class="text-sm" style="color: var(--text-secondary);">Generate API key</span>
-                </label>
-                <label class="flex items-center cursor-pointer">
-                    <input type="checkbox" id="createUserEhAccountTeam" class="mr-2">
-                    <span class="text-sm" style="color: var(--text-secondary);">ExtraHop Account Team user</span>
-                </label>
+            <div class="row" style="gap: 20px;">
+                <label class="check"><input type="checkbox" id="createUserEnabled" checked><span>Enabled</span></label>
+                <label class="check"><input type="checkbox" id="createUserCreateApiKey"><span>Generate API key</span></label>
+                <label class="check"><input type="checkbox" id="createUserEhAccountTeam"><span>ExtraHop Account Team user</span></label>
             </div>
 
-            <div class="mt-6 detail-panel space-y-4">
-                <div>
-                    <h4 class="text-lg font-semibold" style="color: var(--text-primary);">Privileges</h4>
-                    <p class="text-sm mt-1" style="color: var(--text-muted);">Assign a base access level and optional module or packet privileges.</p>
+            <div class="detail-panel">
+                <div class="card-head">
+                    <h3 class="card-title">Privileges</h3>
+                    <p class="card-desc">Assign a base access level and optional module or packet privileges.</p>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Base Access</label>
-                        <select id="createUserBaseAccess" class="w-full px-3 py-2 rounded border"></select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">NDR</label>
-                        <select id="createUserNdrAccess" class="w-full px-3 py-2 rounded border"></select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">NPM</label>
-                        <select id="createUserNpmAccess" class="w-full px-3 py-2 rounded border"></select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Packets</label>
-                        <select id="createUserPacketsAccess" class="w-full px-3 py-2 rounded border"></select>
-                    </div>
+                <div class="grid-fields">
+                    <div class="field"><label for="createUserBaseAccess">Base access</label><select id="createUserBaseAccess"></select></div>
+                    <div class="field"><label for="createUserNdrAccess">NDR</label><select id="createUserNdrAccess"></select></div>
+                    <div class="field"><label for="createUserNpmAccess">NPM</label><select id="createUserNpmAccess"></select></div>
+                    <div class="field"><label for="createUserPacketsAccess">Packets</label><select id="createUserPacketsAccess"></select></div>
                 </div>
-                <div id="createUserRoleWarning" class="p-3 rounded text-sm" style="display: none; background-color: #fef3c7; color: #92400e;"></div>
-                <div>
-                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Granted Roles Preview</label>
+                <div id="createUserRoleWarning" class="notice notice-warn" style="display: none; margin-top: 14px;"></div>
+                <div class="field" style="margin-top: 14px;">
+                    <label>Granted roles preview</label>
                     <pre id="createUserRolePreview" class="json-preview">{}</pre>
                 </div>
             </div>
-
-            <div class="flex gap-3 mt-6">
-                <button id="confirmCreateUser" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
-                    Create User
-                </button>
-                <button id="cancelCreateUser" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
-                    Cancel
-                </button>
-            </div>
+        </div>
+        <div class="modal-foot">
+            <button type="button" id="cancelCreateUser" class="btn">Cancel</button>
+            <button type="button" id="confirmCreateUser" class="btn-primary">Create user</button>
         </div>
     </div>
+</div>
 
-    <!-- Edit User Modal -->
-    <div id="editUserModal" class="modal">
-        <div class="modal-content" style="max-width: 760px;">
-            <h3 class="text-xl font-bold mb-4" style="color: var(--sapphire);">Edit User</h3>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+<!-- Edit user -->
+<div id="editUserModal" class="modal">
+    <div class="modal-content modal-wide">
+        <h2 class="modal-title">Edit user</h2>
+        <div class="modal-body">
+            <div class="grid-fields">
                 <div class="detail-panel">
-                    <div class="text-xs uppercase tracking-wide mb-1" style="color: var(--text-muted);">Username</div>
-                    <div id="editUserUsernameDisplay" class="font-semibold" style="color: var(--text-primary);"></div>
+                    <div class="detail-label">Username</div>
+                    <div id="editUserUsernameDisplay" class="detail-value"></div>
                 </div>
                 <div class="detail-panel">
-                    <div class="text-xs uppercase tracking-wide mb-1" style="color: var(--text-muted);">Authentication Type</div>
-                    <div id="editUserTypeDisplay" class="font-semibold" style="color: var(--text-primary);"></div>
+                    <div class="detail-label">Authentication type</div>
+                    <div id="editUserTypeDisplay" class="detail-value"></div>
                 </div>
                 <div class="detail-panel">
-                    <div class="text-xs uppercase tracking-wide mb-1" style="color: var(--text-muted);">Date Joined</div>
-                    <div id="editUserDateJoinedDisplay" class="font-semibold" style="color: var(--text-primary);"></div>
+                    <div class="detail-label">Date joined</div>
+                    <div id="editUserDateJoinedDisplay" class="detail-value"></div>
                 </div>
                 <div class="detail-panel">
-                    <div class="text-xs uppercase tracking-wide mb-1" style="color: var(--text-muted);">Last UI Login</div>
-                    <div id="editUserLastLoginDisplay" class="font-semibold" style="color: var(--text-primary);"></div>
+                    <div class="detail-label">Last UI login</div>
+                    <div id="editUserLastLoginDisplay" class="detail-value"></div>
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Friendly Name</label>
-                    <input type="text" id="editUserName" class="w-full px-3 py-2 rounded border">
+            <div class="grid-fields">
+                <div class="field">
+                    <label for="editUserName">Friendly name</label>
+                    <input type="text" id="editUserName">
                 </div>
-                <div class="flex items-end">
-                    <label class="flex items-center cursor-pointer">
-                        <input type="checkbox" id="editUserEnabled" class="mr-2">
-                        <span class="text-sm" style="color: var(--text-secondary);">Enabled</span>
-                    </label>
-                </div>
+                <label class="check" style="align-self: end; padding-bottom: 9px;">
+                    <input type="checkbox" id="editUserEnabled"><span>Enabled</span>
+                </label>
             </div>
 
-            <div class="mt-4">
-                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">New Password</label>
-                <input type="password" id="editUserPassword" class="w-full px-3 py-2 rounded border">
-                <p id="editUserPasswordHelp" class="text-xs mt-1" style="color: var(--text-muted);">Leave blank to keep the current password.</p>
+            <div class="field">
+                <label for="editUserPassword">New password</label>
+                <input type="password" id="editUserPassword">
+                <span id="editUserPasswordHelp" class="field-hint">Leave blank to keep the current password.</span>
             </div>
 
-            <div class="mt-4 detail-panel">
-                <div class="text-xs uppercase tracking-wide mb-1" style="color: var(--text-muted);">ExtraHop Account Team</div>
-                <div id="editUserEhAccountTeamDisplay" class="font-semibold" style="color: var(--text-primary);"></div>
+            <div class="detail-panel">
+                <div class="detail-label">ExtraHop Account Team</div>
+                <div id="editUserEhAccountTeamDisplay" class="detail-value"></div>
             </div>
 
-            <div class="mt-6 detail-panel space-y-4">
-                <div>
-                    <h4 class="text-lg font-semibold" style="color: var(--text-primary);">Privileges</h4>
-                    <p class="text-sm mt-1" style="color: var(--text-muted);">Known privilege families are editable through presets. Unsupported entries are preserved unless you change their family.</p>
+            <div class="detail-panel">
+                <div class="card-head">
+                    <h3 class="card-title">Privileges</h3>
+                    <p class="card-desc">Known privilege families are editable through presets. Unsupported entries are preserved unless you change their family.</p>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Base Access</label>
-                        <select id="editUserBaseAccess" class="w-full px-3 py-2 rounded border"></select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">NDR</label>
-                        <select id="editUserNdrAccess" class="w-full px-3 py-2 rounded border"></select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">NPM</label>
-                        <select id="editUserNpmAccess" class="w-full px-3 py-2 rounded border"></select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Packets</label>
-                        <select id="editUserPacketsAccess" class="w-full px-3 py-2 rounded border"></select>
-                    </div>
+                <div class="grid-fields">
+                    <div class="field"><label for="editUserBaseAccess">Base access</label><select id="editUserBaseAccess"></select></div>
+                    <div class="field"><label for="editUserNdrAccess">NDR</label><select id="editUserNdrAccess"></select></div>
+                    <div class="field"><label for="editUserNpmAccess">NPM</label><select id="editUserNpmAccess"></select></div>
+                    <div class="field"><label for="editUserPacketsAccess">Packets</label><select id="editUserPacketsAccess"></select></div>
                 </div>
-                <div id="editUserRoleWarning" class="p-3 rounded text-sm" style="display: none; background-color: #fef3c7; color: #92400e;"></div>
-                <div>
-                    <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Granted Roles Preview</label>
+                <div id="editUserRoleWarning" class="notice notice-warn" style="display: none; margin-top: 14px;"></div>
+                <div class="field" style="margin-top: 14px;">
+                    <label>Granted roles preview</label>
                     <pre id="editUserRolePreview" class="json-preview">{}</pre>
                 </div>
             </div>
-
-            <div class="flex gap-3 mt-6">
-                <button id="confirmEditUser" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
-                    Save Changes
-                </button>
-                <button id="cancelEditUser" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
-                    Cancel
-                </button>
-            </div>
+        </div>
+        <div class="modal-foot">
+            <button type="button" id="cancelEditUser" class="btn">Cancel</button>
+            <button type="button" id="confirmEditUser" class="btn-primary">Save changes</button>
         </div>
     </div>
+</div>
 
-    <!-- Delete User Modal -->
-    <div id="deleteUserModal" class="modal">
-        <div class="modal-content" style="max-width: 620px;">
-            <h3 class="text-xl font-bold mb-4" style="color: #ef4444;">Delete User</h3>
-            <p class="mb-3" style="color: var(--text-secondary);">
-                This will permanently delete <strong id="deleteUserTarget"></strong>.
-            </p>
-            <div class="mb-4">
-                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Transfer dashboards, collections, and activity maps to</label>
-                <select id="deleteUserTransferSelect" class="w-full px-3 py-2 rounded border">
+<!-- Delete user -->
+<div id="deleteUserModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title modal-title-danger">Delete user</h2>
+        <p class="modal-desc">This will permanently delete <strong id="deleteUserTarget"></strong>.</p>
+        <div class="modal-body">
+            <div class="field">
+                <label for="deleteUserTransferSelect">Transfer dashboards, collections, and activity maps to</label>
+                <select id="deleteUserTransferSelect">
                     <option value="">Do not transfer owned objects</option>
                 </select>
             </div>
-            <div class="mb-6">
-                <label class="block text-sm font-medium mb-2" style="color: var(--text-secondary);">Type the username to confirm</label>
-                <input type="text" id="deleteUserConfirmInput" class="w-full px-3 py-2 rounded border">
-            </div>
-            <div class="flex gap-3">
-                <button id="confirmDeleteUser" class="btn-danger flex-1 px-4 py-2 rounded font-semibold">
-                    Delete User
-                </button>
-                <button id="cancelDeleteUser" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
-                    Cancel
-                </button>
+            <div class="field">
+                <label for="deleteUserConfirmInput">Type the username to confirm</label>
+                <input type="text" id="deleteUserConfirmInput">
             </div>
         </div>
+        <div class="modal-foot">
+            <button type="button" id="cancelDeleteUser" class="btn">Cancel</button>
+            <button type="button" id="confirmDeleteUser" class="btn-danger">Delete user</button>
+        </div>
     </div>
+</div>
 
-    <!-- Generated API Key Modal -->
-    <div id="createdUserApiKeyModal" class="modal">
-        <div class="modal-content" style="max-width: 620px;">
-            <h3 class="text-xl font-bold mb-4" style="color: var(--sapphire);">API Key Generated</h3>
-            <p class="mb-4" style="color: var(--text-secondary);">Copy this API key now. It will not be shown again.</p>
+<!-- Generated API key -->
+<div id="createdUserApiKeyModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title">API key generated</h2>
+        <p class="modal-desc">Copy this API key now. It will not be shown again.</p>
+        <div class="modal-body">
             <div class="json-preview" id="createdUserApiKeyValue"></div>
-            <div class="flex gap-3 mt-6">
-                <button id="copyCreatedUserApiKey" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
-                    Copy API Key
-                </button>
-                <button id="closeCreatedUserApiKey" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
-                    Close
-                </button>
-            </div>
+        </div>
+        <div class="modal-foot">
+            <button type="button" id="closeCreatedUserApiKey" class="btn">Close</button>
+            <button type="button" id="copyCreatedUserApiKey" class="btn-primary">Copy API key</button>
         </div>
     </div>
+</div>
 
-    <!-- Nodemap Filters Modal -->
-    <div id="nodemapFiltersModal" class="modal">
-        <div class="modal-content" style="max-width: 500px;">
-            <div class="flex items-center justify-between mb-4">
-                <h3 class="text-xl font-bold" style="color: var(--sapphire);">Appliance Filters</h3>
-                <button id="closeNodemapFilters" style="color: var(--text-muted);" class="hover:opacity-70">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                    </svg>
-                </button>
+<!-- Nodemap filters -->
+<div id="nodemapFiltersModal" class="modal">
+    <div class="modal-content">
+        <div class="row">
+            <h2 class="modal-title">Appliance filters</h2>
+            <div class="spacer"></div>
+            <button type="button" id="closeNodemapFilters" class="icon-btn" aria-label="Close filters">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <path d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <div class="modal-body">
+            <div class="filter-group">
+                <div class="filter-group-title">Platform types</div>
+                <div class="filter-list">
+                    <label class="check"><input type="checkbox" id="filter-discover" checked><span class="filter-swatch" style="background-color: var(--lime);"></span><span>Packet Sensor</span></label>
+                    <label class="check"><input type="checkbox" id="filter-efc" checked><span class="filter-swatch" style="background-color: #a855f7;"></span><span>Flow Collector</span></label>
+                    <label class="check"><input type="checkbox" id="filter-trace" checked><span class="filter-swatch" style="background-color: var(--tangerine);"></span><span>Packetstore</span></label>
+                    <label class="check"><input type="checkbox" id="filter-other" checked><span class="filter-swatch" style="background-color: var(--gray);"></span><span>Other</span></label>
+                </div>
             </div>
-            
-            <div class="space-y-6">
-                <!-- Platform Types -->
-                <div>
-                    <h4 class="font-semibold mb-3" style="color: var(--text-primary);">Platform Types</h4>
-                    <div class="space-y-2 text-sm">
-                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                            <input type="checkbox" id="filter-discover" checked class="w-4 h-4" style="accent-color: var(--lime);">
-                            <span style="color: var(--lime);">●</span>
-                            <span>Packet Sensor</span>
-                        </label>
-                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                            <input type="checkbox" id="filter-efc" checked class="w-4 h-4" style="accent-color: #a855f7;">
-                            <span style="color: #a855f7;">●</span>
-                            <span>Flow Collector</span>
-                        </label>
-                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                            <input type="checkbox" id="filter-trace" checked class="w-4 h-4" style="accent-color: var(--tangerine);">
-                            <span style="color: var(--tangerine);">●</span>
-                            <span>Packetstore</span>
-                        </label>
-                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                            <input type="checkbox" id="filter-other" checked class="w-4 h-4">
-                            <span style="color: var(--text-secondary);">●</span>
-                            <span>Other</span>
-                        </label>
-                    </div>
-                </div>
 
-                <!-- Deployment Types -->
-                <div>
-                    <h4 class="font-semibold mb-3" style="color: var(--text-primary);">Deployment Types</h4>
-                    <div class="space-y-2 text-sm">
-                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                            <input type="checkbox" id="filter-physical" checked class="w-4 h-4">
-                            <span>Physical</span>
-                        </label>
-                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                            <input type="checkbox" id="filter-virtual" checked class="w-4 h-4">
-                            <span>Virtual/Cloud</span>
-                        </label>
-                    </div>
+            <div class="filter-group">
+                <div class="filter-group-title">Deployment types</div>
+                <div class="filter-list">
+                    <label class="check"><input type="checkbox" id="filter-physical" checked><span>Physical</span></label>
+                    <label class="check"><input type="checkbox" id="filter-virtual" checked><span>Virtual and cloud</span></label>
                 </div>
+            </div>
 
-                <!-- Connection Status -->
-                <div>
-                    <h4 class="font-semibold mb-3" style="color: var(--text-primary);">Connection Status</h4>
-                    <div class="space-y-2 text-sm">
-                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                            <input type="checkbox" id="filter-online" checked class="w-4 h-4" style="accent-color: #10b981;">
-                            <span style="color: #10b981;">●</span>
-                            <span>Online</span>
-                        </label>
-                        <label class="flex items-center gap-2 cursor-pointer hover:opacity-80">
-                            <input type="checkbox" id="filter-offline" checked class="w-4 h-4" style="accent-color: #ef4444;">
-                            <span style="color: #ef4444;">●</span>
-                            <span>Offline</span>
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Action Buttons -->
-                <div class="flex gap-3 pt-4 border-t" style="border-color: var(--border-color);">
-                    <button id="resetNodemapFilters" class="btn-secondary flex-1 px-4 py-2 rounded font-semibold">
-                        Reset All
-                    </button>
-                    <button id="applyNodemapFilters" class="btn-primary flex-1 px-4 py-2 rounded font-semibold">
-                        Apply Filters
-                    </button>
+            <div class="filter-group">
+                <div class="filter-group-title">Connection status</div>
+                <div class="filter-list">
+                    <label class="check"><input type="checkbox" id="filter-online" checked><span class="filter-swatch" style="background-color: var(--ok);"></span><span>Online</span></label>
+                    <label class="check"><input type="checkbox" id="filter-offline" checked><span class="filter-swatch" style="background-color: var(--danger);"></span><span>Offline</span></label>
                 </div>
             </div>
         </div>
+
+        <div class="modal-foot">
+            <button type="button" id="resetNodemapFilters" class="btn">Reset all</button>
+            <button type="button" id="applyNodemapFilters" class="btn-primary">Apply filters</button>
+        </div>
     </div>
+</div>
 
-
-    <!-- Load JavaScript Modules -->
-    <script src="js/utils/app-state.js?v=20260724-dist"></script>
-    <script src="js/api-client/extrahop-api.js?v=20260724-dist"></script>
-    <script src="js/utils/common.js?v=20260724-collapse"></script>
-    <script src="js/auth/auth-manager.js?v=20260724-dist"></script>
-    <script src="js/utils/module-loader.js?v=20260724-dist"></script>
-    <script src="js/app.js?v=20260724-dist"></script>
+<!-- Load JavaScript modules -->
+<script src="js/theme.js?v=20260724-ui"></script>
+<script src="js/utils/app-state.js?v=20260724-ui"></script>
+<script src="js/api-client/extrahop-api.js?v=20260724-ui"></script>
+<script src="js/utils/common.js?v=20260724-ui"></script>
+<script src="js/auth/auth-manager.js?v=20260724-ui"></script>
+<script src="js/utils/module-loader.js?v=20260724-ui"></script>
+<script src="js/app.js?v=20260724-ui"></script>
 </body>
 </html>

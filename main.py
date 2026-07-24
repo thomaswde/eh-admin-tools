@@ -38,6 +38,7 @@ api_response_logger = ApiResponseLogger(
 
 app.mount("/css", StaticFiles(directory=APP_ROOT / "css"), name="css")
 app.mount("/js", StaticFiles(directory=APP_ROOT / "js"), name="js")
+app.mount("/assets", StaticFiles(directory=APP_ROOT / "assets"), name="assets")
 
 
 class ConnectionConfig(BaseModel):
@@ -122,10 +123,6 @@ async def health() -> dict[str, str]:
 async def favicon() -> FileResponse:
     return FileResponse(APP_ROOT / "favicon.png")
 
-
-@app.get("/eh_logo.png")
-async def logo() -> FileResponse:
-    return FileResponse(APP_ROOT / "eh_logo.png")
 
 
 @app.post("/backend/session")

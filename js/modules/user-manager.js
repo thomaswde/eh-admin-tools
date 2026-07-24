@@ -356,27 +356,20 @@ function renderRoleBadgesHtml(roles = {}) {
     const entries = Object.entries(orderedRoles);
 
     if (entries.length === 0) {
-        return '<span class="text-sm" style="color: var(--text-muted);">None</span>';
+        return '<span class="small muted">None</span>';
     }
 
     return entries.map(([key, value]) => {
-        const familyLabel = key.toUpperCase();
         const roleValue = value === null ? 'null' : String(value);
-        return `
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium mr-1 mb-1"
-                style="background-color: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color);">
-                <span>${escapeHtml(familyLabel)}</span>
-                <span class="ml-1 opacity-80">(${escapeHtml(roleValue)})</span>
-            </span>
-        `;
+        return `<span class="badge">${escapeHtml(key.toUpperCase())}<span class="muted">${escapeHtml(roleValue)}</span></span>`;
     }).join('');
 }
 
 function renderRolesPanel(title, roles) {
     return `
         <div class="detail-panel">
-            <div class="font-semibold mb-2" style="color: var(--text-primary);">${escapeHtml(title)}</div>
-            <div class="flex flex-wrap mb-3">${renderRoleBadgesHtml(roles)}</div>
+            <div class="detail-label">${escapeHtml(title)}</div>
+            <div class="row-tight" style="margin: 8px 0 12px;">${renderRoleBadgesHtml(roles)}</div>
             <pre class="json-preview">${escapeHtml(JSON.stringify(orderGrantedRoles(roles || {}), null, 2))}</pre>
         </div>
     `;
@@ -386,25 +379,24 @@ function renderApiKeysPanel(apiKeys) {
     if (!Array.isArray(apiKeys) || apiKeys.length === 0) {
         return `
             <div class="detail-panel">
-                <div class="font-semibold mb-2" style="color: var(--text-primary);">API Keys</div>
-                <div class="text-sm" style="color: var(--text-muted);">No API keys found.</div>
+                <div class="detail-label">API keys</div>
+                <p class="small muted">No API keys found.</p>
             </div>
         `;
     }
 
     const items = apiKeys.map(apiKey => `
-        <div class="p-3 rounded border mb-2" style="border-color: var(--border-color); background-color: var(--bg-card);">
-            <div class="font-semibold" style="color: var(--text-primary);">${escapeHtml(apiKey.description || `Key ${String(apiKey.id)}`)}</div>
-            <div class="text-sm mt-1" style="color: var(--text-secondary);">ID: ${escapeHtml(String(apiKey.id))}</div>
-            <div class="text-sm" style="color: var(--text-secondary);">Last 4: ${escapeHtml(String(apiKey.key || ''))}</div>
-            <div class="text-sm" style="color: var(--text-secondary);">Created: ${escapeHtml(formatTimestamp(apiKey.time_added))}</div>
+        <div class="card" style="box-shadow: none; padding: 12px 14px;">
+            <div class="strong">${escapeHtml(apiKey.description || `Key ${String(apiKey.id)}`)}</div>
+            <div class="small muted">ID ${escapeHtml(String(apiKey.id))} · Last 4 ${escapeHtml(String(apiKey.key || ''))}</div>
+            <div class="small muted">Created ${escapeHtml(formatTimestamp(apiKey.time_added))}</div>
         </div>
     `).join('');
 
     return `
         <div class="detail-panel">
-            <div class="font-semibold mb-2" style="color: var(--text-primary);">API Keys</div>
-            ${items}
+            <div class="detail-label">API keys</div>
+            <div class="stack-sm" style="margin-top: 8px;">${items}</div>
         </div>
     `;
 }
@@ -417,8 +409,8 @@ function renderLockPanel(user) {
         const lockError = lockErrors.find(error => error.startsWith('Lock status'));
         return `
             <div class="detail-panel">
-                <div class="font-semibold mb-2" style="color: var(--text-primary);">Account Lock</div>
-                <div class="text-sm" style="color: var(--text-muted);">${escapeHtml(lockError || 'Lock status unavailable.')}</div>
+                <div class="detail-label">Account lock</div>
+                <p class="small muted">${escapeHtml(lockError || 'Lock status unavailable.')}</p>
             </div>
         `;
     }
@@ -430,17 +422,16 @@ function renderLockPanel(user) {
 
     return `
         <div class="detail-panel">
-            <div class="flex items-center justify-between gap-4">
+            <div class="row">
                 <div>
-                    <div class="font-semibold" style="color: var(--text-primary);">Account Lock</div>
-                    <div class="text-sm mt-1" style="color: ${isLocked ? '#dc2626' : '#166534'};">
-                        ${escapeHtml(expirationText)}
-                    </div>
+                    <div class="detail-label">Account lock</div>
+                    <span class="badge ${isLocked ? 'badge-warning' : 'badge-success'}">
+                        <span class="badge-dot"></span>${escapeHtml(expirationText)}
+                    </span>
                 </div>
+                <div class="spacer"></div>
                 ${isLocked ? `
-                    <button class="btn-secondary px-3 py-2 rounded text-sm unlock-user-btn" data-username="${escapeHtml(user.username)}">
-                        Unlock Account
-                    </button>
+                    <button class="btn btn-sm unlock-user-btn" data-username="${escapeHtml(user.username)}">Unlock account</button>
                 ` : ''}
             </div>
         </div>
@@ -495,7 +486,7 @@ function renderUsers() {
     tbody.innerHTML = '';
 
     if (pageData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8" style="color: var(--text-muted);">No users found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7"><div class="empty-inline">No users found</div></td></tr>';
         tableContainer.style.display = 'block';
         paginationContainer.style.display = 'flex';
         updateUsersPagination();
@@ -509,41 +500,27 @@ function renderUsers() {
         const baseAccess = getDisplayedBaseAccess(user);
         const lastLogin = formatTimestamp(user.last_ui_login_time);
         const enabledLabel = user.enabled ? 'Enabled' : 'Disabled';
-        const enabledColor = user.enabled ? '#166534' : '#92400e';
-        const enabledBackground = user.enabled ? '#dcfce7' : '#fef3c7';
         const isExpanded = !!user._expanded;
 
         row.innerHTML = `
             <td>
-                <div class="flex items-center gap-2">
-                    <span class="inline-block text-xs" style="transition: transform 0.2s; transform: rotate(${isExpanded ? 90 : 0}deg);">▶</span>
-                    <span class="font-semibold">${escapeHtml(user.username)}</span>
+                <div class="row-tight">
+                    <span class="disclosure-caret${isExpanded ? ' is-open' : ''}"></span>
+                    <span class="primary-cell">${escapeHtml(user.username)}</span>
                 </div>
             </td>
             <td>${escapeHtml(user.name || '')}</td>
             <td>${escapeHtml((user.type || 'unknown').toUpperCase())}</td>
+            <td><span class="badge">${escapeHtml(baseAccess.label)}</span></td>
             <td>
-                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                    style="background-color: var(--bg-subtle); color: ${baseAccess.color}; border: 1px solid var(--border-color);">
-                    ${escapeHtml(baseAccess.label)}
-                </span>
-            </td>
-            <td>
-                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                    style="background-color: ${enabledBackground}; color: ${enabledColor};">
-                    ${enabledLabel}
+                <span class="badge ${user.enabled ? 'badge-success' : 'badge-warning'}">
+                    <span class="badge-dot"></span>${enabledLabel}
                 </span>
             </td>
             <td>${escapeHtml(lastLogin)}</td>
-            <td>
-                <div class="flex gap-2">
-                    <button class="btn-secondary px-3 py-1 rounded text-sm edit-user-btn" data-username="${escapeAttribute(user.username)}">
-                        Edit
-                    </button>
-                    <button class="btn-danger px-3 py-1 rounded text-sm delete-user-btn" data-username="${escapeAttribute(user.username)}">
-                        Delete
-                    </button>
-                </div>
+            <td class="actions">
+                <button class="btn btn-sm edit-user-btn" data-username="${escapeAttribute(user.username)}">Edit</button>
+                <button class="btn-danger btn-sm delete-user-btn" data-username="${escapeAttribute(user.username)}">Delete</button>
             </td>
         `;
 
@@ -553,51 +530,39 @@ function renderUsers() {
             const detailRow = document.createElement('tr');
             detailRow.classList.add('user-details-row');
 
-            let detailContent = `
-                <div class="detail-panel">
-                    <div class="text-sm" style="color: var(--text-muted);">Loading user details...</div>
-                </div>
-            `;
+            let detailContent = '<div class="detail-panel"><p class="small muted">Loading user details…</p></div>';
 
             if (user.detailError && !user._loadingDetails) {
-                detailContent = `
-                    <div class="detail-panel">
-                        <div class="text-sm" style="color: #dc2626;">${escapeHtml(user.detailError)}</div>
-                    </div>
-                `;
+                detailContent = `<div class="notice notice-danger">${escapeHtml(user.detailError)}</div>`;
             } else if (!user._loadingDetails && user.detailUser) {
                 const detailUser = user.detailUser;
                 const isRx360 = isRx360Deployment();
                 const metaPanel = `
                     <div class="detail-panel">
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                            <div><span class="font-semibold">Username:</span> ${escapeHtml(detailUser.username || '')}</div>
-                            <div><span class="font-semibold">Friendly Name:</span> ${escapeHtml(detailUser.name || '')}</div>
-                            <div><span class="font-semibold">Type:</span> ${escapeHtml((detailUser.type || '').toUpperCase())}</div>
-                            <div><span class="font-semibold">Enabled:</span> ${detailUser.enabled ? 'Yes' : 'No'}</div>
-                            <div><span class="font-semibold">Date Joined:</span> ${escapeHtml(formatTimestamp(detailUser.date_joined))}</div>
-                            <div><span class="font-semibold">Last UI Login:</span> ${escapeHtml(formatTimestamp(detailUser.last_ui_login_time))}</div>
-                            <div><span class="font-semibold">ExtraHop Account Team:</span> ${detailUser.eh_account_team ? 'Yes' : 'No'}</div>
+                        <div class="grid-fields">
+                            ${detailItem('Username', detailUser.username || '')}
+                            ${detailItem('Friendly name', detailUser.name || '')}
+                            ${detailItem('Type', (detailUser.type || '').toUpperCase())}
+                            ${detailItem('Enabled', detailUser.enabled ? 'Yes' : 'No')}
+                            ${detailItem('Date joined', formatTimestamp(detailUser.date_joined))}
+                            ${detailItem('Last UI login', formatTimestamp(detailUser.last_ui_login_time))}
+                            ${detailItem('ExtraHop Account Team', detailUser.eh_account_team ? 'Yes' : 'No')}
                         </div>
                     </div>
                 `;
 
                 const errorsHtml = (user.detailErrors || []).length > 0
-                    ? `
-                        <div class="p-3 rounded text-sm" style="background-color: #fef3c7; color: #92400e;">
-                            ${escapeHtml(user.detailErrors.join(' '))}
-                        </div>
-                    `
+                    ? `<div class="notice notice-warn">${escapeHtml(user.detailErrors.join(' '))}</div>`
                     : '';
 
                 detailContent = `
-                    <div class="py-3 space-y-4">
+                    <div class="stack" style="margin: 4px 0 10px;">
                         ${errorsHtml}
                         ${metaPanel}
                         ${isRx360 ? '' : renderLockPanel(user)}
-                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                            ${renderRolesPanel('Granted Roles', detailUser.granted_roles || {})}
-                            ${renderRolesPanel('Effective Roles', detailUser.effective_roles || {})}
+                        <div class="grid-2">
+                            ${renderRolesPanel('Granted roles', detailUser.granted_roles || {})}
+                            ${renderRolesPanel('Effective roles', detailUser.effective_roles || {})}
                         </div>
                         ${isRx360 ? '' : renderApiKeysPanel(user.detailApiKeys)}
                     </div>

@@ -25,7 +25,6 @@ APP_FILES = [
     "main.py",
     "index.html",
     "catalog.eh.json",
-    "eh_logo.png",
     "favicon.png",
 ]
 
@@ -33,6 +32,7 @@ APP_TREES = {
     "backend": {".py"},
     "css": {".css", ".woff2"},
     "js": {".js"},
+    "assets": {".svg"},
 }
 
 LICENSE_TREE = ("licenses", {"", ".md"})
@@ -57,8 +57,6 @@ def copy_tree(source_dir: Path, destination_dir: Path, suffixes: set[str]) -> No
     if not source_dir.is_dir():
         raise FileNotFoundError(f"Required distribution directory is missing: {source_dir}")
     for source in sorted(source_dir.rglob("*")):
-        if source.name == "tailwind-input.css":
-            continue
         if source.is_file() and source.suffix in suffixes:
             copy_file(source, destination_dir / source.relative_to(source_dir))
 
@@ -86,7 +84,10 @@ def validate_package(package_root: Path) -> None:
         "app/main.py",
         "app/index.html",
         "app/backend/extrahop_client.py",
-        "app/css/tailwind.min.css",
+        "app/css/styles.css",
+        "app/assets/eh-logo-black.svg",
+        "app/assets/eh-logo-white.svg",
+        "app/js/theme-init.js",
         "app/js/vendor/chart.umd.min.js",
         "app/js/vendor/d3.min.js",
         "app/catalog.eh.json",

@@ -57,39 +57,26 @@ function renderLocalitiesTable() {
         
         row.innerHTML = `
             <td>
-                <input type="text" 
-                       class="w-full px-2 py-1 border rounded locality-field" 
-                       data-field="name" 
-                       value="${escapeAttribute(locality.name || '')}"
-                       style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
+                <input type="text" class="locality-field" data-field="name"
+                       value="${escapeAttribute(locality.name || '')}">
             </td>
             <td>
-                <input type="text" 
-                       class="w-full px-2 py-1 border rounded locality-field" 
-                       data-field="networks" 
+                <input type="text" class="locality-field" data-field="networks"
                        value="${escapeAttribute((locality.networks || []).join(', '))}"
-                       placeholder="e.g., 192.168.1.0/24, 10.0.0.1"
-                       style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
+                       placeholder="e.g. 192.168.1.0/24, 10.0.0.1">
             </td>
             <td>
-                <select class="w-full px-2 py-1 border rounded locality-field" 
-                        data-field="external"
-                        style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
+                <select class="locality-field" data-field="external">
                     <option value="false" ${!locality.external ? 'selected' : ''}>Internal</option>
                     <option value="true" ${locality.external ? 'selected' : ''}>External</option>
                 </select>
             </td>
             <td>
-                <input type="text" 
-                       class="w-full px-2 py-1 border rounded locality-field" 
-                       data-field="description" 
-                       value="${escapeAttribute(locality.description || '')}"
-                       style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
+                <input type="text" class="locality-field" data-field="description"
+                       value="${escapeAttribute(locality.description || '')}">
             </td>
-            <td class="text-center">
-                <button class="btn-danger px-3 py-1 rounded text-sm delete-locality-btn">
-                    Delete
-                </button>
+            <td class="actions">
+                <button class="btn-danger btn-sm delete-locality-btn">Delete</button>
             </td>
         `;
         

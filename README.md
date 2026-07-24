@@ -61,6 +61,21 @@ Full response logs can still contain sensitive operational data. Review them bef
 - API credentials remain server-side after login and password fields are cleared.
 - Product-catalog file overrides are accepted only through the startup environment variable `EH_CATALOG_PATH`.
 
+## Theme
+
+The UI follows the operating system theme by default. The control in the top-right switches
+between Light, Auto, and Dark, and the choice persists in `localStorage`.
+
+Charts in the System Health report are deliberately independent of the app theme. Their palette
+is set in the report's own Chart style panel so exported PNGs and PDFs look the same regardless
+of how the app is being viewed.
+
+## Styling
+
+`css/styles.css` is the only stylesheet. It defines semantic tokens in `:root`, overrides them
+under `[data-theme="dark"]`, and builds every component from those tokens. There is no CSS build
+step and no utility-class framework.
+
 ## Current architecture
 
 - `main.py` serves the static UI and exposes the local backend API.

@@ -146,6 +146,18 @@ function clearDashboardSelection() {
     renderDashboards();
 }
 
+// Editor is the notable role, so it gets the emphasised badge; viewer stays neutral.
+function roleBadge(name, role) {
+    const isEditor = (role || '').toString().toLowerCase() === 'editor';
+    return `<span class="badge${isEditor ? ' badge-editor' : ''}">${escapeHtml(name)}<span class="muted">${isEditor ? 'Editor' : 'Viewer'}</span></span>`;
+}
+
+function renderRoleBadges(entries) {
+    const list = Object.entries(entries || {});
+    if (list.length === 0) return '<span class="small muted">None</span>';
+    return list.map(([name, role]) => roleBadge(name, role)).join('');
+}
+
 function renderDashboards() {
     const tbody = document.getElementById('dashboardsTableBody');
     const pageData = getCurrentPageDashboards();
@@ -155,7 +167,7 @@ function renderDashboards() {
     tbody.innerHTML = '';
 
     if (pageData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-center py-8" style="color: var(--text-muted);">No dashboards found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4"><div class="empty-inline">No dashboards found</div></td></tr>';
         updatePagination();
         updateBulkActions();
         syncSelectAllCheckbox();
@@ -173,21 +185,15 @@ function renderDashboards() {
                 <input type="checkbox" class="dashboard-checkbox" data-id="${escapeAttribute(dashboard.id)}" ${state.selectedDashboards.has(dashboard.id) ? 'checked' : ''}>
             </td>
             <td>
-                <div class="flex items-center gap-2">
-                    <span class="inline-block text-xs" style="transition: transform 0.2s; transform: rotate(${isExpanded ? 90 : 0}deg);">▶</span>
-                    <div class="font-semibold">${escapeHtml(dashboard.name)}</div>
+                <div class="row-tight">
+                    <span class="disclosure-caret${isExpanded ? ' is-open' : ''}"></span>
+                    <span class="primary-cell">${escapeHtml(dashboard.name)}</span>
                 </div>
             </td>
             <td>${escapeHtml(dashboard.owner || 'System')}</td>
-            <td>
-                <div class="flex gap-2">
-                    <button class="btn-secondary px-3 py-1 rounded text-sm change-owner-btn" data-id="${escapeAttribute(dashboard.id)}">
-                        Change Owner
-                    </button>
-                    <button class="btn-danger px-3 py-1 rounded text-sm delete-btn" data-id="${escapeAttribute(dashboard.id)}">
-                        Delete
-                    </button>
-                </div>
+            <td class="actions">
+                <button class="btn btn-sm change-owner-btn" data-id="${escapeAttribute(dashboard.id)}">Change owner</button>
+                <button class="btn-danger btn-sm delete-btn" data-id="${escapeAttribute(dashboard.id)}">Delete</button>
             </td>
         `;
         tbody.appendChild(row);
@@ -199,97 +205,46 @@ function renderDashboards() {
             // Metadata section from initial /dashboards response
             const metaItems = [];
             if (dashboard.id != null) {
-                metaItems.push(`<div><span class="font-semibold">ID:</span> ${escapeHtml(dashboard.id.toString())}</div>`);
+                metaItems.push(detailItem('ID', dashboard.id.toString()));
             }
             const shortcode = dashboard.shortcode || dashboard.short_code;
             if (shortcode) {
-                metaItems.push(`<div><span class="font-semibold">Shortcode:</span> ${escapeHtml(shortcode.toString())}</div>`);
+                metaItems.push(detailItem('Shortcode', shortcode.toString()));
             }
             if (dashboard.description) {
-                metaItems.push(`<div><span class="font-semibold">Description:</span> ${escapeHtml(dashboard.description)}</div>`);
+                metaItems.push(detailItem('Description', dashboard.description));
             }
 
             const metadataSection = metaItems.length > 0
-                ? `<div class="text-sm space-y-1 mb-3">${metaItems.join('')}</div>`
+                ? `<div class="grid-fields">${metaItems.join('')}</div>`
                 : '';
 
             let sharingSection;
             if (dashboard._loadingSharing) {
-                sharingSection = `
-                    <div class="text-sm" style="color: var(--text-muted);">
-                        Loading sharing details...
-                    </div>
-                `;
+                sharingSection = '<p class="small muted">Loading sharing details…</p>';
             } else if (dashboard.sharing) {
                 const sharing = dashboard.sharing;
 
-                let anyoneBubble = '<span class="text-sm" style="color: var(--text-muted);">No public access</span>';
-                if (sharing.anyone) {
-                    const anyoneRole = (sharing.anyone || '').toString().toLowerCase();
-                    const anyoneColor = anyoneRole === 'editor' ? 'var(--tangerine)' : 'var(--cyan)';
-                    const anyoneLabel = anyoneRole === 'editor' ? 'Editor' : 'Viewer';
-                    anyoneBubble = `
-                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" style="background-color: ${anyoneColor}; color: white;">
-                            <span>All users</span>
-                            <span class="ml-1 opacity-80">(${anyoneLabel})</span>
-                        </span>
-                    `;
-                }
+                const anyoneBubble = sharing.anyone
+                    ? roleBadge('All users', sharing.anyone)
+                    : '<span class="small muted">No public access</span>';
 
-                const userEntries = Object.entries(sharing.users || {});
-                const groupEntries = Object.entries(sharing.groups || {});
-
-                const userBubbles = userEntries.length > 0
-                    ? userEntries.map(([user, role]) => {
-                        const roleLower = (role || '').toString().toLowerCase();
-                        const color = roleLower === 'editor' ? 'var(--tangerine)' : 'var(--cyan)';
-                        const roleLabel = roleLower === 'editor' ? 'Editor' : 'Viewer';
-                        return `
-                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium mr-1 mb-1" style="background-color: ${color}; color: white;">
-                                <span>${escapeHtml(user)}</span>
-                                <span class="ml-1 opacity-80">(${roleLabel})</span>
-                            </span>
-                        `;
-                    }).join('')
-                    : '<span class="text-sm" style="color: var(--text-muted);">None</span>';
-
-                const groupBubbles = groupEntries.length > 0
-                    ? groupEntries.map(([group, role]) => {
-                        const roleLower = (role || '').toString().toLowerCase();
-                        const color = roleLower === 'editor' ? 'var(--tangerine)' : 'var(--cyan)';
-                        const roleLabel = roleLower === 'editor' ? 'Editor' : 'Viewer';
-                        return `
-                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium mr-1 mb-1" style="background-color: ${color}; color: white;">
-                                <span>${escapeHtml(group)}</span>
-                                <span class="ml-1 opacity-80">(${roleLabel})</span>
-                            </span>
-                        `;
-                    }).join('')
-                    : '<span class="text-sm" style="color: var(--text-muted);">None</span>';
+                const userBubbles = renderRoleBadges(sharing.users);
+                const groupBubbles = renderRoleBadges(sharing.groups);
 
                 sharingSection = `
-                    <div class="text-sm space-y-2">
-                        <div><span class="font-semibold">Public access:</span> ${anyoneBubble}</div>
-                        <div>
-                            <span class="font-semibold">Users:</span>
-                            <div class="mt-1 flex flex-wrap">${userBubbles}</div>
-                        </div>
-                        <div>
-                            <span class="font-semibold">Groups:</span>
-                            <div class="mt-1 flex flex-wrap">${groupBubbles}</div>
-                        </div>
+                    <div class="stack-sm">
+                        <div><span class="label">Public access</span><div class="row-tight" style="margin-top: 4px;">${anyoneBubble}</div></div>
+                        <div><span class="label">Users</span><div class="row-tight" style="margin-top: 4px;">${userBubbles}</div></div>
+                        <div><span class="label">Groups</span><div class="row-tight" style="margin-top: 4px;">${groupBubbles}</div></div>
                     </div>
                 `;
             } else {
-                sharingSection = `
-                    <div class="text-sm" style="color: var(--text-muted);">
-                        Sharing details not loaded.
-                    </div>
-                `;
+                sharingSection = '<p class="small muted">Sharing details not loaded.</p>';
             }
 
             const detailsContent = `
-                <div class="py-3 space-y-3">
+                <div class="detail-panel stack-sm" style="margin: 4px 0 10px;">
                     ${metadataSection}
                     ${sharingSection}
                 </div>
