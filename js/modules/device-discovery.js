@@ -237,8 +237,8 @@ function renderDeviceDiscoveryTable(sortedNodes, applianceMap) {
     sortedNodes.forEach(node => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-            <td>${node.label}</td>
-            <td>${getNodePlatform(node.id, applianceMap)}</td>
+            <td>${escapeHtml(node.label)}</td>
+            <td>${escapeHtml(getNodePlatform(node.id, applianceMap))}</td>
             <td>${node.counts.advanced.toLocaleString()}</td>
             <td>${node.counts.standard.toLocaleString()}</td>
             <td>${node.counts.discovery.toLocaleString()}</td>

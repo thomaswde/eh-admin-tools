@@ -63,17 +63,26 @@ function setLastModifiedTimestamp() {
 
 function loadSavedConfig() {
     const savedConfig = sessionStorage.getItem('eh_config');
-    if (savedConfig) {
+    if (!savedConfig) return;
+
+    try {
         const config = JSON.parse(savedConfig);
+        if (!config || !['360', 'enterprise'].includes(config.type)) {
+            throw new Error('Unsupported saved connection type');
+        }
         if (config.type === '360') {
             document.getElementById('deploymentType').value = '360';
             document.getElementById('tenantName').value = config.tenant || '';
         } else {
             document.getElementById('deploymentType').value = 'enterprise';
             document.getElementById('enterpriseHost').value = config.host || '';
+            document.getElementById('enterpriseAllowUntrustedTls').checked = config.verifyTls === false;
             document.getElementById('config360').style.display = 'none';
             document.getElementById('configEnterprise').style.display = 'block';
         }
+    } catch (error) {
+        console.warn('Discarding invalid saved connection metadata:', error);
+        sessionStorage.removeItem('eh_config');
     }
 }
 
@@ -87,17 +96,12 @@ function setupGlobalEventListeners() {
 
     // Connect button
     document.getElementById('connectBtn').addEventListener('click', handleConnect);
+    document.getElementById('disconnectBtn').addEventListener('click', handleDisconnect);
 
     const apiLoggingVerbosity = document.getElementById('apiLoggingVerbosity');
     if (apiLoggingVerbosity) {
         apiLoggingVerbosity.addEventListener('change', handleApiLoggingChange);
     }
-
-    window.addEventListener('beforeunload', () => {
-        if (window.apiClient && typeof window.apiClient.dispose === 'function') {
-            window.apiClient.dispose();
-        }
-    });
 
     // Module buttons - with dynamic loading
     document.querySelectorAll('.module-btn').forEach(btn => {

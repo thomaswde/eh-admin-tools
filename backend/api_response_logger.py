@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 import json
+import os
 import time
 
 import httpx
@@ -128,6 +129,7 @@ class ApiResponseLogger:
             with self._lock:
                 with self.log_path.open("a", encoding="utf-8") as handle:
                     handle.write(f"{line}\n")
+                os.chmod(self.log_path, 0o600)
         except OSError:
             # Logging is diagnostic only; never break the proxied API workflow.
             return

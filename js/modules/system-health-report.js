@@ -1,10 +1,11 @@
 // System Health Report Module
 
 const SYSTEM_HEALTH_ROWS_PER_PAGE = 22;
-const SYSTEM_HEALTH_METRICS = ['bytes', 'pkts'];
+const SYSTEM_HEALTH_METRICS = ['bytes', 'pkts', 'trigger_cycles', 'trigger_cycles_avail', 'trigger_drops'];
 const SYSTEM_HEALTH_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_HEALTH_DEVICE_LIMIT = 5000;
 const SYSTEM_HEALTH_STYLE_STORAGE_KEY = 'ehSystemHealthChartStyle';
+const SYSTEM_HEALTH_LEGACY_STYLE_STORAGE_KEY = 'ehReportChartStyle';
 const SYSTEM_HEALTH_COLORS = {
     cyan: '#00aaef',
     magenta: '#ec0089',
@@ -30,6 +31,8 @@ const systemHealthState = {
         packetRow: 0,
         throughputModel: 0,
         throughputRow: 0,
+        triggersModel: 0,
+        triggersRow: 0,
         analysisModel: 0,
         analysisRow: 0
     },
@@ -50,14 +53,27 @@ function defaultSystemHealthStyle() {
 
 function loadSystemHealthStyle() {
     try {
-        return normalizeSystemHealthStyle(JSON.parse(localStorage.getItem(SYSTEM_HEALTH_STYLE_STORAGE_KEY) || '{}'));
-    } catch {
-        return defaultSystemHealthStyle();
+        const params = new URLSearchParams(location.search);
+        const styleParam = params.get('systemHealthStyle') || params.get('style');
+        if (styleParam) return normalizeSystemHealthStyle(JSON.parse(styleParam));
+    } catch {}
+
+    for (const key of [SYSTEM_HEALTH_STYLE_STORAGE_KEY, SYSTEM_HEALTH_LEGACY_STYLE_STORAGE_KEY]) {
+        try {
+            const raw = localStorage.getItem(key);
+            if (raw) return normalizeSystemHealthStyle(JSON.parse(raw));
+        } catch {}
     }
+    return defaultSystemHealthStyle();
 }
 
 function normalizeSystemHealthStyle(raw) {
     const style = { ...defaultSystemHealthStyle(), ...(raw || {}) };
+    if (style.theme === 'default') style.theme = 'light';
+    if (style.bg === 'transparent') style.transparent = true;
+    if (style.bg === 'sapphire') style.theme = 'dark';
+    if (style.bg === 'custom') style.theme = 'custom';
+    delete style.bg;
     if (raw && raw.lowHex && !raw.advHex) style.advHex = raw.lowHex;
     if (raw && raw.midHex && !raw.stdHex) style.stdHex = raw.midHex;
     if (raw && raw.highHex && !raw.discHex) style.discHex = raw.highHex;
@@ -86,12 +102,7 @@ function activateSystemHealthModule() {
 
 async function loadSystemHealthCatalog() {
     try {
-        const pathInput = document.getElementById('systemHealthCatalogPath');
-        const path = pathInput ? pathInput.value.trim() : '';
-        const url = path
-            ? `/backend/system-health/catalog?path=${encodeURIComponent(path)}`
-            : '/backend/system-health/catalog';
-        const response = await fetch(url, {
+        const response = await fetch('/backend/system-health/catalog', {
             headers: { 'Accept': 'application/json' },
             cache: 'no-store'
         });
@@ -184,7 +195,7 @@ async function generateSystemHealthReport() {
         loadingText.textContent = 'Counting device analysis tiers...';
         const deviceAnalysis = await collectSystemHealthDeviceAnalysis(lookbackDays);
 
-        loadingText.textContent = 'Collecting peak packet and throughput metrics...';
+        loadingText.textContent = 'Collecting peak packet, throughput, and trigger metrics...';
         const metricResults = {};
         for (const metricName of SYSTEM_HEALTH_METRICS) {
             metricResults[metricName] = await collectSystemHealthMetric(
@@ -334,7 +345,7 @@ async function collectSystemHealthMetricFallbackIfEmpty(body, appliancesById, me
 }
 
 function systemHealthRowsHaveValues(rows) {
-    return rows.some(row => typeof row.value === 'number' && row.value > 0);
+    return rows.some(row => typeof row.value === 'number' && Number.isFinite(row.value));
 }
 
 function normalizeSystemHealthMetricRows(chunks, appliancesById, metricName) {
@@ -527,6 +538,10 @@ function systemHealthRows(report) {
         const offline = !sensor.online;
         const packetPeak = metricSystemHealthPeakRate(report, 'pkts', sensor.id);
         const throughputGbps = systemHealthBytesToGbps(report, sensor.id);
+        const triggerCyclesPeak = metricSystemHealthPeak(report, 'trigger_cycles', sensor.id);
+        const triggerCyclesAvail = metricSystemHealthCapacityValue(report, 'trigger_cycles_avail', sensor.id);
+        const triggerDropsPeak = metricSystemHealthPeak(report, 'trigger_drops', sensor.id);
+        const triggerDropsTotal = metricSystemHealthTotal(report, 'trigger_drops', sensor.id);
         return {
             ...sensor,
             offline,
@@ -535,6 +550,10 @@ function systemHealthRows(report) {
             packetCapacity: Number(capacity.base_packetrate || 0),
             throughputGbps,
             throughputCapacity: Number(capacity.base_gbps || 0),
+            triggerCyclesPeak,
+            triggerCyclesAvail,
+            triggerDropsPeak,
+            triggerDropsTotal,
             advancedCapacity: Number(capacity.advanced_analysis || 0),
             standardCapacity: Number(capacity.standard_analysis || 0)
         };
@@ -544,6 +563,27 @@ function systemHealthRows(report) {
 function metricSystemHealthPeak(report, metricName, id) {
     const metric = report.metrics ? report.metrics[metricName] : null;
     return (metric && metric.summary && metric.summary.peak_values && metric.summary.peak_values[String(id)]) || 0;
+}
+
+function metricSystemHealthTotal(report, metricName, id) {
+    const metric = report.metrics ? report.metrics[metricName] : null;
+    return (metric && metric.summary && metric.summary.totals && metric.summary.totals[String(id)]) || 0;
+}
+
+function metricSystemHealthLatest(report, metricName, id) {
+    const metric = report.metrics ? report.metrics[metricName] : null;
+    return (metric && metric.summary && metric.summary.latest_values && metric.summary.latest_values[String(id)]) || 0;
+}
+
+function metricSystemHealthAverage(report, metricName, id) {
+    const metric = report.metrics ? report.metrics[metricName] : null;
+    return (metric && metric.summary && metric.summary.avg_values && metric.summary.avg_values[String(id)]) || 0;
+}
+
+function metricSystemHealthCapacityValue(report, metricName, id) {
+    return metricSystemHealthPeak(report, metricName, id)
+        || metricSystemHealthLatest(report, metricName, id)
+        || metricSystemHealthAverage(report, metricName, id);
 }
 
 function metricSystemHealthDuration(report, metricName, id) {
@@ -583,12 +623,16 @@ function renderSystemHealthReport(report) {
 function renderSystemHealthSummary(report, rows) {
     const packetRisk = rows.filter(row => row.packetCapacity && row.packetPeak >= row.packetCapacity).length;
     const throughputWatch = rows.filter(row => row.throughputCapacity && row.throughputGbps / row.throughputCapacity >= 0.8).length;
+    const triggerWatch = rows.filter(row => row.triggerCyclesAvail && row.triggerCyclesPeak / row.triggerCyclesAvail >= 0.8).length;
+    const triggerDropSensors = rows.filter(row => row.triggerDropsTotal > 0 || row.triggerDropsPeak > 0).length;
     const discoverySensors = rows.filter(row => (row.analysis.discovery || 0) > 0).length;
     const cards = [
         ['Sensors', formatSystemHealthNumber(rows.length), 'Discover sensors returned'],
         ['Lookback', `${report.window.lookback_days} days`, `Cycle ${report.cycle}`],
         ['Packet Risk', formatSystemHealthNumber(packetRisk), 'At or above model packet rating'],
         ['Throughput Watch', formatSystemHealthNumber(throughputWatch), 'At 80%+ model throughput rating'],
+        ['Trigger Watch', formatSystemHealthNumber(triggerWatch), 'At 80%+ trigger cycle capacity'],
+        ['Trigger Drops', formatSystemHealthNumber(triggerDropSensors), 'Sensors with dropped trigger executions'],
         ['Discovery Overflow', formatSystemHealthNumber(discoverySensors), 'Sensors with Discovery devices']
     ];
 
@@ -616,6 +660,15 @@ function renderSystemHealthCharts(rows) {
         label: 'Throughput',
         formatter: formatSystemHealthGbps
     });
+    renderSystemHealthUtilizationChart('systemHealthTriggersChart', rows, {
+        key: 'triggers',
+        valueKey: 'triggerCyclesPeak',
+        capacityKey: 'triggerCyclesAvail',
+        label: 'Trigger cycles',
+        formatter: formatSystemHealthCycles,
+        alert: row => row.triggerDropsTotal > 0 || row.triggerDropsPeak > 0,
+        indicator: row => (row.triggerDropsTotal > 0 || row.triggerDropsPeak > 0) ? 'drops detected' : ''
+    });
     renderSystemHealthAnalysisChart(rows);
 }
 
@@ -642,11 +695,13 @@ function renderSystemHealthTable(rows) {
     const sorted = [...rows].sort((a, b) => {
         const aRisk = Math.max(
             a.packetCapacity ? a.packetPeak / a.packetCapacity : 0,
-            a.throughputCapacity ? a.throughputGbps / a.throughputCapacity : 0
+            a.throughputCapacity ? a.throughputGbps / a.throughputCapacity : 0,
+            a.triggerCyclesAvail ? a.triggerCyclesPeak / a.triggerCyclesAvail : 0
         );
         const bRisk = Math.max(
             b.packetCapacity ? b.packetPeak / b.packetCapacity : 0,
-            b.throughputCapacity ? b.throughputGbps / b.throughputCapacity : 0
+            b.throughputCapacity ? b.throughputGbps / b.throughputCapacity : 0,
+            b.triggerCyclesAvail ? b.triggerCyclesPeak / b.triggerCyclesAvail : 0
         );
         return bRisk - aRisk || (a.name || '').localeCompare(b.name || '');
     });
@@ -658,10 +713,12 @@ function renderSystemHealthTable(rows) {
         const totalCapacity = (row.advancedCapacity || 0) + (row.standardCapacity || 0);
         const overPacket = row.packetCapacity > 0 && row.packetPeak >= row.packetCapacity;
         const overThroughput = row.throughputCapacity > 0 && row.throughputGbps >= row.throughputCapacity;
+        const overTriggers = row.triggerCyclesAvail > 0 && row.triggerCyclesPeak >= row.triggerCyclesAvail;
+        const triggerDropsDetected = row.triggerDropsTotal > 0 || row.triggerDropsPeak > 0;
         const overAdvanced = row.advancedCapacity > 0 && advancedCount > row.advancedCapacity;
         const overStandard = row.standardCapacity > 0 && standardCount > row.standardCapacity;
         const overDiscovery = discoveryCount > 0;
-        const rowFlagged = overPacket || overThroughput || overAdvanced || overStandard || overDiscovery;
+        const rowFlagged = overPacket || overThroughput || overTriggers || triggerDropsDetected || overAdvanced || overStandard || overDiscovery;
         const cellClass = flag => flag ? ' class="system-health-overflow-cell"' : '';
 
         return `
@@ -672,13 +729,15 @@ function renderSystemHealthTable(rows) {
             <td>${formatSystemHealthRate(row.packetCapacity)}</td>
             <td${cellClass(overThroughput)}>${formatSystemHealthGbps(row.throughputGbps)}</td>
             <td>${formatSystemHealthGbps(row.throughputCapacity)}</td>
+            <td${cellClass(overTriggers)}>${formatSystemHealthTriggerCapacity(row)}</td>
+            <td${cellClass(triggerDropsDetected)}>${formatSystemHealthNumber(row.triggerDropsTotal || row.triggerDropsPeak || 0)}</td>
             <td${cellClass(overAdvanced)}>${formatSystemHealthTierValue(advancedCount, row.advancedCapacity || 0)}</td>
             <td${cellClass(overStandard)}>${formatSystemHealthTierValue(standardCount, row.standardCapacity || 0)}</td>
             <td${cellClass(overDiscovery)}>${formatSystemHealthNumber(discoveryCount)}</td>
             <td>${formatSystemHealthNumber(totalCapacity)}</td>
         </tr>
     `;
-    }).join('') || '<tr><td colspan="10">No Discover sensors were returned.</td></tr>';
+    }).join('') || '<tr><td colspan="12">No Discover sensors were returned.</td></tr>';
 }
 
 function renderSystemHealthErrors(errors) {
@@ -697,12 +756,14 @@ function resetSystemHealthPages() {
     systemHealthState.pages.packetRow = 0;
     systemHealthState.pages.throughputModel = 0;
     systemHealthState.pages.throughputRow = 0;
+    systemHealthState.pages.triggersModel = 0;
+    systemHealthState.pages.triggersRow = 0;
     systemHealthState.pages.analysisModel = 0;
     systemHealthState.pages.analysisRow = 0;
 }
 
 function setupSystemHealthPagers() {
-    ['packet', 'throughput', 'analysis'].forEach(key => {
+    ['packet', 'throughput', 'triggers', 'analysis'].forEach(key => {
         const pager = document.getElementById(`systemHealth${capitalizeSystemHealthKey(key)}Pager`);
         const prev = pager ? pager.querySelector('[data-system-health-pager-prev]') : null;
         const next = pager ? pager.querySelector('[data-system-health-pager-next]') : null;
@@ -747,6 +808,7 @@ function systemHealthMetricModelPages(rows, options) {
         const value = Number(row[options.valueKey] || 0);
         grouped.get(model).push({
             ...row,
+            alert: typeof options.alert === 'function' ? !!options.alert(row) : false,
             utilization: capacity > 0 ? value / capacity : null
         });
     });
@@ -755,15 +817,16 @@ function systemHealthMetricModelPages(rows, options) {
         modelRows.sort((a, b) => {
             const aUtil = a.utilization === null ? -1 : a.utilization;
             const bUtil = b.utilization === null ? -1 : b.utilization;
-            return bUtil - aUtil || (b[options.valueKey] || 0) - (a[options.valueKey] || 0) || (a.name || '').localeCompare(b.name || '');
+            return Number(b.alert) - Number(a.alert) || bUtil - aUtil || (b[options.valueKey] || 0) - (a[options.valueKey] || 0) || (a.name || '').localeCompare(b.name || '');
         });
         const capacityRows = modelRows.filter(row => Number(row[options.capacityKey] || 0) > 0);
         const capacity = capacityRows.length ? Number(capacityRows[0][options.capacityKey] || 0) : 0;
         const maxUtilization = modelRows.reduce((max, row) => Math.max(max, row.utilization || 0), 0);
-        return { model, rows: modelRows, capacity, maxUtilization, ratedRows: capacityRows.length };
+        const alertRows = modelRows.filter(row => row.alert).length;
+        return { model, rows: modelRows, capacity, maxUtilization, ratedRows: capacityRows.length, alertRows };
     });
 
-    pages.sort((a, b) => b.maxUtilization - a.maxUtilization || b.rows.length - a.rows.length || a.model.localeCompare(b.model));
+    pages.sort((a, b) => b.alertRows - a.alertRows || b.maxUtilization - a.maxUtilization || b.rows.length - a.rows.length || a.model.localeCompare(b.model));
     return pages;
 }
 
@@ -834,6 +897,7 @@ function updateSystemHealthModelHeader(key, meta, options) {
             'Sorted by percent of model capacity'
         ];
         if (meta.maxUtilization) parts.push(`Peak ${Math.round(meta.maxUtilization * 100)}%`);
+        if (meta.alertRows) parts.push(`${meta.alertRows} with drops`);
         statsEl.textContent = parts.join(' | ');
     }
     if (pagerLabel) {
@@ -1043,6 +1107,12 @@ function drawSystemHealthUtilizationCanvas(canvas, rows, options, meta) {
         if (secondaryLabel) {
             ctx.fillText(secondaryLabel, left + plotWidth + (compact ? 48 : 56), labelY);
         }
+        const indicator = typeof options.indicator === 'function' ? options.indicator(row) : '';
+        if (indicator) {
+            ctx.fillStyle = colors.high;
+            ctx.font = '700 10px Arial';
+            ctx.fillText(indicator, left + plotWidth + 10, labelY + 11);
+        }
     });
 }
 
@@ -1213,6 +1283,7 @@ function systemHealthPngFilename(canvasId) {
     const map = {
         systemHealthPacketChart: ['packet-rate', 'packet'],
         systemHealthThroughputChart: ['throughput', 'throughput'],
+        systemHealthTriggersChart: ['trigger-cycle-capacity', 'triggers'],
         systemHealthAnalysisChart: ['analysis-tier-pressure', 'analysis']
     };
     const [prefix, key] = map[canvasId] || [canvasId, ''];
@@ -1223,7 +1294,9 @@ function systemHealthPngFilename(canvasId) {
         : key
             ? systemHealthMetricModelPages(rows, key === 'packet'
                 ? { valueKey: 'packetPeak', capacityKey: 'packetCapacity' }
-                : { valueKey: 'throughputGbps', capacityKey: 'throughputCapacity' })
+                : key === 'throughput'
+                    ? { valueKey: 'throughputGbps', capacityKey: 'throughputCapacity' }
+                    : { valueKey: 'triggerCyclesPeak', capacityKey: 'triggerCyclesAvail' })
             : [];
     const modelPage = Math.min(systemHealthState.pages[`${key}Model`] || 0, Math.max(0, pages.length - 1));
     const model = pages[modelPage] ? pages[modelPage].model : 'unknown';
@@ -1241,16 +1314,20 @@ function slugSystemHealthFilename(value) {
 function setupSystemHealthCsvControls() {
     const loadButton = document.getElementById('systemHealthLoadCsvButton');
     const exportButton = document.getElementById('systemHealthExportCsvButton');
+    const pdfButton = document.getElementById('systemHealthExportPdfButton');
     const input = document.getElementById('systemHealthCsvInput');
     if (loadButton && input) loadButton.addEventListener('click', () => input.click());
     if (input) input.addEventListener('change', loadSystemHealthCsvFiles);
     if (exportButton) exportButton.addEventListener('click', exportSystemHealthCsvFiles);
+    if (pdfButton) pdfButton.addEventListener('click', exportSystemHealthPdf);
     updateSystemHealthCsvButtons();
 }
 
 function updateSystemHealthCsvButtons() {
     const exportButton = document.getElementById('systemHealthExportCsvButton');
+    const pdfButton = document.getElementById('systemHealthExportPdfButton');
     if (exportButton) exportButton.disabled = !systemHealthState.currentReport;
+    if (pdfButton) pdfButton.disabled = !systemHealthState.currentReport;
 }
 
 async function loadSystemHealthCsvFiles(event) {
@@ -1265,13 +1342,16 @@ async function loadSystemHealthCsvFiles(event) {
         }
         const bytesSummary = byName['capture_bytes_summary.csv'] || [];
         const pktsSummary = byName['capture_pkts_summary.csv'] || [];
+        const triggerCyclesSummary = byName['capture_trigger_cycles_summary.csv'] || [];
+        const triggerCyclesAvailSummary = byName['capture_trigger_cycles_avail_summary.csv'] || [];
+        const triggerDropsSummary = byName['capture_trigger_drops_summary.csv'] || [];
         const deviceSummary = byName['device_analysis_summary.csv'] || [];
-        if (!bytesSummary.length && !pktsSummary.length && !deviceSummary.length) {
-            throw new Error('Select capture_bytes_summary.csv, capture_pkts_summary.csv, and device_analysis_summary.csv.');
+        if (!bytesSummary.length && !pktsSummary.length && !triggerCyclesSummary.length && !triggerCyclesAvailSummary.length && !triggerDropsSummary.length && !deviceSummary.length) {
+            throw new Error('Select system health summary CSV files from a previous run.');
         }
 
         await loadSystemHealthCatalog();
-        const report = buildSystemHealthReportFromCsvSummaries({ bytesSummary, pktsSummary, deviceSummary });
+        const report = buildSystemHealthReportFromCsvSummaries({ bytesSummary, pktsSummary, triggerCyclesSummary, triggerCyclesAvailSummary, triggerDropsSummary, deviceSummary });
         systemHealthState.currentReport = report;
         resetSystemHealthPages();
         document.getElementById('systemHealthResults').style.display = 'block';
@@ -1284,7 +1364,14 @@ async function loadSystemHealthCsvFiles(event) {
 
 function buildSystemHealthReportFromCsvSummaries(csv) {
     const appliances = new Map();
-    [...csv.bytesSummary, ...csv.pktsSummary, ...csv.deviceSummary].forEach(row => {
+    [
+        ...csv.bytesSummary,
+        ...csv.pktsSummary,
+        ...csv.triggerCyclesSummary,
+        ...csv.triggerCyclesAvailSummary,
+        ...csv.triggerDropsSummary,
+        ...csv.deviceSummary
+    ].forEach(row => {
         if (!row.appliance_id) return;
         const id = systemHealthCsvKey(row);
         if (!appliances.has(id)) {
@@ -1334,6 +1421,21 @@ function buildSystemHealthReportFromCsvSummaries(csv) {
                 metric_category_used: 'csv summary',
                 rows: [],
                 summary: summarizeSystemHealthSummaryCsv(csv.pktsSummary)
+            },
+            trigger_cycles: {
+                metric_category_used: 'csv summary',
+                rows: [],
+                summary: summarizeSystemHealthSummaryCsv(csv.triggerCyclesSummary)
+            },
+            trigger_cycles_avail: {
+                metric_category_used: 'csv summary',
+                rows: [],
+                summary: summarizeSystemHealthSummaryCsv(csv.triggerCyclesAvailSummary)
+            },
+            trigger_drops: {
+                metric_category_used: 'csv summary',
+                rows: [],
+                summary: summarizeSystemHealthSummaryCsv(csv.triggerDropsSummary)
             }
         },
         errors: []
@@ -1362,10 +1464,58 @@ function exportSystemHealthCsvFiles() {
     const appliancesById = Object.fromEntries((report.appliances || []).map(appliance => [String(appliance.id), appliance]));
     downloadSystemHealthCsv('capture_bytes.csv', systemHealthMetricRowsCsv((report.metrics.bytes && report.metrics.bytes.rows) || [], appliancesById, 'bytes'));
     downloadSystemHealthCsv('capture_pkts.csv', systemHealthMetricRowsCsv((report.metrics.pkts && report.metrics.pkts.rows) || [], appliancesById, 'pkts'));
+    downloadSystemHealthCsv('capture_trigger_cycles.csv', systemHealthMetricRowsCsv((report.metrics.trigger_cycles && report.metrics.trigger_cycles.rows) || [], appliancesById, 'trigger_cycles'));
+    downloadSystemHealthCsv('capture_trigger_cycles_avail.csv', systemHealthMetricRowsCsv((report.metrics.trigger_cycles_avail && report.metrics.trigger_cycles_avail.rows) || [], appliancesById, 'trigger_cycles_avail'));
+    downloadSystemHealthCsv('capture_trigger_drops.csv', systemHealthMetricRowsCsv((report.metrics.trigger_drops && report.metrics.trigger_drops.rows) || [], appliancesById, 'trigger_drops'));
     downloadSystemHealthCsv('capture_bytes_summary.csv', systemHealthSummaryCsv(report, 'bytes', appliancesById));
     downloadSystemHealthCsv('capture_pkts_summary.csv', systemHealthSummaryCsv(report, 'pkts', appliancesById));
+    downloadSystemHealthCsv('capture_trigger_cycles_summary.csv', systemHealthSummaryCsv(report, 'trigger_cycles', appliancesById));
+    downloadSystemHealthCsv('capture_trigger_cycles_avail_summary.csv', systemHealthSummaryCsv(report, 'trigger_cycles_avail', appliancesById));
+    downloadSystemHealthCsv('capture_trigger_drops_summary.csv', systemHealthSummaryCsv(report, 'trigger_drops', appliancesById));
     downloadSystemHealthCsv('device_analysis_summary.csv', systemHealthDeviceAnalysisCsv(report, appliancesById));
-    setSystemHealthCsvStatus('Exported capture_bytes.csv, capture_pkts.csv, capture_bytes_summary.csv, capture_pkts_summary.csv, and device_analysis_summary.csv.');
+    setSystemHealthCsvStatus('Exported system health metric, trigger, and device analysis CSV files.');
+}
+
+async function exportSystemHealthPdf() {
+    const report = systemHealthState.currentReport;
+    if (!report) return;
+    const button = document.getElementById('systemHealthExportPdfButton');
+    if (button) button.disabled = true;
+    setSystemHealthCsvStatus('Rendering system health PDF...');
+    try {
+        const response = await fetch('/backend/system-health/pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/pdf' },
+            body: JSON.stringify({ report, style: systemHealthState.style })
+        });
+        if (!response.ok) {
+            let message = `PDF export failed with HTTP ${response.status}`;
+            try {
+                const payload = await response.json();
+                message = (payload && payload.detail && payload.detail.message) || (payload && payload.message) || message;
+            } catch {}
+            throw new Error(message);
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get('content-disposition') || '';
+        const filenameMatch = /filename="?([^"]+)"?/i.exec(disposition);
+        const filename = filenameMatch ? filenameMatch[1] : systemHealthPdfFilename(report);
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = URL.createObjectURL(blob);
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+        setSystemHealthCsvStatus('Exported system health PDF.');
+    } catch (error) {
+        setSystemHealthCsvStatus(error.message || 'PDF export failed.', true);
+    } finally {
+        if (button) button.disabled = !systemHealthState.currentReport;
+    }
+}
+
+function systemHealthPdfFilename(report) {
+    const day = String(report.generated_at || new Date().toISOString()).slice(0, 10);
+    return `system-health-report-${day}.pdf`;
 }
 
 function systemHealthMetricRowsCsv(rows, appliancesById, metricName) {
@@ -1724,6 +1874,26 @@ function formatSystemHealthRate(value) {
 function formatSystemHealthGbps(value) {
     if (value === null || value === undefined || Number.isNaN(Number(value))) return '';
     return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} Gbps`;
+}
+
+function formatSystemHealthCycles(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '';
+    const prefixes = ['', 'K', 'M', 'B', 'T'];
+    let size = Number(value);
+    let prefix = 0;
+    while (Math.abs(size) >= 1000 && prefix < prefixes.length - 1) {
+        size /= 1000;
+        prefix += 1;
+    }
+    const digits = Math.abs(size) >= 10 || prefix === 0 ? 0 : 1;
+    return `${size.toLocaleString(undefined, { maximumFractionDigits: digits })}${prefixes[prefix]}`;
+}
+
+function formatSystemHealthTriggerCapacity(row) {
+    const used = Number(row.triggerCyclesPeak || 0);
+    const available = Number(row.triggerCyclesAvail || 0);
+    if (!available) return used ? formatSystemHealthCycles(used) : '-';
+    return `${Math.round((used / available) * 100)}% (${formatSystemHealthCycles(used)} / ${formatSystemHealthCycles(available)})`;
 }
 
 function waitSystemHealth(ms) {

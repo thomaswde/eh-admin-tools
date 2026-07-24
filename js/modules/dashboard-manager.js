@@ -170,7 +170,7 @@ function renderDashboards() {
 
         row.innerHTML = `
             <td>
-                <input type="checkbox" class="dashboard-checkbox" data-id="${dashboard.id}" ${state.selectedDashboards.has(dashboard.id) ? 'checked' : ''}>
+                <input type="checkbox" class="dashboard-checkbox" data-id="${escapeAttribute(dashboard.id)}" ${state.selectedDashboards.has(dashboard.id) ? 'checked' : ''}>
             </td>
             <td>
                 <div class="flex items-center gap-2">
@@ -181,10 +181,10 @@ function renderDashboards() {
             <td>${escapeHtml(dashboard.owner || 'System')}</td>
             <td>
                 <div class="flex gap-2">
-                    <button class="btn-secondary px-3 py-1 rounded text-sm change-owner-btn" data-id="${dashboard.id}">
+                    <button class="btn-secondary px-3 py-1 rounded text-sm change-owner-btn" data-id="${escapeAttribute(dashboard.id)}">
                         Change Owner
                     </button>
-                    <button class="btn-danger px-3 py-1 rounded text-sm delete-btn" data-id="${dashboard.id}">
+                    <button class="btn-danger px-3 py-1 rounded text-sm delete-btn" data-id="${escapeAttribute(dashboard.id)}">
                         Delete
                     </button>
                 </div>

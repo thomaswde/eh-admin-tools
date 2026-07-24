@@ -5,15 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ExtraHop Admin Tools</title>
     <link rel="icon" href="favicon.png" type="image/png">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/tailwind.min.css?v=20260724">
+    <script src="js/vendor/chart.umd.min.js?v=4.4.0"></script>
+    <script src="js/vendor/d3.min.js?v=7.9.0"></script>
     
     <!-- Load modular CSS -->
-    <link rel="stylesheet" href="css/styles.css?v=20260505-system-health">
+    <link rel="stylesheet" href="css/styles.css?v=20260724-dist">
 </head>
 
 <body>
@@ -32,7 +29,7 @@
             <div id="apiConfigSection" class="space-y-4">
                 <!-- Connected State (Hidden Initially) -->
                 <div id="connectedState" class="hidden">
-                    <div class="flex items-center justify-between p-3 rounded cursor-pointer" style="background-color: var(--bg-subtle);" onclick="toggleApiConfig()">
+                    <button id="apiConfigToggle" type="button" class="flex w-full items-center justify-between p-3 rounded cursor-pointer" style="background-color: var(--bg-subtle);" onclick="toggleApiConfig()" aria-expanded="false" aria-controls="configForm apiLoggingPanel">
                         <div class="flex items-center">
                             <svg class="w-5 h-5 mr-2" style="color: var(--cyan);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -43,8 +40,11 @@
                         <svg id="expandIcon" class="w-5 h-5 transition-transform" style="color: var(--text-secondary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                         </svg>
-                    </div>
+                    </button>
                     <p class="text-xs mt-2 text-center" style="color: var(--text-muted);" id="connectedInfo"></p>
+                    <button id="disconnectBtn" class="btn-secondary w-full py-2 px-4 rounded text-sm font-semibold mt-3" type="button">
+                        Disconnect
+                    </button>
                 </div>
 
                 <!-- Configuration Form -->
@@ -98,11 +98,33 @@
                                 <p class="text-xs mt-1" style="color: var(--text-muted);">Optional. Leave blank unless you are connecting through ExtraHop Cloud Services remote access.</p>
                             </div>
                         </details>
+                        <label class="flex items-start gap-2 mt-3 text-xs" style="color: var(--text-secondary);">
+                            <input type="checkbox" id="enterpriseAllowUntrustedTls" class="mt-1">
+                            <span>
+                                Allow an untrusted or self-signed TLS certificate
+                                <span class="block mt-1" style="color: var(--text-muted);">Use only for a known lab appliance. Certificate verification remains enabled by default.</span>
+                            </span>
+                        </label>
                     </div>
 
                     <button id="connectBtn" class="btn-primary w-full py-2 px-4 rounded font-semibold">
                         Connect
                     </button>
+                </div>
+
+                <!-- API Response Logging -->
+                <div id="apiLoggingPanel" class="space-y-3 p-3 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                    <div class="flex items-center justify-between gap-3">
+                        <h2 class="text-sm font-semibold" style="color: var(--text-primary);">API Logging</h2>
+                        <select id="apiLoggingVerbosity" class="px-2 py-1 rounded border text-sm">
+                            <option value="off">Off</option>
+                            <option value="errors">Errors</option>
+                            <option value="metadata">Metadata</option>
+                            <option value="full">Full</option>
+                        </select>
+                    </div>
+                    <p id="apiLoggingStatus" class="text-xs break-all" style="color: var(--text-muted);"></p>
+                    <p class="text-xs" style="color: var(--text-muted);">Full logging can contain sensitive operational data. Share log files only after review.</p>
                 </div>
             </div>
 
@@ -112,20 +134,6 @@
                 <div class="p-3 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
                     <p id="statusText" class="text-sm font-medium"></p>
                 </div>
-            </div>
-
-            <!-- API Response Logging -->
-            <div id="apiLoggingPanel" class="space-y-3 p-3 rounded" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
-                <div class="flex items-center justify-between gap-3">
-                    <h2 class="text-sm font-semibold" style="color: var(--text-primary);">API Logging</h2>
-                    <select id="apiLoggingVerbosity" class="px-2 py-1 rounded border text-sm">
-                        <option value="off">Off</option>
-                        <option value="errors">Errors</option>
-                        <option value="metadata">Metadata</option>
-                        <option value="full">Full</option>
-                    </select>
-                </div>
-                <p id="apiLoggingStatus" class="text-xs break-all" style="color: var(--text-muted);"></p>
             </div>
 
             <!-- Module Selection -->
@@ -712,7 +720,7 @@
             <div id="system-healthModule" class="module-content" style="display: none;">
                 <div class="mb-6">
                     <h2 class="text-2xl font-bold" style="color: var(--sapphire);">System Health Report</h2>
-                    <p class="mt-2" style="color: var(--text-muted);">Review peak packet rate, throughput, and analysis-tier pressure across Discover sensors.</p>
+                    <p class="mt-2" style="color: var(--text-muted);">Review peak packet rate, throughput, trigger capacity, and analysis-tier pressure across Discover sensors.</p>
                 </div>
 
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -744,8 +752,7 @@
                             <span class="system-health-catalog-badge">Catalog not loaded</span>
                             <span>Capacity comparisons will show observed values only until the catalog loads.</span>
                         </div>
-                        <label class="block text-sm font-semibold mb-2" style="color: var(--text-secondary);">Catalog Path (Optional)</label>
-                        <input type="text" id="systemHealthCatalogPath" placeholder="Use default resolution order" class="w-full px-3 py-2 rounded border mb-3">
+                        <p class="text-xs mb-3" style="color: var(--text-muted);">Uses the product catalog bundled with this package.</p>
                         <div class="flex flex-wrap gap-3">
                             <button id="runSystemHealthReport" class="btn-primary px-8 py-3 rounded font-semibold text-lg">
                                 Run System Health Report
@@ -756,9 +763,12 @@
                             <button id="systemHealthExportCsvButton" class="btn-secondary px-4 py-3 rounded font-semibold" type="button" disabled>
                                 Export CSV
                             </button>
+                            <button id="systemHealthExportPdfButton" class="btn-secondary px-4 py-3 rounded font-semibold" type="button" disabled>
+                                Export PDF
+                            </button>
                             <input id="systemHealthCsvInput" type="file" accept=".csv,text/csv" multiple class="hidden">
                         </div>
-                        <p id="systemHealthCsvStatus" class="text-xs mt-3" style="color: var(--text-muted);">Load capture_bytes_summary.csv, capture_pkts_summary.csv, and device_analysis_summary.csv from a previous run.</p>
+                        <p id="systemHealthCsvStatus" class="text-xs mt-3" style="color: var(--text-muted);">Load system health summary CSV files from a previous run.</p>
                     </div>
                 </div>
 
@@ -811,7 +821,7 @@
                 </div>
 
                 <div id="systemHealthResults" style="display: none;">
-                    <div id="systemHealthSummary" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6 mb-6"></div>
+                    <div id="systemHealthSummary" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-6 mb-6"></div>
 
                     <div class="space-y-6">
                         <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
@@ -887,6 +897,41 @@
                         <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
                             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
                                 <div>
+                                    <h3 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">Trigger Cycles vs Available Capacity</h3>
+                                    <p class="text-sm" style="color: var(--text-muted);">Peak trigger cycles consumed by sensor compared with available trigger cycles; drops are called out inline.</p>
+                                </div>
+                                <button class="btn-secondary px-4 py-2 rounded font-semibold" type="button" data-system-health-export="systemHealthTriggersChart">PNG</button>
+                            </div>
+                            <div class="system-health-pager mb-4" id="systemHealthTriggersPager" style="display: none;">
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-prev>Prev Model</button>
+                                <span data-system-health-pager-label></span>
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-pager-next>Next Model</button>
+                            </div>
+                            <div class="system-health-model-header">
+                                <div class="system-health-model-header-main">
+                                    <span class="system-health-model-name" id="systemHealthTriggersModelName">-</span>
+                                    <span class="system-health-model-stats" id="systemHealthTriggersModelStats"></span>
+                                </div>
+                                <span class="system-health-model-pager" id="systemHealthTriggersPagerLabel"></span>
+                            </div>
+                            <div class="system-health-tier-legend">
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="low"></span>&lt;80%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>100%+ or drops</span>
+                            </div>
+                            <div class="system-health-pager mb-4" id="systemHealthTriggersRowPager" style="display: none;">
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-prev>Prev page</button>
+                                <span data-system-health-row-pager-label></span>
+                                <button class="btn-secondary px-3 py-1 rounded" type="button" data-system-health-row-pager-next>Next page</button>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive">
+                                <canvas id="systemHealthTriggersChart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="p-6 rounded-lg" style="background-color: var(--bg-card); border: 1px solid var(--border-color);">
+                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                                <div>
                                     <h3 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">Analysis Tier Pressure</h3>
                                     <p class="text-sm" style="color: var(--text-muted);">Advanced and Standard utilization by sensor, with Discovery shown as overflow.</p>
                                 </div>
@@ -932,6 +977,8 @@
                                             <th>Packet Capacity</th>
                                             <th>Throughput Peak</th>
                                             <th>Throughput Capacity</th>
+                                            <th>Trigger Capacity</th>
+                                            <th>Trigger Drops</th>
                                             <th>Advanced</th>
                                             <th>Standard</th>
                                             <th>Discovery</th>
@@ -1575,11 +1622,11 @@
 
 
     <!-- Load JavaScript Modules -->
-    <script src="js/utils/app-state.js?v=20260505-system-health"></script>
-    <script src="js/api-client/extrahop-api.js?v=20260505-system-health"></script>
-    <script src="js/utils/common.js?v=20260505-system-health"></script>
-    <script src="js/auth/auth-manager.js?v=20260505-system-health"></script>
-    <script src="js/utils/module-loader.js?v=20260505-system-health"></script>
-    <script src="js/app.js?v=20260505-system-health"></script>
+    <script src="js/utils/app-state.js?v=20260724-dist"></script>
+    <script src="js/api-client/extrahop-api.js?v=20260724-dist"></script>
+    <script src="js/utils/common.js?v=20260724-collapse"></script>
+    <script src="js/auth/auth-manager.js?v=20260724-dist"></script>
+    <script src="js/utils/module-loader.js?v=20260724-dist"></script>
+    <script src="js/app.js?v=20260724-dist"></script>
 </body>
 </html>

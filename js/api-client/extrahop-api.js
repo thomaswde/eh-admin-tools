@@ -4,7 +4,7 @@ class ExtraHopAPI {
     }
 
     async authenticate() {
-        const response = await fetch('/backend/session', {
+        const response = await ExtraHopAPI.backendFetch('/backend/session', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -21,7 +21,7 @@ class ExtraHopAPI {
     }
 
     static async currentSession() {
-        const response = await fetch('/backend/session', {
+        const response = await ExtraHopAPI.backendFetch('/backend/session', {
             method: 'GET',
             headers: { 'Accept': 'application/json' }
         });
@@ -35,7 +35,7 @@ class ExtraHopAPI {
     }
 
     static async getApiLogging() {
-        const response = await fetch('/backend/api-logging', {
+        const response = await ExtraHopAPI.backendFetch('/backend/api-logging', {
             method: 'GET',
             headers: { 'Accept': 'application/json' }
         });
@@ -48,7 +48,7 @@ class ExtraHopAPI {
             body.path = path;
         }
 
-        const response = await fetch('/backend/api-logging', {
+        const response = await ExtraHopAPI.backendFetch('/backend/api-logging', {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',
@@ -60,7 +60,7 @@ class ExtraHopAPI {
     }
 
     async refreshAccessToken() {
-        const response = await fetch('/backend/session/refresh', {
+        const response = await ExtraHopAPI.backendFetch('/backend/session/refresh', {
             method: 'POST',
             headers: { 'Accept': 'application/json' }
         });
@@ -69,7 +69,7 @@ class ExtraHopAPI {
     }
 
     async dispose() {
-        await fetch('/backend/session', { method: 'DELETE' }).catch(() => {});
+        await ExtraHopAPI.backendFetch('/backend/session', { method: 'DELETE' }).catch(() => {});
     }
 
     async request(endpoint, options = {}) {
@@ -77,7 +77,7 @@ class ExtraHopAPI {
             endpoint = '/api/v1' + endpoint;
         }
 
-        const response = await fetch(`/backend/extrahop${endpoint}`, {
+        const response = await ExtraHopAPI.backendFetch(`/backend/extrahop${endpoint}`, {
             method: options.method || 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -91,6 +91,25 @@ class ExtraHopAPI {
 
     async parseResponse(response) {
         return ExtraHopAPI.parseStaticResponse(response);
+    }
+
+    static async backendFetch(url, options = {}) {
+        try {
+            return await fetch(url, options);
+        } catch (cause) {
+            const error = new Error(
+                'The local app service could not be reached. Keep the launcher terminal open and use the URL printed by start.sh; do not open index.html directly.'
+            );
+            error.details = {
+                url,
+                status: 'Local Backend Unreachable',
+                response: {
+                    message: cause?.message || 'The browser received no HTTP response.',
+                    hint: 'Restart the packaged launcher and retry from its local http://127.0.0.1 URL.'
+                }
+            };
+            throw error;
+        }
     }
 
     static async parseStaticResponse(response) {
@@ -109,6 +128,9 @@ class ExtraHopAPI {
         }
 
         if (!response.ok) {
+            if (response.status === 401) {
+                ExtraHopAPI.markSessionExpired();
+            }
             const detail = data.detail || {};
             const message = detail.message || data.message || data.error_message || data.error || response.statusText;
             const error = new Error(message);
@@ -118,6 +140,23 @@ class ExtraHopAPI {
         }
 
         return data;
+    }
+
+    static markSessionExpired() {
+        if (!window.state?.connected) return;
+
+        state.connected = false;
+        state.apiConfig = null;
+        state.currentModule = null;
+        window.apiClient = null;
+        sessionStorage.removeItem('eh_config');
+        hideConnectedState();
+        document.getElementById('moduleSelection').style.display = 'none';
+        document.querySelectorAll('.module-content').forEach(module => {
+            module.style.display = 'none';
+        });
+        document.getElementById('welcomeScreen').style.display = 'block';
+        showStatus('The local session expired or the backend restarted. Reconnect to continue.', true);
     }
 
     async getDashboards() {

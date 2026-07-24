@@ -479,8 +479,8 @@ function renderDataTable(data, compressionRatio) {
     sortedData.forEach(d => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${d.name}</td>
-            <td>${d.model}</td>
+            <td>${escapeHtml(d.name)}</td>
+            <td>${escapeHtml(d.model)}</td>
             <td>${d.recordBytesGB.toFixed(2)}</td>
             ${hasCompression ? `<td>${d.compressedGB.toFixed(2)}</td>` : ''}
         `;
@@ -549,7 +549,7 @@ function initCrsUsageModule() {
                     const summary = document.getElementById('csvSummary');
                     summary.innerHTML = `
                         <strong>${crsState.csvData.length} records loaded</strong><br>
-                        Date range: ${crsState.csvData[crsState.csvData.length - 1].date} to ${crsState.csvData[0].date}<br>
+                        Date range: ${escapeHtml(crsState.csvData[crsState.csvData.length - 1].date)} to ${escapeHtml(crsState.csvData[0].date)}<br>
                         Avg Utilized: ${(crsState.csvData.reduce((s, d) => s + d.utilized, 0) / crsState.csvData.length).toFixed(1)} GB<br>
                         Avg Reserved: ${(crsState.csvData.reduce((s, d) => s + d.reserved, 0) / crsState.csvData.length).toFixed(1)} GB
                     `;

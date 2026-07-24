@@ -60,14 +60,14 @@ function renderLocalitiesTable() {
                 <input type="text" 
                        class="w-full px-2 py-1 border rounded locality-field" 
                        data-field="name" 
-                       value="${escapeHtml(locality.name || '')}"
+                       value="${escapeAttribute(locality.name || '')}"
                        style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
             </td>
             <td>
                 <input type="text" 
                        class="w-full px-2 py-1 border rounded locality-field" 
                        data-field="networks" 
-                       value="${escapeHtml((locality.networks || []).join(', '))}"
+                       value="${escapeAttribute((locality.networks || []).join(', '))}"
                        placeholder="e.g., 192.168.1.0/24, 10.0.0.1"
                        style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
             </td>
@@ -83,7 +83,7 @@ function renderLocalitiesTable() {
                 <input type="text" 
                        class="w-full px-2 py-1 border rounded locality-field" 
                        data-field="description" 
-                       value="${escapeHtml(locality.description || '')}"
+                       value="${escapeAttribute(locality.description || '')}"
                        style="background-color: var(--bg-input); border-color: var(--border-color); color: var(--text-primary);">
             </td>
             <td class="text-center">
@@ -129,6 +129,12 @@ function handleDeleteLocality(e) {
     const row = e.target.closest('tr');
     const index = parseInt(row.dataset.index);
     const id = row.dataset.id;
+    const locality = localitiesState.currentLocalities[index];
+    const label = locality.name || (id ? `ID ${id}` : 'this new row');
+
+    if (!confirm(`Stage "${label}" for deletion? The deletion is not sent until you click Save Changes.`)) {
+        return;
+    }
     
     if (id) {
         // Existing locality - mark for deletion
@@ -163,6 +169,23 @@ function addLocalityRow() {
 }
 
 async function saveLocalityChanges() {
+    const invalidLocalities = localitiesState.currentLocalities.filter(locality =>
+        !locality._deleted &&
+        (!locality.name || !Array.isArray(locality.networks) || locality.networks.length === 0)
+    );
+    if (invalidLocalities.length > 0) {
+        showLocalityStatus('Fix incomplete rows before saving. Name and at least one network are required.', 'error');
+        alert('Nothing was changed. Fix all incomplete rows before saving.');
+        return;
+    }
+
+    if (
+        localitiesState.deletedIds.size > 0 &&
+        !confirm(`Save all changes and permanently delete ${localitiesState.deletedIds.size} existing localit${localitiesState.deletedIds.size === 1 ? 'y' : 'ies'}?`)
+    ) {
+        return;
+    }
+
     try {
         document.getElementById('saveLocalityChanges').disabled = true;
         document.getElementById('saveLocalityChanges').textContent = 'Saving...';
@@ -174,25 +197,9 @@ async function saveLocalityChanges() {
             errors: []
         };
 
-        // Process deletions
-        for (const id of localitiesState.deletedIds) {
-            try {
-                await window.apiClient.request(`/networklocalities/${id}`, { method: 'DELETE' });
-                results.deleted.push(id);
-            } catch (error) {
-                results.errors.push(`Failed to delete locality ID ${id}: ${error.message}`);
-            }
-        }
-
         // Process creations and updates
         for (const locality of localitiesState.currentLocalities) {
             if (locality._deleted) continue;
-
-            // Validate required fields
-            if (!locality.name || !locality.networks || locality.networks.length === 0) {
-                results.errors.push(`Skipped entry: Name and at least one network are required`);
-                continue;
-            }
 
             const payload = {
                 name: locality.name,
@@ -222,6 +229,16 @@ async function saveLocalityChanges() {
             }
         }
 
+        // Apply destructive changes last, after all rows have passed validation.
+        for (const id of localitiesState.deletedIds) {
+            try {
+                await window.apiClient.request(`/networklocalities/${id}`, { method: 'DELETE' });
+                results.deleted.push(id);
+            } catch (error) {
+                results.errors.push(`Failed to delete locality ID ${id}: ${error.message}`);
+            }
+        }
+
         // Build status message
         let statusMsg = [];
         if (results.created.length > 0) statusMsg.push(`Created: ${results.created.length}`);
@@ -236,8 +253,11 @@ async function saveLocalityChanges() {
             alert('Some operations failed. Check the console for details.\n\n' + results.errors.join('\n'));
         }
 
-        // Reload localities to get fresh data
-        await loadNetworkLocalities();
+        if (results.errors.length === 0) {
+            await loadNetworkLocalities();
+        } else {
+            renderLocalitiesTable();
+        }
 
     } catch (error) {
         showLocalityStatus(`Error saving changes: ${error.message}`, 'error');

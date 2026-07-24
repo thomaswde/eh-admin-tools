@@ -10,24 +10,27 @@ function showStatus(message, isError = false) {
 
 function toggleApiConfig() {
     const configForm = document.getElementById('configForm');
+    setApiConfigExpanded(configForm.style.display === 'none');
+}
+
+function setApiConfigExpanded(expanded) {
+    const configForm = document.getElementById('configForm');
+    const apiLoggingPanel = document.getElementById('apiLoggingPanel');
     const expandIcon = document.getElementById('expandIcon');
-    
-    if (configForm.style.display === 'none') {
-        configForm.style.display = 'block';
-        expandIcon.style.transform = 'rotate(0deg)';
-    } else {
-        configForm.style.display = 'none';
-        expandIcon.style.transform = 'rotate(-90deg)';
-    }
+    const toggle = document.getElementById('apiConfigToggle');
+
+    configForm.style.display = expanded ? 'block' : 'none';
+    apiLoggingPanel.style.display = expanded ? 'block' : 'none';
+    expandIcon.style.transform = expanded ? 'rotate(0deg)' : 'rotate(-90deg)';
+    toggle.setAttribute('aria-expanded', String(expanded));
 }
 
 function showConnectedState() {
     const connectedState = document.getElementById('connectedState');
-    const configForm = document.getElementById('configForm');
     const connectedInfo = document.getElementById('connectedInfo');
     
     connectedState.classList.remove('hidden');
-    configForm.style.display = 'none';
+    setApiConfigExpanded(false);
     
     if (state.apiConfig.type === '360') {
         connectedInfo.textContent = `RevealX 360: ${state.apiConfig.tenant}`;
@@ -35,15 +38,13 @@ function showConnectedState() {
         connectedInfo.textContent = `RevealX Enterprise: ${state.apiConfig.host}`;
     }
     
-    document.getElementById('expandIcon').style.transform = 'rotate(-90deg)';
 }
 
 function hideConnectedState() {
     const connectedState = document.getElementById('connectedState');
-    const configForm = document.getElementById('configForm');
     
     connectedState.classList.add('hidden');
-    configForm.style.display = 'block';
+    setApiConfigExpanded(true);
 }
 
 function showErrorModal(message, details) {
@@ -103,6 +104,12 @@ function hideModal(modalId) {
 
 function escapeHtml(text) {
     const div = document.createElement('div');
-    div.textContent = text;
+    div.textContent = text == null ? '' : String(text);
     return div.innerHTML;
+}
+
+function escapeAttribute(text) {
+    return escapeHtml(text)
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
 }

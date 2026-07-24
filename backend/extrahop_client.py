@@ -1,7 +1,9 @@
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -10,6 +12,7 @@ from backend.api_response_logger import ApiResponseLogger
 
 DEFAULT_360_TOKEN_TTL_SECONDS = 30 * 60
 TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
+TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 class ExtraHopApiError(Exception):
@@ -24,11 +27,16 @@ class SessionMetadata:
     type: str
     tenant: str | None = None
     host: str | None = None
+    verify_tls: bool = True
 
-    def public_dict(self) -> dict[str, str]:
+    def public_dict(self) -> dict[str, Any]:
         if self.type == "360":
             return {"type": "360", "tenant": self.tenant or ""}
-        return {"type": "enterprise", "host": self.host or ""}
+        return {
+            "type": "enterprise",
+            "host": self.host or "",
+            "verifyTls": self.verify_tls,
+        }
 
 
 class ExtraHopClient:
@@ -37,15 +45,22 @@ class ExtraHopClient:
         self.response_logger = response_logger
         self.access_token: str | None = None
         self.access_token_expires_at = 0.0
+        self.verify_tls = True
 
         if config["type"] == "360":
-            tenant = config["tenant"].strip()
+            tenant = config["tenant"].strip().lower()
+            if not TENANT_PATTERN.fullmatch(tenant):
+                raise ValueError("RevealX 360 tenant must be a single DNS label")
             self.base_url = f"https://{tenant}.api.cloud.extrahop.com"
             self.metadata = SessionMetadata(type="360", tenant=tenant)
         else:
-            host = config["host"].strip().removeprefix("https://").removeprefix("http://").rstrip("/")
-            self.base_url = f"https://{host}"
-            self.metadata = SessionMetadata(type="enterprise", host=host)
+            self.base_url, host = self._normalize_enterprise_url(config["host"])
+            self.verify_tls = bool(config.get("verifyTls", True))
+            self.metadata = SessionMetadata(
+                type="enterprise",
+                host=host,
+                verify_tls=self.verify_tls,
+            )
 
     async def authenticate(self) -> None:
         if self.config["type"] == "360":
@@ -95,9 +110,21 @@ class ExtraHopClient:
         if response.status_code < 200 or response.status_code >= 300:
             raise self._api_error_from_response(response, "Authentication failed")
 
-        data = response.json()
-        self.access_token = data["access_token"]
-        ttl = int(data.get("expires_in") or DEFAULT_360_TOKEN_TTL_SECONDS)
+        try:
+            data = response.json()
+        except ValueError as error:
+            raise self._malformed_response_error(response, "Authentication response was not valid JSON") from error
+
+        access_token = data.get("access_token") if isinstance(data, dict) else None
+        if not isinstance(access_token, str) or not access_token:
+            raise self._malformed_response_error(response, "Authentication response did not include an access token")
+
+        try:
+            ttl = int(data.get("expires_in") or DEFAULT_360_TOKEN_TTL_SECONDS)
+        except (TypeError, ValueError) as error:
+            raise self._malformed_response_error(response, "Authentication response included an invalid token lifetime") from error
+
+        self.access_token = access_token
         self.access_token_expires_at = time.time() + ttl
 
     async def refresh_if_needed(self) -> None:
@@ -132,7 +159,10 @@ class ExtraHopClient:
 
         content_type_header = response.headers.get("content-type", "")
         if "application/json" in content_type_header:
-            return response.json()
+            try:
+                return response.json()
+            except ValueError as error:
+                raise self._malformed_response_error(response, "API response was not valid JSON") from error
         return response.text
 
     async def _send(
@@ -162,7 +192,7 @@ class ExtraHopClient:
 
         started_at = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=60.0, verify=self.verify_tls) as client:
                 response = await client.request(method, url, headers=headers, content=body)
         except httpx.RequestError as error:
             if self.response_logger:
@@ -223,8 +253,17 @@ class ExtraHopClient:
         }
         return ExtraHopApiError(f"{prefix}: {error.__class__.__name__} - {message}. {hint}", 502, details)
 
-    @staticmethod
-    def _network_error_hint(error: httpx.RequestError) -> str:
+    def _network_error_hint(self, error: httpx.RequestError) -> str:
+        message = str(error).lower()
+        if isinstance(error, httpx.ConnectError) and (
+            "certificate verify failed" in message
+            or "certificate_verify_failed" in message
+            or "self-signed certificate" in message
+        ):
+            return (
+                "TLS certificate verification failed. Confirm the appliance hostname and certificate trust. "
+                "For a known self-signed lab appliance, reconnect with the explicit untrusted-certificate option."
+            )
         if isinstance(error, httpx.ConnectTimeout):
             return (
                 "The local Python backend could not open a TCP connection to the ExtraHop API host. "
@@ -236,6 +275,44 @@ class ExtraHopClient:
         if isinstance(error, httpx.ReadTimeout):
             return "The ExtraHop API connection opened, but the backend timed out waiting for a response."
         return "The local Python backend could not complete the outbound ExtraHop API request."
+
+    @staticmethod
+    def _normalize_enterprise_url(raw_host: str) -> tuple[str, str]:
+        value = str(raw_host or "").strip()
+        candidate = value if "://" in value else f"https://{value}"
+        try:
+            parsed = urlsplit(candidate)
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError("Enterprise host contains an invalid port or URL") from error
+
+        if parsed.scheme.lower() != "https":
+            raise ValueError("Enterprise host must use HTTPS")
+        if parsed.username or parsed.password:
+            raise ValueError("Enterprise host must not include embedded credentials")
+        if not parsed.hostname:
+            raise ValueError("Enterprise host must include a hostname or IP address")
+        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+            raise ValueError("Enterprise host must not include a path, query string, or fragment")
+
+        hostname = parsed.hostname
+        formatted_host = f"[{hostname}]" if ":" in hostname else hostname
+        if port is not None and port != 443:
+            formatted_host = f"{formatted_host}:{port}"
+        return f"https://{formatted_host}", formatted_host
+
+    @staticmethod
+    def _malformed_response_error(response: httpx.Response, message: str) -> ExtraHopApiError:
+        details = {
+            "url": str(response.request.url),
+            "status": f"{response.status_code} {response.reason_phrase}",
+            "response": {
+                "message": message,
+                "content_type": response.headers.get("content-type", ""),
+                "response_bytes": len(response.content or b""),
+            },
+        }
+        return ExtraHopApiError(message, 502, details)
 
     @staticmethod
     def _extract_error_message(response_body: Any) -> str | None:

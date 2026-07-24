@@ -158,9 +158,10 @@ async function loadAppliances() {
         
         // Try to load catalog data for better platform detection
         try {
-            const response = await fetch('extrahop_catalog_json_v2.json');
+            const response = await fetch('/backend/system-health/catalog');
             if (response.ok) {
-                nodemapState.catalogData = await response.json();
+                const catalog = await response.json();
+                nodemapState.catalogData = Array.isArray(catalog.models) ? catalog.models : [];
             }
         } catch (e) {
             console.warn('Could not load catalog data, using basic platform detection');
@@ -600,6 +601,7 @@ function showNodeDetails(appliance) {
     const content = document.getElementById('nodeDetailsPanelContent');
     const info = getNodeInfo(appliance);
     const statusInfo = getStatusInfo(appliance);
+    const displayName = appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`;
     
     content.innerHTML = `
         <div class="space-y-6">
@@ -609,23 +611,23 @@ function showNodeDetails(appliance) {
                 <div class="space-y-4">
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Name</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`}</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(displayName)}</span>
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Model</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.license_platform || 'Unknown'}</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.license_platform || 'Unknown')}</span>
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Platform</span>
-                        <span class="block text-sm p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.platform || 'Unknown'}</span>
+                        <span class="block text-sm p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.platform || 'Unknown')}</span>
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Firmware</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.firmware_version || 'Unknown'}</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.firmware_version || 'Unknown')}</span>
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Status</span>
-                        <span class="inline-block text-sm px-3 py-1 rounded-full ${statusInfo.badgeClass}">${statusInfo.statusText}</span>
+                        <span class="inline-block text-sm px-3 py-1 rounded-full ${statusInfo.badgeClass}">${escapeHtml(statusInfo.statusText)}</span>
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Type</span>
@@ -646,20 +648,20 @@ function showNodeDetails(appliance) {
                 <div class="space-y-4">
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">UUID</span>
-                        <span class="block text-xs font-mono break-all p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.uuid || 'N/A'}</span>
+                        <span class="block text-xs font-mono break-all p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.uuid || 'N/A')}</span>
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">ID</span>
-                        <span class="block text-sm p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.id}</span>
+                        <span class="block text-sm p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.id)}</span>
                     </div>
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Hostname</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.hostname || 'N/A'}</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.hostname || 'N/A')}</span>
                     </div>
                     ${appliance.nickname ? `
                     <div>
                         <span class="block font-medium text-sm mb-1" style="color: var(--text-secondary);">Nickname</span>
-                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${appliance.nickname}</span>
+                        <span class="block text-sm break-words p-2 rounded" style="color: var(--text-primary); background-color: var(--bg-subtle);">${escapeHtml(appliance.nickname)}</span>
                     </div>
                     ` : ''}
                 </div>
@@ -672,7 +674,7 @@ function showNodeDetails(appliance) {
                     ${appliance.product_modules.map(module => {
                         const label = (module == null ? '' : module.toString()).toUpperCase();
                         return `
-                        <span class="px-3 py-1 text-sm rounded-full" style="background-color: var(--cyan); color: white;">${label}</span>
+                        <span class="px-3 py-1 text-sm rounded-full" style="background-color: var(--cyan); color: white;">${escapeHtml(label)}</span>
                         `;
                     }).join('')}
                 </div>

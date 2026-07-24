@@ -56,7 +56,8 @@ async function handleConnect() {
             config = {
                 type: 'enterprise',
                 host: document.getElementById('enterpriseHost').value.trim(),
-                apiKey: document.getElementById('enterpriseApiKey').value.trim()
+                apiKey: document.getElementById('enterpriseApiKey').value.trim(),
+                verifyTls: !document.getElementById('enterpriseAllowUntrustedTls').checked
             };
 
             if (proxyToken) {
@@ -71,14 +72,11 @@ async function handleConnect() {
         const api = new ExtraHopAPI(config);
         await api.authenticate();
 
-        if (window.apiClient && typeof window.apiClient.dispose === 'function') {
-            window.apiClient.dispose();
-        }
-
         state.apiConfig = api.config;
         state.connected = true;
         sessionStorage.setItem('eh_config', JSON.stringify(api.config));
         window.apiClient = api;
+        clearCredentialInputs();
 
         showStatus('✓ Connected successfully', false);
         document.getElementById('moduleSelection').style.display = 'block';
@@ -96,6 +94,41 @@ async function handleConnect() {
         connectBtn.textContent = 'Connect';
         connectBtn.disabled = false;
     }
+}
+
+async function handleDisconnect() {
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    disconnectBtn.disabled = true;
+    disconnectBtn.textContent = 'Disconnecting...';
+
+    try {
+        if (window.apiClient && typeof window.apiClient.dispose === 'function') {
+            await window.apiClient.dispose();
+        }
+    } finally {
+        state.apiConfig = null;
+        state.connected = false;
+        state.currentModule = null;
+        window.apiClient = null;
+        sessionStorage.removeItem('eh_config');
+        clearCredentialInputs();
+        hideConnectedState();
+        document.getElementById('moduleSelection').style.display = 'none';
+        document.querySelectorAll('.module-content').forEach(module => {
+            module.style.display = 'none';
+        });
+        document.getElementById('welcomeScreen').style.display = 'block';
+        showStatus('Disconnected from ExtraHop', false);
+        disconnectBtn.disabled = false;
+        disconnectBtn.textContent = 'Disconnect';
+    }
+}
+
+function clearCredentialInputs() {
+    ['apiId', 'apiSecret', 'enterpriseApiKey', 'enterpriseProxyToken'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
 }
 
 function showConnectionError(error) {

@@ -537,10 +537,10 @@ function renderUsers() {
             <td>${escapeHtml(lastLogin)}</td>
             <td>
                 <div class="flex gap-2">
-                    <button class="btn-secondary px-3 py-1 rounded text-sm edit-user-btn" data-username="${escapeHtml(user.username)}">
+                    <button class="btn-secondary px-3 py-1 rounded text-sm edit-user-btn" data-username="${escapeAttribute(user.username)}">
                         Edit
                     </button>
-                    <button class="btn-danger px-3 py-1 rounded text-sm delete-user-btn" data-username="${escapeHtml(user.username)}">
+                    <button class="btn-danger px-3 py-1 rounded text-sm delete-user-btn" data-username="${escapeAttribute(user.username)}">
                         Delete
                     </button>
                 </div>
