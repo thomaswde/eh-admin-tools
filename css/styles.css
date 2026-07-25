@@ -279,9 +279,25 @@ a { color: var(--cyan); }
 .topbar-spacer { flex: 1; }
 
 .topbar-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-size: 11px;
     color: var(--text-faint);
     white-space: nowrap;
+}
+
+.build-dirty-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 5px;
+    border: 1px solid var(--danger-border);
+    border-radius: 999px;
+    background-color: var(--danger-bg);
+    color: var(--danger-text);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.6;
 }
 
 /* ---------- Connection chip and popover ---------- */

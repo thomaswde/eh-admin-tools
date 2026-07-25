@@ -5,6 +5,7 @@ import html
 import json
 import os
 import re
+import subprocess
 from typing import Any
 
 from fastapi import Cookie, FastAPI, HTTPException, Request, Response
@@ -30,6 +31,45 @@ CHART_THEME_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 CHART_THEME_RESERVED_IDS = {"auto", "draft", "light", "dark", "midnight", "slate", "mono"}
 VERSION_PATH = APP_ROOT.parent / "VERSION" if APP_ROOT.name == "app" else APP_ROOT / "VERSION"
 APP_VERSION = VERSION_PATH.read_text(encoding="utf-8").strip() if VERSION_PATH.exists() else "development"
+COMMIT_PATH = VERSION_PATH.with_name("COMMIT")
+
+
+def resolve_app_commit() -> str:
+    configured_commit = os.environ.get("EH_APP_COMMIT", "").strip()
+    if configured_commit:
+        return configured_commit
+    if COMMIT_PATH.exists():
+        return COMMIT_PATH.read_text(encoding="utf-8").strip()
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=APP_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+def is_worktree_dirty() -> bool:
+    if COMMIT_PATH.exists():
+        return False
+    try:
+        return bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=APP_ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+
+
+APP_COMMIT = resolve_app_commit()
 
 app = FastAPI(title="ExtraHop Admin Tools")
 app.add_middleware(
@@ -147,11 +187,13 @@ async def index() -> FileResponse:
 
 
 @app.get("/backend/health")
-async def health() -> dict[str, str]:
+async def health() -> dict[str, str | bool]:
     return {
         "app": "extrahop-admin-tools",
         "status": "ok",
         "version": APP_VERSION,
+        "commit": APP_COMMIT,
+        "dirty": is_worktree_dirty(),
     }
 
 

@@ -112,6 +112,21 @@ class BackendRouteSecurityTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    @patch("main.is_worktree_dirty", return_value=True)
+    def test_health_exposes_build_version_commit_and_dirty_state(self, _dirty):
+        response = self.client.get("/backend/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["version"], main.APP_VERSION)
+        self.assertEqual(response.json()["commit"], main.APP_COMMIT)
+        self.assertIs(response.json()["dirty"], True)
+
+    def test_packaged_distribution_is_never_marked_dirty(self):
+        with patch("main.COMMIT_PATH") as commit_path:
+            commit_path.exists.return_value = True
+
+            self.assertFalse(main.is_worktree_dirty())
+
     def test_catalog_requires_session(self):
         response = self.client.get("/backend/system-health/catalog")
         self.assertEqual(response.status_code, 401)

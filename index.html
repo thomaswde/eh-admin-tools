@@ -6,7 +6,7 @@
     <title>ExtraHop Admin Tools</title>
     <link rel="icon" href="favicon.png" type="image/png">
     <script src="js/theme-init.js?v=20260724-ui"></script>
-    <link rel="stylesheet" href="css/styles.css?v=20260724-ui">
+    <link rel="stylesheet" href="css/styles.css?v=20260725-version-dirty">
     <script src="js/vendor/chart.umd.min.js?v=4.4.0"></script>
     <script src="js/vendor/d3.min.js?v=7.9.0"></script>
 </head>
@@ -24,7 +24,10 @@
 
         <div class="topbar-spacer"></div>
 
-        <span id="lastModified" class="topbar-meta"></span>
+        <span class="topbar-meta">
+            <span id="buildVersion"></span>
+            <span id="buildDirtyTag" class="build-dirty-tag hidden">dirty</span>
+        </span>
 
         <!-- Connection status chip, details in the popover below -->
         <div class="conn" id="apiConfigSection">
@@ -1419,6 +1422,6 @@
 <script src="js/utils/common.js?v=20260724-ui"></script>
 <script src="js/auth/auth-manager.js?v=20260724-ui"></script>
 <script src="js/utils/module-loader.js?v=20260724-ui"></script>
-<script src="js/app.js?v=20260724-ui"></script>
+<script src="js/app.js?v=20260725-version-dirty"></script>
 </body>
 </html>

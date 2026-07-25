@@ -25,8 +25,8 @@ async function initializeApp() {
     // Restore diagnostic logging preference
     await loadApiLoggingStatus();
     
-    // Set last modified timestamp in the ribbon
-    setLastModifiedTimestamp();
+    // Set the build version in the ribbon
+    await setBuildVersion();
     
     console.log('Application initialized successfully');
 }
@@ -50,17 +50,26 @@ async function restoreBackendSession() {
     }
 }
 
-function setLastModifiedTimestamp() {
-    const el = document.getElementById('lastModified');
-    if (!el) return;
+async function setBuildVersion() {
+    const el = document.getElementById('buildVersion');
+    const dirtyTag = document.getElementById('buildDirtyTag');
+    if (!el || !dirtyTag) return;
 
-    const modified = new Date(document.lastModified);
-    if (isNaN(modified.getTime())) {
+    try {
+        const response = await fetch('/backend/health', { cache: 'no-store' });
+        if (!response.ok) {
+            throw new Error(`Health request failed with HTTP ${response.status}`);
+        }
+        const build = await response.json();
+        const version = String(build.version || '').replace(/^\d{2}(\d{2})\.(\d{2})\.(\d{2})$/, '$1.$2.$3');
+        const commit = String(build.commit || 'unknown');
+        el.textContent = `${version} - ${commit}`;
+        dirtyTag.classList.toggle('hidden', build.dirty !== true);
+    } catch (error) {
         el.textContent = '';
-        return;
+        dirtyTag.classList.add('hidden');
+        console.warn('Unable to load build version:', error);
     }
-
-    el.textContent = `Last updated: ${modified.toLocaleString()}`;
 }
 
 function loadSavedConfig() {
