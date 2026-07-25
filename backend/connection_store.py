@@ -26,6 +26,12 @@ ENV_CONNECTION_PATTERN = re.compile(
     r"(TENANT|API_ID|API_SECRET|HOST|API_KEY|PROXY_TOKEN|VERIFY_TLS)$"
 )
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+PLACEHOLDER_SECRET_VALUES = {
+    "replace-with-api-id",
+    "replace-with-api-key",
+    "replace-with-api-secret",
+    "replace-with-proxy-token",
+}
 
 
 class ConnectionStorageError(RuntimeError):
@@ -77,6 +83,9 @@ class ConnectionStore:
         except ConnectionStorageError as error:
             storage_error = str(error)
 
+        env_configs, skipped_env = self._without_placeholders(env_configs)
+        keychain_configs, skipped_keychain = self._without_placeholders(keychain_configs)
+
         merged: dict[str, dict[str, Any]] = {}
         for config in keychain_configs.values():
             metadata = self._metadata(config, source="keychain")
@@ -98,6 +107,12 @@ class ConnectionStore:
         )
         types = {item["type"] for item in connections}
         warnings = list(env_warnings)
+        skipped_placeholders = skipped_env + skipped_keychain
+        if skipped_placeholders:
+            warnings.append(
+                f"Skipped {skipped_placeholders} example connection"
+                f"{'' if skipped_placeholders == 1 else 's'} with placeholder values."
+            )
         if storage_error:
             warnings.append(storage_error)
 
@@ -119,12 +134,18 @@ class ConnectionStore:
     def get(self, connection_id: str) -> dict[str, Any]:
         env_configs, _warnings = self._read_env_configs()
         if connection_id in env_configs:
-            return dict(env_configs[connection_id])
+            config = env_configs[connection_id]
+            if self._is_placeholder_config(config):
+                raise KeyError(connection_id)
+            return dict(config)
 
         keychain_configs = self._read_keychain_configs()
         if connection_id not in keychain_configs:
             raise KeyError(connection_id)
-        return dict(keychain_configs[connection_id])
+        config = keychain_configs[connection_id]
+        if self._is_placeholder_config(config):
+            raise KeyError(connection_id)
+        return dict(config)
 
     def save(self, config: Mapping[str, Any]) -> dict[str, Any]:
         normalized = self._normalize_config(config)
@@ -232,6 +253,34 @@ class ConnectionStore:
                 "The operating-system credential store dependency is unavailable."
             )
         return self._keyring
+
+    @classmethod
+    def _without_placeholders(
+        cls,
+        configs: Mapping[str, dict[str, Any]],
+    ) -> tuple[dict[str, dict[str, Any]], int]:
+        filtered = {
+            connection_id: config
+            for connection_id, config in configs.items()
+            if not cls._is_placeholder_config(config)
+        }
+        return filtered, len(configs) - len(filtered)
+
+    @classmethod
+    def _is_placeholder_config(cls, config: Mapping[str, Any]) -> bool:
+        normalized = cls._normalize_config(config)
+        secret_fields = ("apiId", "apiSecret", "apiKey", "proxyToken")
+        if any(
+            str(normalized.get(field, "")).strip().lower() in PLACEHOLDER_SECRET_VALUES
+            for field in secret_fields
+        ):
+            return True
+
+        if normalized["type"] != "enterprise":
+            return False
+        candidate = f"https://{normalized['host']}"
+        hostname = (urlsplit(candidate).hostname or "").casefold().rstrip(".")
+        return hostname == "example.test" or hostname.endswith(".example.test")
 
     @staticmethod
     def _parse_bool(value: str) -> bool:

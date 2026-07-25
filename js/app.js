@@ -53,8 +53,6 @@ async function restoreBackendSession() {
         if (saveWarning) {
             sessionStorage.removeItem('eh_connection_save_warning');
             showStatus(saveWarning, true);
-        } else {
-            showStatus('Reconnected to the existing session.', false);
         }
     } catch (error) {
         console.warn('No existing backend session to restore:', error);
@@ -102,6 +100,7 @@ function loadSavedConfig() {
             document.getElementById('config360').style.display = 'none';
             document.getElementById('configEnterprise').style.display = 'flex';
         }
+        window.refreshCustomSelect?.(document.getElementById('deploymentType'));
     } catch (error) {
         console.warn('Discarding invalid saved connection metadata:', error);
         sessionStorage.removeItem('eh_config');
@@ -110,6 +109,7 @@ function loadSavedConfig() {
 
 function setupGlobalEventListeners() {
     setupConnectionPanel();
+    setupApiLoggingPanel();
 
     // Deployment type change
     document.getElementById('deploymentType').addEventListener('change', (e) => {
@@ -199,6 +199,7 @@ function setupConnectionPanel() {
 
     chip.addEventListener('click', (event) => {
         event.stopPropagation();
+        setApiLoggingPanelOpen(false);
         toggleApiConfig();
     });
 
@@ -219,6 +220,40 @@ function setupConnectionPanel() {
             savedSelect.focus();
         } else {
             document.getElementById('addConnectionBtn').focus();
+        }
+    });
+}
+
+function setApiLoggingPanelOpen(open) {
+    const toggle = document.getElementById('apiLoggingToggle');
+    const panel = document.getElementById('apiLoggingPanel');
+    if (!toggle || !panel) return;
+
+    panel.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+}
+
+function setupApiLoggingPanel() {
+    const toggle = document.getElementById('apiLoggingToggle');
+    const panel = document.getElementById('apiLoggingPanel');
+    const close = document.getElementById('apiLoggingClose');
+    if (!toggle || !panel || !close) return;
+
+    toggle.addEventListener('click', event => {
+        event.stopPropagation();
+        setConnectionPanelOpen(false);
+        setApiLoggingPanelOpen(panel.hidden);
+    });
+    panel.addEventListener('click', event => event.stopPropagation());
+    close.addEventListener('click', () => {
+        setApiLoggingPanelOpen(false);
+        toggle.focus();
+    });
+    document.addEventListener('click', () => setApiLoggingPanelOpen(false));
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !panel.hidden) {
+            setApiLoggingPanelOpen(false);
+            toggle.focus();
         }
     });
 }
@@ -245,9 +280,9 @@ async function handleApiLoggingChange(event) {
     try {
         const config = await ExtraHopAPI.updateApiLogging(selectEl.value);
         renderApiLoggingStatus(config);
-        showStatus(`API logging set to ${config.verbosity}`, false);
     } catch (error) {
         selectEl.value = previousValue;
+        window.refreshCustomSelect?.(selectEl);
         const statusEl = document.getElementById('apiLoggingStatus');
         if (statusEl) {
             statusEl.textContent = `Could not update logging: ${error.message}`;
@@ -261,10 +296,20 @@ async function handleApiLoggingChange(event) {
 function renderApiLoggingStatus(config) {
     const statusEl = document.getElementById('apiLoggingStatus');
     const selectEl = document.getElementById('apiLoggingVerbosity');
+    const summaryEl = document.getElementById('apiLoggingSummary');
     if (!statusEl || !selectEl || !config) return;
 
     selectEl.value = config.verbosity || 'off';
     selectEl.dataset.currentValue = selectEl.value;
+    window.refreshCustomSelect?.(selectEl);
+    if (summaryEl) {
+        summaryEl.textContent = {
+            off: 'Off',
+            errors: 'Errors only',
+            metadata: 'Metadata',
+            full: 'Full responses'
+        }[selectEl.value] || selectEl.value;
+    }
     statusEl.textContent = config.enabled
         ? `Writing ${config.verbosity} responses to ${config.path}`
         : `Log file: ${config.path}`;

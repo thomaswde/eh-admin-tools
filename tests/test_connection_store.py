@@ -33,7 +33,7 @@ class FailingKeyring:
 
 
 class ConnectionStoreTests(unittest.TestCase):
-    def test_shipped_env_example_contains_one_connection_of_each_type(self):
+    def test_shipped_env_example_is_never_offered_as_saved_connections(self):
         repository_root = Path(__file__).resolve().parents[1]
         store = ConnectionStore(
             repository_root,
@@ -43,11 +43,10 @@ class ConnectionStoreTests(unittest.TestCase):
 
         catalog = store.list_connections()
 
-        self.assertTrue(catalog["groupByDeployment"])
-        self.assertEqual(
-            [item["type"] for item in catalog["connections"]],
-            ["360", "enterprise"],
-        )
+        self.assertFalse(catalog["groupByDeployment"])
+        self.assertEqual(catalog["connections"], [])
+        self.assertEqual(catalog["env"]["connectionCount"], 0)
+        self.assertIn("Skipped 2 example connections", catalog["warnings"][0])
 
     def test_saves_secrets_to_keyring_and_lists_only_public_metadata(self):
         with TemporaryDirectory() as directory:
@@ -82,7 +81,7 @@ class ConnectionStoreTests(unittest.TestCase):
             env_path.write_text(
                 "\n".join(
                     [
-                        "EH_CONNECTION_ENTERPRISE_1_HOST=sensor-b.example.test",
+                        "EH_CONNECTION_ENTERPRISE_1_HOST=sensor-b.lab.local",
                         "EH_CONNECTION_ENTERPRISE_1_API_KEY=enterprise-key",
                         "EH_CONNECTION_360_2_TENANT=zulu",
                         "EH_CONNECTION_360_2_API_ID=zulu-id",
@@ -108,7 +107,7 @@ class ConnectionStoreTests(unittest.TestCase):
                 [
                     ("360", "alpha"),
                     ("360", "zulu"),
-                    ("enterprise", "sensor-b.example.test"),
+                    ("enterprise", "sensor-b.lab.local"),
                 ],
             )
             self.assertEqual(catalog["env"]["connectionCount"], 3)
@@ -119,7 +118,7 @@ class ConnectionStoreTests(unittest.TestCase):
             env_path.write_text(
                 "\n".join(
                     [
-                        "EH_CONNECTION_ENTERPRISE_1_HOST=sensor.example.test",
+                        "EH_CONNECTION_ENTERPRISE_1_HOST=sensor.lab.local",
                         "EH_CONNECTION_ENTERPRISE_1_API_KEY=env-key",
                         "EH_CONNECTION_ENTERPRISE_1_VERIFY_TLS=false",
                     ]
@@ -135,7 +134,7 @@ class ConnectionStoreTests(unittest.TestCase):
             saved = store.save(
                 {
                     "type": "enterprise",
-                    "host": "sensor.example.test",
+                    "host": "sensor.lab.local",
                     "apiKey": "keychain-key",
                 }
             )
@@ -160,14 +159,37 @@ class ConnectionStoreTests(unittest.TestCase):
             saved = store.save(
                 {
                     "type": "enterprise",
-                    "host": "https://Sensor.Example.Test:8443/",
+                    "host": "https://Sensor.Lab.Local:8443/",
                     "apiKey": "key",
                 }
             )
 
-            self.assertEqual(saved["host"], "sensor.example.test:8443")
-            self.assertEqual(saved["label"], "sensor.example.test:8443")
-            self.assertEqual(store.get(saved["id"])["host"], "sensor.example.test:8443")
+            self.assertEqual(saved["host"], "sensor.lab.local:8443")
+            self.assertEqual(saved["label"], "sensor.lab.local:8443")
+            self.assertEqual(store.get(saved["id"])["host"], "sensor.lab.local:8443")
+
+    def test_reserved_example_host_is_not_listed_or_loadable(self):
+        with TemporaryDirectory() as directory:
+            store = ConnectionStore(
+                Path(directory),
+                env_path=Path(directory) / ".env",
+                keyring_backend=FakeKeyring(),
+            )
+            saved = store.save(
+                {
+                    "type": "enterprise",
+                    "host": "sensor.example.test",
+                    "apiKey": "key",
+                }
+            )
+
+            catalog = store.list_connections()
+
+            self.assertEqual(catalog["connections"], [])
+            self.assertEqual(catalog["secureStorage"]["connectionCount"], 0)
+            self.assertIn("Skipped 1 example connection", catalog["warnings"][0])
+            with self.assertRaises(KeyError):
+                store.get(saved["id"])
 
     def test_invalid_env_entry_is_skipped_without_exposing_values(self):
         with TemporaryDirectory() as directory:

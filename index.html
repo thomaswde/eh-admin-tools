@@ -6,7 +6,7 @@
     <title>ExtraHop Admin Tools</title>
     <link rel="icon" href="favicon.png" type="image/png">
     <script src="js/theme-init.js?v=20260724-ui"></script>
-    <link rel="stylesheet" href="css/styles.css?v=20260725-version-dirty">
+    <link rel="stylesheet" href="css/styles.css?v=20260725-dropdowns-logging">
     <script src="js/vendor/chart.umd.min.js?v=4.4.0"></script>
     <script src="js/vendor/d3.min.js?v=7.9.0"></script>
 </head>
@@ -41,6 +41,15 @@
             </button>
 
             <div class="conn-panel" id="connPanel" hidden>
+                <!-- Connected state belongs at the top so the current target is immediately clear. -->
+                <div id="connectedState" class="hidden">
+                    <div class="notice notice-ok" style="margin-bottom: 12px;">
+                        <span class="notice-label">Connected</span>
+                        <span id="connectedInfo"></span>
+                    </div>
+                    <button type="button" id="disconnectBtn" class="btn btn-block">Disconnect</button>
+                </div>
+
                 <h2>Connection</h2>
                 <p class="field-hint" style="margin-bottom: 14px;">Credentials stay out of the browser. Manual connections are saved in your operating system credential store.</p>
 
@@ -55,15 +64,6 @@
                     </div>
                     <button type="button" id="connectSavedBtn" class="btn-primary btn-block" disabled>Connect</button>
                     <button type="button" id="addConnectionBtn" class="btn btn-block">Add new connection</button>
-                </div>
-
-                <!-- Connected state -->
-                <div id="connectedState" class="hidden">
-                    <div class="notice notice-ok" style="margin-bottom: 12px;">
-                        <span class="notice-label">Connected</span>
-                        <span id="connectedInfo"></span>
-                    </div>
-                    <button type="button" id="disconnectBtn" class="btn btn-block" style="margin-bottom: 4px;">Disconnect</button>
                 </div>
 
                 <!-- Connection status message -->
@@ -138,21 +138,6 @@
 
                     <button type="button" id="connectBtn" class="btn-primary btn-block">Connect and save</button>
                 </div>
-
-                <div class="conn-divider"></div>
-
-                <!-- API response logging -->
-                <div id="apiLoggingPanel" class="field">
-                    <label for="apiLoggingVerbosity">API response logging</label>
-                    <select id="apiLoggingVerbosity">
-                        <option value="off">Off</option>
-                        <option value="errors" selected>Errors</option>
-                        <option value="metadata">Metadata</option>
-                        <option value="full">Full</option>
-                    </select>
-                    <span id="apiLoggingStatus" class="field-hint break-any"></span>
-                    <span class="field-hint">Full logging can contain sensitive operational data. Share log files only after review.</span>
-                </div>
             </div>
         </div>
 
@@ -175,6 +160,7 @@
 
     <!-- =============================== RAIL =============================== -->
     <nav class="rail" aria-label="Tools">
+        <div class="rail-scroll">
         <div id="moduleSelection" style="display: none;">
             <div class="rail-group-label">Tools</div>
             <div class="rail-nav">
@@ -279,6 +265,55 @@
                     </svg>
                     <span class="nav-text"><span class="nav-title">REST API Guide</span></span>
                 </button>
+            </div>
+        </div>
+
+        </div>
+
+        <div class="rail-logging">
+            <div class="rail-group-label">Logging</div>
+            <button type="button" class="nav-item logging-toggle" id="apiLoggingToggle"
+                    aria-expanded="false" aria-controls="apiLoggingPanel">
+                <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                     stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 4h16v16H4z"></path>
+                    <path d="M8 9h8M8 13h8M8 17h5"></path>
+                </svg>
+                <span class="nav-text">
+                    <span class="nav-title">API response logging</span>
+                    <span class="nav-desc" id="apiLoggingSummary">Loading…</span>
+                </span>
+                <svg class="logging-caret" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+                    <path d="M6 15l6-6 6 6"></path>
+                </svg>
+            </button>
+
+            <div id="apiLoggingPanel" class="logging-panel" hidden>
+                <div class="logging-panel-head">
+                    <div>
+                        <h2>API response logging</h2>
+                        <p>Configure diagnostic logging for the entire app.</p>
+                    </div>
+                    <button type="button" class="icon-btn" id="apiLoggingClose" aria-label="Close logging settings">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                             stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                            <path d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="field">
+                    <label for="apiLoggingVerbosity">Response detail</label>
+                    <select id="apiLoggingVerbosity">
+                        <option value="off">Off</option>
+                        <option value="errors" selected>Errors</option>
+                        <option value="metadata">Metadata</option>
+                        <option value="full">Full</option>
+                    </select>
+                    <span id="apiLoggingStatus" class="field-hint break-any"></span>
+                    <span class="field-hint">Full logging can contain sensitive operational data. Share log files only after review.</span>
+                </div>
             </div>
         </div>
     </nav>
@@ -1453,11 +1488,12 @@
 
 <!-- Load JavaScript modules -->
 <script src="js/theme.js?v=20260724-ui"></script>
+<script src="js/ui/custom-select.js?v=20260725-dropdowns"></script>
 <script src="js/utils/app-state.js?v=20260725-environment-cache"></script>
 <script src="js/api-client/extrahop-api.js?v=20260725-environment-cache"></script>
 <script src="js/utils/common.js?v=20260724-ui"></script>
 <script src="js/auth/auth-manager.js?v=20260725-environment-cache"></script>
 <script src="js/utils/module-loader.js?v=20260724-ui"></script>
-<script src="js/app.js?v=20260725-version-dirty"></script>
+<script src="js/app.js?v=20260725-dropdowns-logging"></script>
 </body>
 </html>

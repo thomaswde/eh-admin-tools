@@ -725,6 +725,7 @@ function openCreateUserModal() {
     document.getElementById('createUserName').value = '';
     document.getElementById('createUserPassword').value = '';
     document.getElementById('createUserType').value = 'local';
+    window.refreshCustomSelect?.(document.getElementById('createUserType'));
     document.getElementById('createUserEnabled').checked = true;
     document.getElementById('createUserCreateApiKey').checked = false;
     document.getElementById('createUserEhAccountTeam').checked = false;
