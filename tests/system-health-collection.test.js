@@ -60,6 +60,40 @@ test('drains XID chunks through again, data, and null', async () => {
     assert.equal(paths[1], '/metrics/next/90071992547409931234');
 });
 
+test('preserves a sensor-specific XID failure while completing other sensor chunks', async () => {
+    const sensorError = new Error('API request failed');
+    sensorError.status = 500;
+    sensorError.details = {
+        response: {
+            error_message: '"sensor-8" (ID 8 at 10.0.0.8): failed to get sessionid (-32099)'
+        }
+    };
+    const responses = [
+        { xid: 77 },
+        { node_id: 7, stats: [{ oid: 7, time: 1, duration: 1000, values: [1] }] },
+        sensorError,
+        null
+    ];
+    const result = await health.collectMetricEndpoint(async () => {
+        const response = responses.shift();
+        if (response instanceof Error) throw response;
+        return response;
+    }, '/metrics', {}, { sleep: async () => {}, now: () => 0 });
+
+    assert.equal(result.complete, true);
+    assert.equal(result.chunks.length, 1);
+    assert.equal(result.sensor_failures['8'].status, 'failed');
+    assert.match(result.sensor_failures['8'].detail, /failed to get sessionid/);
+
+    const coverage = health.buildSensorCoverage(
+        [{ id: 7, status_message: 'Online' }, { id: 8, status_message: 'Online' }],
+        [{ appliance_id: '7', value: 1 }],
+        { sensorFailures: result.sensor_failures }
+    );
+    assert.equal(coverage['7'].status, 'complete');
+    assert.equal(coverage['8'].status, 'failed');
+});
+
 test('raises an explicit incomplete-result error after repeated again responses', async () => {
     await assert.rejects(
         health.collectMetricEndpoint(

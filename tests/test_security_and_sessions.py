@@ -116,6 +116,13 @@ class BackendRouteSecurityTests(unittest.TestCase):
         response = self.client.get("/backend/system-health/catalog")
         self.assertEqual(response.status_code, 401)
 
+    def test_index_disables_browser_caching(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store, max-age=0")
+        self.assertEqual(response.headers["pragma"], "no-cache")
+
     def test_reconnect_atomically_replaces_old_session(self):
         config = {
             "type": "enterprise",

@@ -101,6 +101,23 @@ EOF
     exit 1
 fi
 
+UI_CACHE_KEY=$("$BOOTSTRAP_PYTHON" - "$APP_DIR" <<'PY'
+from hashlib import sha256
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+paths = [root / "index.html", *sorted((root / "css").rglob("*.css")), *sorted((root / "js").rglob("*.js"))]
+digest = sha256()
+for path in paths:
+    if path.is_file():
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+print(digest.hexdigest()[:12])
+PY
+)
+
 LOCK_HASH=$("$BOOTSTRAP_PYTHON" - "$LOCK_FILE" <<'PY'
 from hashlib import sha256
 from pathlib import Path
@@ -309,11 +326,12 @@ PORT_VALUE=${PORT_RESULT#*:}
 case "$PORT_STATUS" in
     existing)
         APP_URL="http://127.0.0.1:$PORT_VALUE/"
-        echo "ExtraHop Admin Tools is already running at $APP_URL"
+        BROWSER_URL="${APP_URL}?build=$UI_CACHE_KEY"
+        echo "ExtraHop Admin Tools is already running at $BROWSER_URL"
         if [ "$NO_BROWSER" -eq 0 ]; then
             case "$SYSTEM_NAME" in
-                Darwin) open "$APP_URL" >/dev/null 2>&1 || true ;;
-                Linux) command -v xdg-open >/dev/null 2>&1 && xdg-open "$APP_URL" >/dev/null 2>&1 || true ;;
+                Darwin) open "$BROWSER_URL" >/dev/null 2>&1 || true ;;
+                Linux) command -v xdg-open >/dev/null 2>&1 && xdg-open "$BROWSER_URL" >/dev/null 2>&1 || true ;;
             esac
         fi
         exit 0
@@ -332,6 +350,7 @@ case "$PORT_STATUS" in
 esac
 
 APP_URL="http://127.0.0.1:$PORT/"
+BROWSER_URL="${APP_URL}?build=$UI_CACHE_KEY"
 export EH_API_RESPONSE_LOG=${EH_API_RESPONSE_LOG:-$API_LOG}
 export EH_API_LOG_VERBOSITY=${EH_API_LOG_VERBOSITY:-off}
 
@@ -349,12 +368,12 @@ raise SystemExit(0 if payload.get("app") == "extrahop-admin-tools" else 1)
 PY
         then
             echo
-            echo "Ready: $APP_URL"
+            echo "Ready: $BROWSER_URL"
             echo "Keep this terminal window open. Press Ctrl+C to stop the app."
             if [ "$NO_BROWSER" -eq 0 ]; then
                 case "$SYSTEM_NAME" in
-                    Darwin) open "$APP_URL" >/dev/null 2>&1 || true ;;
-                    Linux) command -v xdg-open >/dev/null 2>&1 && xdg-open "$APP_URL" >/dev/null 2>&1 || true ;;
+                    Darwin) open "$BROWSER_URL" >/dev/null 2>&1 || true ;;
+                    Linux) command -v xdg-open >/dev/null 2>&1 && xdg-open "$BROWSER_URL" >/dev/null 2>&1 || true ;;
                 esac
             fi
             return 0

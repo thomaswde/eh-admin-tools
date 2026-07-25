@@ -159,6 +159,22 @@
             || (error && error.name === 'TypeError');
     }
 
+    function metricSensorFailure(error) {
+        if (!error || Number(error.status) !== 500) return null;
+        const response = error.details && error.details.response;
+        const message = response && typeof response === 'object'
+            ? response.error_message || response.error || ''
+            : '';
+        const match = String(message).match(/\(\s*ID\s+([0-9]+)\s+at\b/i);
+        if (!match) return null;
+        return {
+            sensor_id: idKey(match[1]),
+            status: 'failed',
+            detail: String(message),
+            http_status: 500
+        };
+    }
+
     async function requestWithRetry(request, endpoint, options, retryOptions = {}) {
         const sleep = retryOptions.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
         const random = retryOptions.random || Math.random;
@@ -198,10 +214,11 @@
             maxAttempts: options.maxRetryAttempts
         });
         const chunks = [];
+        const sensorFailures = {};
         if (initial && typeof initial === 'object' && Array.isArray(initial.stats)) chunks.push(initial);
 
         const xid = responseXid(initial);
-        if (xid === null) return { chunks, xid: null, complete: true };
+        if (xid === null) return { chunks, xid: null, complete: true, sensor_failures: sensorFailures };
 
         const deadline = now() + deadlineMs;
         let pendingRetries = 0;
@@ -213,14 +230,28 @@
                     { xid: idKey(xid), result_chunks: resultChunks, pending_retries: pendingRetries }
                 );
             }
-            const chunk = await requestWithRetry(
-                request,
-                `/metrics/next/${encodeURIComponent(idKey(xid))}`,
-                { method: 'GET', signal: options.signal },
-                { sleep, random: options.random, maxAttempts: options.maxRetryAttempts }
-            );
+            let chunk;
+            try {
+                chunk = await requestWithRetry(
+                    request,
+                    `/metrics/next/${encodeURIComponent(idKey(xid))}`,
+                    { method: 'GET', signal: options.signal },
+                    { sleep, random: options.random, maxAttempts: options.maxRetryAttempts }
+                );
+            } catch (error) {
+                const sensorFailure = metricSensorFailure(error);
+                if (!sensorFailure) throw error;
+                sensorFailures[sensorFailure.sensor_id] = sensorFailure;
+                pendingRetries = 0;
+                continue;
+            }
             if (chunk === null || chunk === undefined) {
-                return { chunks, xid: idKey(xid), complete: true };
+                return {
+                    chunks,
+                    xid: idKey(xid),
+                    complete: true,
+                    sensor_failures: sensorFailures
+                };
             }
             if (chunk === 'again') {
                 pendingRetries += 1;
@@ -477,6 +508,14 @@
                 };
                 return;
             }
+            const sensorFailure = options.sensorFailures && options.sensorFailures[id];
+            if (sensorFailure) {
+                coverage[id] = {
+                    status: sensorFailure.status || 'failed',
+                    detail: sensorFailure.detail || 'sensor metric query failed'
+                };
+                return;
+            }
             const sensorRows = rowsBySensor[id] || [];
             const values = sensorRows.flatMap(row => {
                 if (row.values) return Object.values(row.values).filter(value => finiteNumber(value) !== null);
@@ -519,6 +558,7 @@
         estimateBucketCount,
         chooseCyclePolicy,
         buildMetricRequest,
+        metricSensorFailure,
         requestWithRetry,
         collectMetricEndpoint,
         normalizeTimeSeriesChunks,

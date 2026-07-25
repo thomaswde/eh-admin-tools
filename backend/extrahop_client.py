@@ -17,7 +17,6 @@ DEFAULT_360_TOKEN_TTL_SECONDS = 30 * 60
 TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
 MAX_REQUEST_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
-METRICS_NEXT_ENDPOINT = re.compile(r"^/api/v1/metrics/next/[^/]+$")
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
@@ -241,7 +240,7 @@ class ExtraHopClient:
                 )
 
             if (
-                not self._retryable_status(method, endpoint, response.status_code)
+                response.status_code not in RETRYABLE_STATUS_CODES
                 or not self._retryable_request(method, endpoint)
                 or attempt >= MAX_REQUEST_ATTEMPTS - 1
             ):
@@ -284,20 +283,6 @@ class ExtraHopClient:
             "/api/v1/metrics/totalbyobject",
             "/api/v1/metrics/catalog/search",
         }
-
-    @staticmethod
-    def _retryable_status(method: str, endpoint: str, status_code: int) -> bool:
-        if status_code in RETRYABLE_STATUS_CODES:
-            return True
-        # An accepted XID continuation is safe to repeat when a console returns
-        # a transient server error. Limit that compatibility retry to the
-        # documented continuation endpoint so unrelated 500s surface
-        # immediately instead of being repeated blindly.
-        return (
-            status_code == 500
-            and method.upper() == "GET"
-            and METRICS_NEXT_ENDPOINT.fullmatch(endpoint) is not None
-        )
 
     @staticmethod
     def _retry_delay_seconds(attempt: int, retry_after: str | None) -> float:

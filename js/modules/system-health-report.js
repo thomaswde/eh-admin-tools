@@ -288,7 +288,8 @@ async function collectSystemHealthTimeSeries(metricSensors, allSensors, applianc
             });
             const coverage = SystemHealthCollection.buildSensorCoverage(
                 allSensors,
-                rows.map(row => ({ appliance_id: row.appliance_id, value: row.value }))
+                rows.map(row => ({ appliance_id: row.appliance_id, value: row.value })),
+                { sensorFailures: result.sensor_failures }
             );
             errors.push(...systemHealthCoverageErrors(coverage, metricName));
             metrics[metricName] = {
@@ -296,6 +297,7 @@ async function collectSystemHealthTimeSeries(metricSensors, allSensors, applianc
                 aggregation_mode: 'time_series',
                 rows,
                 collection_metadata: normalized.metadata,
+                sensor_failures: result.sensor_failures,
                 summary: SystemHealthCollection.summarizeTimeSeriesRows(normalized.rows, metricName),
                 sensor_status: coverage,
                 errors: []
@@ -356,12 +358,17 @@ async function collectSystemHealthTriggerDrops(metricSensors, allSensors, applia
             row.license_platform = appliance.license_platform || '';
             row.time_iso = systemHealthMsToIso(row.timestamp_ms);
         });
-        const coverage = SystemHealthCollection.buildSensorCoverage(allSensors, normalized.rows);
+        const coverage = SystemHealthCollection.buildSensorCoverage(
+            allSensors,
+            normalized.rows,
+            { sensorFailures: result.sensor_failures }
+        );
         return {
             metric_category_used: 'capture',
             aggregation_mode: 'total_by_object',
             rows: normalized.rows,
             collection_metadata: normalized.metadata,
+            sensor_failures: result.sensor_failures,
             summary: SystemHealthCollection.summarizeAggregateRows(normalized.rows),
             sensor_status: coverage,
             errors: systemHealthCoverageErrors(coverage, 'trigger-drop totals')

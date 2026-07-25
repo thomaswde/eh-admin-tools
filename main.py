@@ -136,7 +136,14 @@ async def request_validation_error_handler(
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(APP_ROOT / "index.html")
+    return FileResponse(
+        APP_ROOT / "index.html",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/backend/health")

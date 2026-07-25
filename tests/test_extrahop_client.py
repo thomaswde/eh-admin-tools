@@ -95,19 +95,16 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         sleep.assert_awaited_once_with(2.0)
         await client.aclose()
 
-    async def test_retries_metrics_next_internal_server_error_only(self):
-        metrics_attempts = 0
-        appliance_attempts = 0
+    async def test_does_not_retry_metrics_next_sensor_failure(self):
+        attempts = 0
 
         async def handler(request):
-            nonlocal metrics_attempts, appliance_attempts
-            if request.url.path == "/api/v1/metrics/next/77":
-                metrics_attempts += 1
-                if metrics_attempts == 1:
-                    return httpx.Response(500, json={"error_message": "remote sensor pending"})
-                return httpx.Response(200, json={"node_id": 7, "stats": []})
-            appliance_attempts += 1
-            return httpx.Response(500, json={"error_message": "permanent failure"})
+            nonlocal attempts
+            attempts += 1
+            return httpx.Response(
+                500,
+                json={"error_message": '"sensor-7" (ID 7 at 10.0.0.7): failed to get sessionid'},
+            )
 
         client = ExtraHopClient({
             "type": "enterprise",
@@ -116,14 +113,11 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         })
         client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         with patch("backend.extrahop_client.asyncio.sleep", new=AsyncMock()) as sleep:
-            result = await client.request("GET", "/metrics/next/77")
-            with self.assertRaisesRegex(ExtraHopApiError, "permanent failure"):
-                await client.request("GET", "/appliances")
+            with self.assertRaisesRegex(ExtraHopApiError, "failed to get sessionid"):
+                await client.request("GET", "/metrics/next/77")
 
-        self.assertEqual(result, {"node_id": 7, "stats": []})
-        self.assertEqual(metrics_attempts, 2)
-        self.assertEqual(appliance_attempts, 1)
-        sleep.assert_awaited_once()
+        self.assertEqual(attempts, 1)
+        sleep.assert_not_awaited()
         await client.aclose()
 
     async def test_cancellation_is_not_retried_or_wrapped(self):
