@@ -13,6 +13,9 @@ class ModuleLoader {
             'audit-logs': 'audit-logs.js',
             'nodemap': 'nodemap.js'
         };
+        this.moduleDependencies = {
+            'system-health': ['chart-theme.js', 'system-health-collection.js']
+        };
     }
 
     async loadModule(moduleName) {
@@ -28,6 +31,10 @@ class ModuleLoader {
 
         try {
             console.log(`Loading module: ${moduleName}`);
+
+            for (const dependency of this.moduleDependencies[moduleName] || []) {
+                await this.loadScript(`js/modules/${dependency}?v=${Date.now()}`, `${moduleName}:${dependency}`);
+            }
 
             const existingScript = document.querySelector(`script[data-module-name="${moduleName}"]`);
             if (existingScript && existingScript.dataset.moduleLoaded === 'true') {
@@ -63,6 +70,28 @@ class ModuleLoader {
             console.error(`Error loading module '${moduleName}':`, error);
             return false;
         }
+    }
+
+    loadScript(src, dependencyName) {
+        const selector = `script[data-module-dependency="${dependencyName}"]`;
+        const existing = document.querySelector(selector);
+        if (existing?.dataset.moduleLoaded === 'true') return Promise.resolve(true);
+        if (existing) existing.remove();
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.dataset.moduleDependency = dependencyName;
+        return new Promise((resolve, reject) => {
+            script.onload = () => {
+                script.dataset.moduleLoaded = 'true';
+                resolve(true);
+            };
+            script.onerror = () => {
+                script.remove();
+                reject(new Error(`Failed to load module dependency: ${dependencyName}`));
+            };
+            document.head.appendChild(script);
+        });
     }
 
     async switchToModule(moduleName) {

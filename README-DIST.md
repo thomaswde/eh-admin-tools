@@ -71,6 +71,12 @@ Use this if dependency installation was interrupted or diagnostics report a brok
 
 Start again without `--skip-pdf-setup`. On some Linux distributions, Playwright may also require operating-system browser libraries that an administrator must install.
 
+## Chart themes
+
+System Health charts export as PNGs sized for slide decks. Open **Chart theme** above the charts to switch between the built-in themes or set exact colors, then export.
+
+Themes you save are written to the `chart-themes` folder beside this file, one small JSON file each. Copy that folder to back up your themes or to give them to someone else — drop the files into their `chart-themes` folder and they appear in the picker.
+
 ## Logs and privacy
 
 The launcher prints the writable log directory during startup and diagnostics.

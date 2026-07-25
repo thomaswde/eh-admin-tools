@@ -38,8 +38,17 @@ Open <http://127.0.0.1:8000>.
 
 ```bash
 python -m unittest discover -s tests -v
+node --test tests/system-health-collection.test.js
 for file in $(find js -name '*.js'); do node --check "$file"; done
 ```
+
+## System Health collection limits
+
+System Health uses one absolute report window, one batched time-series request for packet, byte,
+and aligned trigger-cycle metrics, and one per-object totals request for trigger drops. The client
+automatically coarsens the selected cycle to keep each sensor at or below 10,000 buckets and the
+whole time-series response at or below 500,000 scalar points. A request that still exceeds the
+report-wide budget at the 24-hour cycle is rejected before it reaches ExtraHop.
 
 ## API response logging
 

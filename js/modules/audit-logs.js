@@ -96,7 +96,7 @@ async function loadAuditLog() {
         }
         
         // Show charts and export
-        document.getElementById('auditLogChartsContainer').style.display = 'block';
+        document.getElementById('auditLogChartsContainer').style.display = 'flex';
         document.getElementById('exportAuditLogSection').style.display = 'block';
 
     } catch (error) {

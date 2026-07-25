@@ -83,7 +83,8 @@ class ExtraHopAPI {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
             },
-            body: options.body
+            body: options.body,
+            signal: options.signal
         });
 
         return this.parseResponse(response);
@@ -246,8 +247,8 @@ class ExtraHopAPI {
         });
     }
 
-    async getAppliances() {
-        return this.request('/appliances');
+    async getAppliances(options = {}) {
+        return this.request('/appliances', options);
     }
 
     async getAuditLog(limit = 100, offset = 0) {

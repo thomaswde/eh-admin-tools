@@ -9,3 +9,4 @@ node_modules/
 logs/
 dist/
 .runtime/
+chart-themes/

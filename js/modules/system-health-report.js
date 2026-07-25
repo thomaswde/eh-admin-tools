@@ -1,31 +1,17 @@
 // System Health Report Module
 
 const SYSTEM_HEALTH_ROWS_PER_PAGE = 22;
-const SYSTEM_HEALTH_METRICS = ['bytes', 'pkts', 'trigger_cycles', 'trigger_cycles_avail', 'trigger_drops'];
 const SYSTEM_HEALTH_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_HEALTH_DEVICE_LIMIT = 5000;
-const SYSTEM_HEALTH_STYLE_STORAGE_KEY = 'ehSystemHealthChartStyle';
-const SYSTEM_HEALTH_LEGACY_STYLE_STORAGE_KEY = 'ehReportChartStyle';
-const SYSTEM_HEALTH_COLORS = {
-    cyan: '#00aaef',
-    magenta: '#ec0089',
-    tangerine: '#f05918',
-    sapphire: '#261f63',
-    plum: '#7f2854',
-    green: '#16a34a',
-    amber: '#f59e0b',
-    red: '#dc2626'
-};
-
 const systemHealthState = {
     initialized: false,
     catalog: {},
     catalogLoaded: false,
     catalogPath: '',
     catalogError: '',
-    catalogModelCount: 0,
     charts: {},
     currentReport: null,
+    abortController: null,
     pages: {
         packetModel: 0,
         packetRow: 0,
@@ -35,50 +21,8 @@ const systemHealthState = {
         triggersRow: 0,
         analysisModel: 0,
         analysisRow: 0
-    },
-    style: loadSystemHealthStyle()
-};
-
-function defaultSystemHealthStyle() {
-    return {
-        theme: 'light',
-        transparent: false,
-        bgHex: '#ffffff',
-        textHex: SYSTEM_HEALTH_COLORS.sapphire,
-        advHex: SYSTEM_HEALTH_COLORS.cyan,
-        stdHex: SYSTEM_HEALTH_COLORS.plum,
-        discHex: SYSTEM_HEALTH_COLORS.tangerine
-    };
-}
-
-function loadSystemHealthStyle() {
-    try {
-        const params = new URLSearchParams(location.search);
-        const styleParam = params.get('systemHealthStyle') || params.get('style');
-        if (styleParam) return normalizeSystemHealthStyle(JSON.parse(styleParam));
-    } catch {}
-
-    for (const key of [SYSTEM_HEALTH_STYLE_STORAGE_KEY, SYSTEM_HEALTH_LEGACY_STYLE_STORAGE_KEY]) {
-        try {
-            const raw = localStorage.getItem(key);
-            if (raw) return normalizeSystemHealthStyle(JSON.parse(raw));
-        } catch {}
     }
-    return defaultSystemHealthStyle();
-}
-
-function normalizeSystemHealthStyle(raw) {
-    const style = { ...defaultSystemHealthStyle(), ...(raw || {}) };
-    if (style.theme === 'default') style.theme = 'light';
-    if (style.bg === 'transparent') style.transparent = true;
-    if (style.bg === 'sapphire') style.theme = 'dark';
-    if (style.bg === 'custom') style.theme = 'custom';
-    delete style.bg;
-    if (raw && raw.lowHex && !raw.advHex) style.advHex = raw.lowHex;
-    if (raw && raw.midHex && !raw.stdHex) style.stdHex = raw.midHex;
-    if (raw && raw.highHex && !raw.discHex) style.discHex = raw.highHex;
-    return style;
-}
+};
 
 function initSystemHealthModule() {
     if (systemHealthState.initialized) return;
@@ -115,13 +59,11 @@ async function loadSystemHealthCatalog() {
         systemHealthState.catalogPath = payload.path || '';
         systemHealthState.catalog = payload.lookup || buildSystemHealthCatalog(payload.models || []);
         systemHealthState.catalogError = '';
-        systemHealthState.catalogModelCount = Object.keys(systemHealthState.catalog).length;
     } catch (error) {
         console.warn('Could not load system health catalog:', error);
         systemHealthState.catalogLoaded = false;
         systemHealthState.catalog = {};
         systemHealthState.catalogError = error.message || 'Catalog could not be loaded.';
-        systemHealthState.catalogModelCount = 0;
     }
     updateSystemHealthCatalogStatus();
 }
@@ -149,12 +91,8 @@ function updateSystemHealthCatalogStatus() {
     const el = document.getElementById('systemHealthCatalogStatus');
     if (!el) return;
     if (systemHealthState.catalogLoaded) {
-        const modelText = systemHealthState.catalogModelCount === 1 ? '1 model' : `${systemHealthState.catalogModelCount} models`;
-        el.className = 'system-health-catalog-status is-loaded';
-        el.innerHTML = `
-            <span class="system-health-catalog-badge">Catalog loaded</span>
-            <span>Capacity comparisons are active using ${escapeSystemHealthHtml(modelText)} from ${escapeSystemHealthHtml(systemHealthState.catalogPath || 'default catalog')}.</span>
-        `;
+        el.className = 'system-health-catalog-status hidden';
+        el.replaceChildren();
     } else {
         const detail = systemHealthState.catalogError
             ? ` ${systemHealthState.catalogError}`
@@ -170,6 +108,12 @@ function updateSystemHealthCatalogStatus() {
 }
 
 async function generateSystemHealthReport() {
+    if (!window.SystemHealthCollection) {
+        throw new Error('System Health collection module did not load.');
+    }
+    if (systemHealthState.abortController) systemHealthState.abortController.abort();
+    const abortController = new AbortController();
+    systemHealthState.abortController = abortController;
     const loading = document.getElementById('systemHealthLoading');
     const results = document.getElementById('systemHealthResults');
     const loadingText = document.getElementById('systemHealthLoadingText');
@@ -181,38 +125,72 @@ async function generateSystemHealthReport() {
 
     try {
         const lookbackDays = Number(document.getElementById('systemHealthLookback').value || 7);
-        const cycle = document.getElementById('systemHealthCycle').value || '1hr';
+        const requestedCycle = document.getElementById('systemHealthCycle').value || '1hr';
+        const untilMs = Date.now();
+        const fromMs = untilMs - (lookbackDays * SYSTEM_HEALTH_DAY_MS);
 
         loadingText.textContent = 'Loading product catalog...';
         await loadSystemHealthCatalog();
 
         loadingText.textContent = 'Loading appliance inventory...';
-        const appliances = normalizeSystemHealthAppliances(await window.apiClient.getAppliances());
+        const appliances = normalizeSystemHealthAppliances(await window.apiClient.getAppliances({ signal: abortController.signal }));
         const discoverSensors = appliances.filter(item => String(item.platform || '').toLowerCase() === 'discover');
         const metricSensors = discoverSensors.filter(isSystemHealthMetricSensor);
-        const appliancesById = Object.fromEntries(metricSensors.map(item => [String(item.id), item]));
+        const appliancesById = Object.fromEntries(discoverSensors.map(item => [String(item.id), item]));
+        const cyclePolicy = SystemHealthCollection.chooseCyclePolicy({
+            requestedCycle,
+            windowMs: untilMs - fromMs,
+            sensorCount: metricSensors.length
+        });
 
-        loadingText.textContent = 'Counting device analysis tiers...';
-        const deviceAnalysis = await collectSystemHealthDeviceAnalysis(lookbackDays);
-
-        loadingText.textContent = 'Collecting peak packet, throughput, and trigger metrics...';
-        const metricResults = {};
-        for (const metricName of SYSTEM_HEALTH_METRICS) {
-            metricResults[metricName] = await collectSystemHealthMetric(
-                metricSensors,
-                appliancesById,
-                metricName,
-                lookbackDays,
-                cycle
-            );
-        }
+        loadingText.textContent = 'Collecting device tiers and batched system metrics...';
+        const [deviceResult, timeSeriesResult, triggerDropResult] = await Promise.all([
+            collectSystemHealthDeviceAnalysis(fromMs, untilMs, abortController.signal).catch(error => {
+                if (abortController.signal.aborted) throw error;
+                return {
+                    by_sensor: {},
+                    warnings: [`Device analysis collection failed without substituting zero values: ${error.message}`],
+                    error
+                };
+            }),
+            collectSystemHealthTimeSeries(metricSensors, discoverSensors, appliancesById, {
+                fromMs,
+                untilMs,
+                cycle: cyclePolicy.query_cycle,
+                signal: abortController.signal
+            }),
+            collectSystemHealthTriggerDrops(metricSensors, discoverSensors, appliancesById, {
+                fromMs,
+                untilMs,
+                cycle: cyclePolicy.query_cycle,
+                signal: abortController.signal
+            })
+        ]);
+        const metricResults = {
+            ...timeSeriesResult.metrics,
+            trigger_drops: triggerDropResult
+        };
 
         const report = buildSystemHealthReport({
             appliances: discoverSensors,
-            deviceAnalysis,
+            deviceAnalysis: deviceResult.by_sensor,
             metricResults,
             lookbackDays,
-            cycle
+            cycle: cyclePolicy.query_cycle,
+            requestedCycle,
+            cyclePolicy,
+            fromMs,
+            untilMs,
+            triggerUtilization: timeSeriesResult.trigger_utilization,
+            deviceAnalysisError: deviceResult.error,
+            collectionErrors: [
+                ...deviceResult.warnings,
+                ...timeSeriesResult.errors,
+                ...(triggerDropResult.errors || []),
+                ...(cyclePolicy.adjusted
+                    ? [`Metric cycle was automatically changed from ${requestedCycle} to ${cyclePolicy.query_cycle} to stay within the ${SystemHealthCollection.MAX_BUCKETS_PER_SENSOR.toLocaleString()}-bucket per-sensor and ${SystemHealthCollection.MAX_SCALAR_POINTS_PER_REPORT.toLocaleString()}-point report budgets.`]
+                    : [])
+            ]
         });
 
         systemHealthState.currentReport = report;
@@ -221,6 +199,7 @@ async function generateSystemHealthReport() {
         renderSystemHealthReport(report);
         updateSystemHealthCsvButtons();
     } catch (error) {
+        if (abortController.signal.aborted) return;
         showErrorModal(error.message || 'System Health report failed', {
             url: '/backend/extrahop',
             headers: { 'Content-Type': 'application/json' },
@@ -229,8 +208,11 @@ async function generateSystemHealthReport() {
             response: error.details || error.message || 'No additional details'
         });
     } finally {
-        loading.style.display = 'none';
-        button.disabled = false;
+        if (systemHealthState.abortController === abortController) {
+            systemHealthState.abortController = null;
+            loading.style.display = 'none';
+            button.disabled = false;
+        }
     }
 }
 
@@ -246,163 +228,148 @@ function isSystemHealthMetricSensor(appliance) {
     return status === 'online' && appliance.data_access !== false;
 }
 
-async function collectSystemHealthMetric(sensors, appliancesById, metricName, lookbackDays, cycle) {
-    if (!sensors.length) {
-        return { metric_category_used: 'capture', rows: [], summary: summarizeSystemHealthRows([]), errors: [] };
+async function collectSystemHealthTimeSeries(metricSensors, allSensors, appliancesById, options) {
+    const metricNames = SystemHealthCollection.TIME_SERIES_METRICS;
+    const emptyMetrics = Object.fromEntries(metricNames.map(metricName => [metricName, {
+        metric_category_used: 'capture',
+        aggregation_mode: 'time_series',
+        rows: [],
+        summary: SystemHealthCollection.summarizeTimeSeriesRows([], metricName),
+        sensor_status: SystemHealthCollection.buildSensorCoverage(allSensors, [])
+    }]));
+    if (!metricSensors.length) {
+        return { metrics: emptyMetrics, trigger_utilization: SystemHealthCollection.summarizeTriggerUtilization([]), errors: [] };
     }
 
-    const categories = ['capture', 'system.capture'];
-    const errors = [];
-    let lastEmptyResult = null;
-
-    for (const category of categories) {
-        const rows = [];
-        for (const sensor of sensors) {
-            const sensorId = Number(sensor.id);
-            if (!Number.isFinite(sensorId)) continue;
-            const body = {
-                cycle,
-                from: -(lookbackDays * SYSTEM_HEALTH_DAY_MS),
-                until: 0,
-                object_type: 'system',
-                object_ids: [sensorId],
-                metric_category: category,
-                metric_specs: [{ name: metricName }]
-            };
-            try {
-                const chunks = await collectSystemHealthMetricChunks(body);
-                const sensorRows = normalizeSystemHealthMetricRows(chunks, appliancesById, metricName);
-                const fallback = await collectSystemHealthMetricFallbackIfEmpty(body, appliancesById, metricName, sensorRows);
-                const resultRows = fallback.rows.length ? fallback.rows : sensorRows;
-                if (fallback.rows.length) {
-                    errors.push(`${metricName} (${category}, ${systemHealthApplianceName(sensor, sensor.id)}): interval metrics were empty; used total-by-object fallback. Rates are averaged across the lookback.`);
-                }
-                rows.push(...resultRows);
-            } catch (error) {
-                errors.push(`${metricName} (${category}, ${systemHealthApplianceName(sensor, sensor.id)}): ${error.message}`);
-            }
-        }
-
-        if (!systemHealthRowsHaveValues(rows)) {
-            errors.push(`${metricName} (${category}): response contained no metric values for ${sensors.length} online sensors.`);
-            lastEmptyResult = {
-                metric_category_used: category,
+    const body = SystemHealthCollection.buildMetricRequest({
+        cycle: options.cycle,
+        fromMs: options.fromMs,
+        untilMs: options.untilMs,
+        objectIds: metricSensors.map(sensor => sensor.id),
+        metricNames
+    });
+    try {
+        const result = await SystemHealthCollection.collectMetricEndpoint(
+            window.apiClient.request.bind(window.apiClient),
+            '/metrics',
+            body,
+            { signal: options.signal }
+        );
+        const normalized = SystemHealthCollection.normalizeTimeSeriesChunks(result.chunks, appliancesById, metricNames);
+        const errors = [];
+        const metrics = {};
+        metricNames.forEach(metricName => {
+            const rows = normalized.rows.map(row => {
+                const appliance = appliancesById[String(row.appliance_id)] || {};
+                return {
+                    ...row,
+                    appliance_name: systemHealthApplianceName(appliance, row.appliance_id),
+                    hostname: appliance.hostname || '',
+                    platform: appliance.platform || '',
+                    license_platform: appliance.license_platform || '',
+                    metric: metricName,
+                    value: row.values[metricName],
+                    time_iso: systemHealthMsToIso(row.timestamp_ms)
+                };
+            });
+            const coverage = SystemHealthCollection.buildSensorCoverage(
+                allSensors,
+                rows.map(row => ({ appliance_id: row.appliance_id, value: row.value }))
+            );
+            errors.push(...systemHealthCoverageErrors(coverage, metricName));
+            metrics[metricName] = {
+                metric_category_used: 'capture',
+                aggregation_mode: 'time_series',
                 rows,
-                summary: summarizeSystemHealthRows(rows),
-                errors: [...errors]
+                collection_metadata: normalized.metadata,
+                summary: SystemHealthCollection.summarizeTimeSeriesRows(normalized.rows, metricName),
+                sensor_status: coverage,
+                errors: []
             };
-            continue;
-        }
-
+        });
         return {
-            metric_category_used: category,
-            rows,
-            summary: summarizeSystemHealthRows(rows),
+            metrics,
+            trigger_utilization: SystemHealthCollection.summarizeTriggerUtilization(normalized.rows),
             errors
         };
-    }
-
-    return lastEmptyResult || { metric_category_used: 'capture', rows: [], summary: summarizeSystemHealthRows([]), errors };
-}
-
-async function collectSystemHealthMetricChunks(body) {
-    const initial = await window.apiClient.request('/metrics', {
-        method: 'POST',
-        body: JSON.stringify(body)
-    });
-
-    if (!initial || !initial.xid) {
-        return initial ? [initial] : [];
-    }
-
-    const chunks = [];
-    for (let attempts = 0; attempts < 120; attempts += 1) {
-        const chunk = await window.apiClient.request(`/metrics/next/${encodeURIComponent(initial.xid)}`);
-        if (chunk === null || chunk === undefined) break;
-        if (chunk === 'again') {
-            await waitSystemHealth(2000);
-            continue;
-        }
-        if (chunk && typeof chunk === 'object' && Object.keys(chunk).length === 0) break;
-        if (chunk && typeof chunk === 'object') {
-            chunks.push(chunk);
-            continue;
-        }
-        throw new Error(`Unexpected /metrics/next response: ${String(chunk)}`);
-    }
-    return chunks;
-}
-
-async function collectSystemHealthMetricFallbackIfEmpty(body, appliancesById, metricName, rows) {
-    if (systemHealthRowsHaveValues(rows)) return { rows: [] };
-
-    const response = await window.apiClient.request('/metrics/totalbyobject', {
-        method: 'POST',
-        body: JSON.stringify(body)
-    });
-    const fallbackRows = normalizeSystemHealthMetricRows([response], appliancesById, metricName);
-    return { rows: systemHealthRowsHaveValues(fallbackRows) ? fallbackRows : [] };
-}
-
-function systemHealthRowsHaveValues(rows) {
-    return rows.some(row => typeof row.value === 'number' && Number.isFinite(row.value));
-}
-
-function normalizeSystemHealthMetricRows(chunks, appliancesById, metricName) {
-    const rows = [];
-    chunks.forEach(chunk => {
-        const stats = chunk && Array.isArray(chunk.stats) ? chunk.stats : [];
-        const chunkNodeId = chunk ? chunk.node_id : undefined;
-        stats.forEach(stat => {
-            const applianceId = resolveSystemHealthApplianceId(stat.oid, chunkNodeId, appliancesById);
-            const appliance = appliancesById[String(applianceId)] || null;
-            rows.push({
-                appliance_id: applianceId !== null && applianceId !== undefined ? applianceId : stat.oid,
-                metric_object_id: stat.oid,
-                appliance_name: systemHealthApplianceName(appliance, stat.oid),
-                hostname: appliance ? appliance.hostname || '' : '',
-                platform: appliance ? appliance.platform || '' : '',
-                license_platform: appliance ? appliance.license_platform || '' : '',
-                metric: metricName,
-                timestamp_ms: stat.time,
-                time_iso: systemHealthMsToIso(stat.time),
-                duration_ms: stat.duration,
-                value: firstSystemHealthValue(stat.values)
-            });
+    } catch (error) {
+        if (options.signal.aborted) throw error;
+        const coverage = SystemHealthCollection.buildSensorCoverage(allSensors, [], { error });
+        Object.values(emptyMetrics).forEach(metric => {
+            metric.sensor_status = coverage;
+            metric.errors = [error.message];
         });
+        return {
+            metrics: emptyMetrics,
+            trigger_utilization: SystemHealthCollection.summarizeTriggerUtilization([]),
+            errors: [`Time-series metric collection failed without substituting zero values: ${error.message}`]
+        };
+    }
+}
+
+async function collectSystemHealthTriggerDrops(metricSensors, allSensors, appliancesById, options) {
+    const emptySummary = SystemHealthCollection.summarizeAggregateRows([]);
+    if (!metricSensors.length) {
+        return {
+            metric_category_used: 'capture',
+            aggregation_mode: 'total_by_object',
+            rows: [],
+            summary: emptySummary,
+            sensor_status: SystemHealthCollection.buildSensorCoverage(allSensors, []),
+            errors: []
+        };
+    }
+    const body = SystemHealthCollection.buildMetricRequest({
+        cycle: options.cycle,
+        fromMs: options.fromMs,
+        untilMs: options.untilMs,
+        objectIds: metricSensors.map(sensor => sensor.id),
+        metricNames: ['trigger_drops']
     });
-    return rows;
+    try {
+        const result = await SystemHealthCollection.collectMetricEndpoint(
+            window.apiClient.request.bind(window.apiClient),
+            '/metrics/totalbyobject',
+            body,
+            { signal: options.signal }
+        );
+        const normalized = SystemHealthCollection.normalizeAggregateChunks(result.chunks, appliancesById, ['trigger_drops']);
+        normalized.rows.forEach(row => {
+            const appliance = appliancesById[String(row.appliance_id)] || {};
+            row.appliance_name = systemHealthApplianceName(appliance, row.appliance_id);
+            row.hostname = appliance.hostname || '';
+            row.platform = appliance.platform || '';
+            row.license_platform = appliance.license_platform || '';
+            row.time_iso = systemHealthMsToIso(row.timestamp_ms);
+        });
+        const coverage = SystemHealthCollection.buildSensorCoverage(allSensors, normalized.rows);
+        return {
+            metric_category_used: 'capture',
+            aggregation_mode: 'total_by_object',
+            rows: normalized.rows,
+            collection_metadata: normalized.metadata,
+            summary: SystemHealthCollection.summarizeAggregateRows(normalized.rows),
+            sensor_status: coverage,
+            errors: systemHealthCoverageErrors(coverage, 'trigger-drop totals')
+        };
+    } catch (error) {
+        if (options.signal.aborted) throw error;
+        const coverage = SystemHealthCollection.buildSensorCoverage(allSensors, [], { error });
+        return {
+            metric_category_used: 'capture',
+            aggregation_mode: 'total_by_object',
+            rows: [],
+            summary: emptySummary,
+            sensor_status: coverage,
+            errors: [`Trigger-drop total collection failed without substituting zero values: ${error.message}`]
+        };
+    }
 }
 
-function resolveSystemHealthApplianceId(metricObjectId, chunkNodeId, appliancesById) {
-    if (typeof metricObjectId === 'number') {
-        if (appliancesById[String(metricObjectId)]) return metricObjectId;
-        const shifted = Math.floor(metricObjectId / 2 ** 32);
-        if (appliancesById[String(shifted)]) return shifted;
-    }
-    if (chunkNodeId !== undefined && appliancesById[String(chunkNodeId)]) return chunkNodeId;
-    return null;
-}
-
-function firstSystemHealthValue(values) {
-    if (!Array.isArray(values) || !values.length) return null;
-    return firstSystemHealthNumber(values[0]);
-}
-
-function firstSystemHealthNumber(value) {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (Array.isArray(value)) {
-        for (const item of value) {
-            const nested = firstSystemHealthNumber(item);
-            if (nested !== null) return nested;
-        }
-        return null;
-    }
-    if (value && typeof value === 'object') {
-        if (typeof value.value === 'number' && Number.isFinite(value.value)) return value.value;
-        if (typeof value.freq === 'number' && Number.isFinite(value.freq)) return value.freq;
-    }
-    return null;
+function systemHealthCoverageErrors(coverage, label) {
+    return Object.entries(coverage || {})
+        .filter(([, value]) => !['complete', 'zero_valued'].includes(value.status))
+        .map(([id, value]) => `${label} (${id}): ${value.status}${value.detail ? ` - ${value.detail}` : ''}`);
 }
 
 function systemHealthMsToIso(value) {
@@ -412,47 +379,24 @@ function systemHealthMsToIso(value) {
 }
 
 function summarizeSystemHealthRows(rows) {
-    const totals = {};
-    const pointCounts = {};
-    const latestValues = {};
-    const peakValues = {};
-    const peakTimes = {};
-    const peakDurationMs = {};
-
-    rows.forEach(row => {
-        const id = String(row.appliance_id);
-        if (typeof row.value === 'number') {
-            totals[id] = (totals[id] || 0) + row.value;
-            latestValues[id] = row.value;
-            if (peakValues[id] === undefined || row.value > peakValues[id]) {
-                peakValues[id] = row.value;
-                peakTimes[id] = row.timestamp_ms;
-                peakDurationMs[id] = row.duration_ms;
-            }
-        }
-        pointCounts[id] = (pointCounts[id] || 0) + 1;
-    });
-
-    const avgValues = {};
-    Object.keys(totals).forEach(id => {
-        if (pointCounts[id]) avgValues[id] = totals[id] / pointCounts[id];
-    });
-
-    return { totals, point_counts: pointCounts, avg_values: avgValues, peak_values: peakValues, peak_times: peakTimes, latest_values: latestValues, peak_duration_ms: peakDurationMs };
+    return SystemHealthCollection.summarizeTimeSeriesRows(rows, rows[0] ? rows[0].metric : '');
 }
 
-async function collectSystemHealthDeviceAnalysis(lookbackDays) {
-    const activeFrom = Date.now() - (lookbackDays * SYSTEM_HEALTH_DAY_MS);
+async function collectSystemHealthDeviceAnalysis(fromMs, untilMs, signal) {
     const aggregate = {};
+    const warnings = [];
+    const seenDeviceIds = new Set();
     let offset = 0;
+    let pages = 0;
 
     while (true) {
+        if (pages >= 1000) throw new Error('Device analysis pagination exceeded 1,000 pages.');
         const payload = {
-            active_from: activeFrom,
-            active_until: 0,
+            active_from: fromMs,
+            active_until: untilMs,
             limit: SYSTEM_HEALTH_DEVICE_LIMIT,
             offset,
-            result_fields: ['node_id', 'analysis', 'id'],
+            result_fields: ['node_id', 'analysis'],
             filter: {
                 operator: 'and',
                 rules: [{ field: 'analysis', operand: 'l2_exempt', operator: '!=' }]
@@ -461,52 +405,121 @@ async function collectSystemHealthDeviceAnalysis(lookbackDays) {
 
         const response = await window.apiClient.request('/devices/search', {
             method: 'POST',
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal
         });
         const devices = Array.isArray(response) ? response : ((response && response.devices) || []);
         if (!devices.length) break;
 
         devices.forEach(device => {
-            if (device.node_id === undefined || device.node_id === null) return;
+            const deviceId = String(device.id === undefined ? `${offset}:${seenDeviceIds.size}` : device.id);
+            if (seenDeviceIds.has(deviceId)) {
+                warnings.push(`Device search returned duplicate device ID ${deviceId}; it was counted once.`);
+                return;
+            }
+            seenDeviceIds.add(deviceId);
+            if (device.node_id === undefined || device.node_id === null) {
+                warnings.push(`Device ${deviceId} did not include node_id and was not attributed to a sensor.`);
+                return;
+            }
             const id = String(device.node_id);
-            if (!aggregate[id]) aggregate[id] = { advanced: 0, standard: 0, discovery: 0, total: 0 };
+            if (!aggregate[id]) aggregate[id] = { advanced: 0, standard: 0, discovery: 0, unrecognized: 0, total: 0, status: 'complete' };
             if (['advanced', 'standard', 'discovery'].includes(device.analysis)) {
                 aggregate[id][device.analysis] += 1;
+            } else {
+                aggregate[id].unrecognized += 1;
             }
             aggregate[id].total += 1;
         });
 
         if (devices.length < SYSTEM_HEALTH_DEVICE_LIMIT) break;
         offset += SYSTEM_HEALTH_DEVICE_LIMIT;
+        pages += 1;
     }
 
-    return aggregate;
+    Object.entries(aggregate).forEach(([id, counts]) => {
+        if (counts.unrecognized) warnings.push(`Device analysis (${id}): ${counts.unrecognized} devices had unrecognized analysis values.`);
+    });
+    return { by_sensor: aggregate, warnings: Array.from(new Set(warnings)) };
 }
 
-function buildSystemHealthReport({ appliances, deviceAnalysis, metricResults, lookbackDays, cycle }) {
-    const compactAppliances = appliances.map(item => ({
-        id: item.id,
-        name: systemHealthApplianceName(item, item.id),
-        hostname: item.hostname || '',
-        platform: item.platform || '',
-        license_platform: item.license_platform || '',
-        status_message: item.status_message || '',
-        online: isSystemHealthMetricSensor(item),
-        capacity: capacityForSystemHealthAppliance(item),
-        uuid: item.uuid || '',
-        firmware_version: item.firmware_version || ''
-    }));
+function buildSystemHealthReport({
+    appliances,
+    deviceAnalysis,
+    metricResults,
+    lookbackDays,
+    cycle,
+    requestedCycle = cycle,
+    cyclePolicy = null,
+    fromMs = null,
+    untilMs = null,
+    triggerUtilization = null,
+    deviceAnalysisError = null,
+    collectionErrors = []
+}) {
+    const compactAppliances = appliances.map(item => {
+        const capacity = capacityForSystemHealthAppliance(item);
+        const conditions = systemHealthApplianceHealthConditions(item, untilMs);
+        return {
+            id: String(item.id),
+            name: systemHealthApplianceName(item, item.id),
+            hostname: item.hostname || '',
+            platform: item.platform || '',
+            license_platform: item.license_platform || '',
+            status_message: item.status_message || '',
+            online: String(item.status_message || '').toLowerCase() === 'online',
+            metric_eligible: isSystemHealthMetricSensor(item),
+            data_access: item.data_access,
+            license_status: item.license_status || '',
+            sync_time: item.sync_time,
+            advanced_analysis_capacity: item.advanced_analysis_capacity,
+            total_capacity: item.total_capacity,
+            health_conditions: conditions,
+            capacity,
+            uuid: item.uuid || '',
+            firmware_version: item.firmware_version || ''
+        };
+    });
+
+    const normalizedDeviceAnalysis = {};
+    compactAppliances.forEach(appliance => {
+        const returned = deviceAnalysis && deviceAnalysis[String(appliance.id)];
+        normalizedDeviceAnalysis[String(appliance.id)] = returned
+            ? { ...returned, status: returned.status || 'complete' }
+            : {
+                advanced: null,
+                standard: null,
+                discovery: null,
+                unrecognized: null,
+                total: null,
+                status: deviceAnalysisError ? 'failed' : 'empty',
+                detail: deviceAnalysisError ? deviceAnalysisError.message : 'no device rows returned'
+            };
+    });
 
     return {
         generated_at: new Date().toISOString(),
         target: state.apiConfig || {},
-        window: { lookback_days: lookbackDays, until: 'now' },
+        window: {
+            lookback_days: lookbackDays,
+            from_ms: fromMs,
+            until_ms: untilMs,
+            from_iso: systemHealthMsToIso(fromMs),
+            until_iso: systemHealthMsToIso(untilMs)
+        },
+        requested_cycle: requestedCycle,
         cycle,
+        cycle_policy: cyclePolicy,
         capacity_catalog_loaded: systemHealthState.catalogLoaded,
         appliances: compactAppliances,
-        device_analysis: deviceAnalysis,
+        device_analysis: normalizedDeviceAnalysis,
         metrics: metricResults,
-        errors: Object.values(metricResults).flatMap(result => result.errors || [])
+        trigger_utilization: triggerUtilization || SystemHealthCollection.summarizeTriggerUtilization([]),
+        errors: Array.from(new Set([
+            ...collectionErrors,
+            ...Object.values(metricResults).flatMap(result => result.errors || []),
+            ...compactAppliances.flatMap(appliance => appliance.health_conditions.map(condition => `${appliance.name}: ${condition.message}`))
+        ]))
     };
 }
 
@@ -521,11 +534,46 @@ function capacityForSystemHealthAppliance(appliance) {
         appliance.platform_model,
         normalizeSystemHealthModelName(appliance.platform_model)
     ];
+    let catalogCapacity = null;
     for (const candidate of candidates) {
         const match = systemHealthState.catalog[String(candidate || '').toUpperCase()];
-        if (match) return match;
+        if (match) {
+            catalogCapacity = match;
+            break;
+        }
     }
-    return null;
+    const analysis = SystemHealthCollection.deriveAnalysisCapacities(appliance, catalogCapacity || {});
+    return {
+        ...(catalogCapacity || {}),
+        ...analysis,
+        capacity_source: {
+            packet_rate: catalogCapacity ? 'model_catalog' : 'unavailable',
+            throughput: catalogCapacity ? 'model_catalog' : 'unavailable',
+            advanced_analysis: analysis.advanced_source,
+            standard_analysis: analysis.standard_source
+        },
+        api_advanced_analysis_capacity: appliance.advanced_analysis_capacity,
+        api_total_capacity: appliance.total_capacity
+    };
+}
+
+function systemHealthApplianceHealthConditions(appliance, reportUntilMs) {
+    const conditions = [];
+    const status = String(appliance.status_message || '').trim();
+    if (status && status.toLowerCase() !== 'online') {
+        conditions.push({ type: 'offline', status: 'failed', message: `appliance status is ${status}` });
+    }
+    if (appliance.data_access === false) {
+        conditions.push({ type: 'data_access', status: 'failed', message: 'data access is unavailable' });
+    }
+    if (appliance.license_status && String(appliance.license_status).toLowerCase() !== 'nominal') {
+        conditions.push({ type: 'license', status: 'warning', message: `license status is ${appliance.license_status}` });
+    }
+    const syncMs = Number(appliance.sync_time) * 1000;
+    if (Number.isFinite(syncMs) && syncMs > 0 && Number(reportUntilMs) - syncMs > 15 * 60 * 1000) {
+        conditions.push({ type: 'synchronization', status: 'warning', message: `last synchronization was ${systemHealthMsToIso(syncMs)}` });
+    }
+    return conditions;
 }
 
 function normalizeSystemHealthModelName(value) {
@@ -536,23 +584,39 @@ function systemHealthRows(report) {
     return (report.appliances || []).map(sensor => {
         const capacity = sensor.capacity || {};
         const offline = !sensor.online;
+        const analysis = (report.device_analysis && report.device_analysis[String(sensor.id)])
+            || { advanced: null, standard: null, discovery: null, total: null, status: 'empty' };
         const packetPeak = metricSystemHealthPeakRate(report, 'pkts', sensor.id);
         const throughputGbps = systemHealthBytesToGbps(report, sensor.id);
-        const triggerCyclesPeak = metricSystemHealthPeak(report, 'trigger_cycles', sensor.id);
-        const triggerCyclesAvail = metricSystemHealthCapacityValue(report, 'trigger_cycles_avail', sensor.id);
-        const triggerDropsPeak = metricSystemHealthPeak(report, 'trigger_drops', sensor.id);
+        const alignedTrigger = report.trigger_utilization
+            && report.trigger_utilization.peak_by_sensor
+            && report.trigger_utilization.peak_by_sensor[String(sensor.id)];
+        const triggerCyclesPeak = alignedTrigger ? alignedTrigger.used_cycles : null;
+        const triggerCyclesAvail = alignedTrigger ? alignedTrigger.available_cycles : null;
         const triggerDropsTotal = metricSystemHealthTotal(report, 'trigger_drops', sensor.id);
+        const collectionStatus = systemHealthMetricStatus(report, sensor.id);
+        collectionStatus.trigger_utilization = alignedTrigger
+            ? 'complete'
+            : (report.trigger_utilization
+                && report.trigger_utilization.invalid_by_sensor
+                && report.trigger_utilization.invalid_by_sensor[String(sensor.id)])
+                || collectionStatus.trigger_cycles
+                || 'empty';
         return {
             ...sensor,
             offline,
-            analysis: (report.device_analysis && report.device_analysis[String(sensor.id)]) || { advanced: 0, standard: 0, discovery: 0, total: 0 },
+            collectionStatus: { ...collectionStatus, device_analysis: analysis.status || 'unknown' },
+            analysis,
             packetPeak,
             packetCapacity: Number(capacity.base_packetrate || 0),
             throughputGbps,
             throughputCapacity: Number(capacity.base_gbps || 0),
             triggerCyclesPeak,
             triggerCyclesAvail,
-            triggerDropsPeak,
+            triggerUtilization: alignedTrigger ? alignedTrigger.utilization : null,
+            triggerPeakTimestampMs: alignedTrigger ? alignedTrigger.timestamp_ms : null,
+            triggerPeakDurationMs: alignedTrigger ? alignedTrigger.duration_ms : null,
+            triggerDropsPeak: null,
             triggerDropsTotal,
             advancedCapacity: Number(capacity.advanced_analysis || 0),
             standardCapacity: Number(capacity.standard_analysis || 0)
@@ -562,53 +626,69 @@ function systemHealthRows(report) {
 
 function metricSystemHealthPeak(report, metricName, id) {
     const metric = report.metrics ? report.metrics[metricName] : null;
-    return (metric && metric.summary && metric.summary.peak_values && metric.summary.peak_values[String(id)]) || 0;
+    const value = metric && metric.summary && metric.summary.peak_values && metric.summary.peak_values[String(id)];
+    return value === undefined ? null : value;
 }
 
 function metricSystemHealthTotal(report, metricName, id) {
     const metric = report.metrics ? report.metrics[metricName] : null;
-    return (metric && metric.summary && metric.summary.totals && metric.summary.totals[String(id)]) || 0;
-}
-
-function metricSystemHealthLatest(report, metricName, id) {
-    const metric = report.metrics ? report.metrics[metricName] : null;
-    return (metric && metric.summary && metric.summary.latest_values && metric.summary.latest_values[String(id)]) || 0;
-}
-
-function metricSystemHealthAverage(report, metricName, id) {
-    const metric = report.metrics ? report.metrics[metricName] : null;
-    return (metric && metric.summary && metric.summary.avg_values && metric.summary.avg_values[String(id)]) || 0;
-}
-
-function metricSystemHealthCapacityValue(report, metricName, id) {
-    return metricSystemHealthPeak(report, metricName, id)
-        || metricSystemHealthLatest(report, metricName, id)
-        || metricSystemHealthAverage(report, metricName, id);
+    const value = metric && metric.summary && metric.summary.totals && metric.summary.totals[String(id)];
+    return value === undefined ? null : value;
 }
 
 function metricSystemHealthDuration(report, metricName, id) {
     const metric = report.metrics ? report.metrics[metricName] : null;
-    return (metric && metric.summary && metric.summary.peak_duration_ms && metric.summary.peak_duration_ms[String(id)]) || systemHealthCycleToMs(report.cycle);
+    const duration = metric && metric.summary && metric.summary.peak_duration_ms && metric.summary.peak_duration_ms[String(id)];
+    return duration === undefined || duration === null ? null : duration;
 }
 
 function metricSystemHealthPeakRate(report, metricName, id) {
     const duration = metricSystemHealthDuration(report, metricName, id);
-    return duration ? Number(metricSystemHealthPeak(report, metricName, id) || 0) / (duration / 1000) : 0;
+    const peak = metricSystemHealthPeak(report, metricName, id);
+    return duration && peak !== null ? Number(peak) / (duration / 1000) : null;
 }
 
 function systemHealthBytesToGbps(report, id) {
     const duration = metricSystemHealthDuration(report, 'bytes', id);
-    return duration ? (Number(metricSystemHealthPeak(report, 'bytes', id) || 0) * 8) / (duration / 1000) / 1_000_000_000 : 0;
+    const peak = metricSystemHealthPeak(report, 'bytes', id);
+    return duration && peak !== null ? (Number(peak) * 8) / (duration / 1000) / 1_000_000_000 : null;
 }
 
 function systemHealthCycleToMs(cycle) {
-    return {
-        '1sec': 1000,
-        '30sec': 30000,
-        '5min': 300000,
-        '1hr': 3600000,
-        '24hr': 86400000
-    }[cycle] || 3600000;
+    return SystemHealthCollection.cycleToMs(cycle) || 3600000;
+}
+
+function systemHealthMetricStatus(report, id) {
+    const statusByMetric = {};
+    Object.entries(report.metrics || {}).forEach(([metricName, metric]) => {
+        statusByMetric[metricName] = metric.sensor_status
+            && metric.sensor_status[String(id)]
+            && metric.sensor_status[String(id)].status || 'unknown';
+    });
+    return statusByMetric;
+}
+
+function systemHealthReportCycleLabel(report) {
+    const actualCycles = new Set();
+    Object.values(report.metrics || {}).forEach(metric => {
+        Object.values((metric.summary && metric.summary.actual_cycles) || {}).forEach(cycle => {
+            if (cycle) actualCycles.add(String(cycle));
+        });
+        (metric.collection_metadata || []).forEach(metadata => {
+            if (metadata && metadata.cycle) actualCycles.add(String(metadata.cycle));
+        });
+    });
+    if (actualCycles.size === 1) return Array.from(actualCycles)[0];
+    if (actualCycles.size > 1) return Array.from(actualCycles).sort().join('/');
+    return report.cycle || report.requested_cycle || 'unknown-cycle';
+}
+
+function systemHealthRowStatusText(row) {
+    const conditions = (row.health_conditions || []).map(condition => condition.type.replace(/_/g, ' '));
+    const metricStates = Object.values(row.collectionStatus || {});
+    const collectionState = metricStates.find(status => !['complete', 'zero_valued'].includes(status));
+    if (collectionState) conditions.push(`metrics ${collectionState.replace(/_/g, ' ')}`);
+    return Array.from(new Set(conditions)).join(' · ');
 }
 
 function renderSystemHealthReport(report) {
@@ -621,16 +701,19 @@ function renderSystemHealthReport(report) {
 }
 
 function renderSystemHealthSummary(report, rows) {
+    const offlineSensors = rows.filter(row => row.offline).length;
+    const dataUnavailableSensors = rows.filter(row => row.data_access === false).length;
     const packetRisk = rows.filter(row => row.packetCapacity && row.packetPeak >= row.packetCapacity).length;
     const throughputWatch = rows.filter(row => row.throughputCapacity && row.throughputGbps / row.throughputCapacity >= 0.8).length;
-    const triggerWatch = rows.filter(row => row.triggerCyclesAvail && row.triggerCyclesPeak / row.triggerCyclesAvail >= 0.8).length;
-    const triggerDropSensors = rows.filter(row => row.triggerDropsTotal > 0 || row.triggerDropsPeak > 0).length;
+    const triggerWatch = rows.filter(row => row.triggerUtilization !== null && row.triggerUtilization >= 0.8).length;
+    const triggerDropSensors = rows.filter(row => row.triggerDropsTotal > 0).length;
     const discoverySensors = rows.filter(row => (row.analysis.discovery || 0) > 0).length;
     const cards = [
         ['Sensors', formatSystemHealthNumber(rows.length), 'Discover sensors returned'],
-        ['Lookback', `${report.window.lookback_days} days`, `Cycle ${report.cycle}`],
-        ['Packet Risk', formatSystemHealthNumber(packetRisk), 'At or above model packet rating'],
-        ['Throughput Watch', formatSystemHealthNumber(throughputWatch), 'At 80%+ model throughput rating'],
+        ['Offline', formatSystemHealthNumber(offlineSensors), dataUnavailableSensors ? `${dataUnavailableSensors} also lack data access` : 'Appliance status is not online'],
+        ['Lookback', `${report.window.lookback_days} days`, `Peak ${systemHealthReportCycleLabel(report)} averages`],
+        ['Packet Risk', formatSystemHealthNumber(packetRisk), `At model rating on peak ${systemHealthReportCycleLabel(report)} average`],
+        ['Throughput Watch', formatSystemHealthNumber(throughputWatch), `At 80%+ on peak ${systemHealthReportCycleLabel(report)} average`],
         ['Trigger Watch', formatSystemHealthNumber(triggerWatch), 'At 80%+ trigger cycle capacity'],
         ['Trigger Drops', formatSystemHealthNumber(triggerDropSensors), 'Sensors with dropped trigger executions'],
         ['Discovery Overflow', formatSystemHealthNumber(discoverySensors), 'Sensors with Discovery devices']
@@ -666,8 +749,8 @@ function renderSystemHealthCharts(rows) {
         capacityKey: 'triggerCyclesAvail',
         label: 'Trigger cycles',
         formatter: formatSystemHealthCycles,
-        alert: row => row.triggerDropsTotal > 0 || row.triggerDropsPeak > 0,
-        indicator: row => (row.triggerDropsTotal > 0 || row.triggerDropsPeak > 0) ? 'drops detected' : ''
+        alert: row => row.triggerDropsTotal > 0,
+        indicator: row => row.triggerDropsTotal > 0 ? 'drops detected' : ''
     });
     renderSystemHealthAnalysisChart(rows);
 }
@@ -710,27 +793,30 @@ function renderSystemHealthTable(rows) {
         const advancedCount = row.analysis.advanced || 0;
         const standardCount = row.analysis.standard || 0;
         const discoveryCount = row.analysis.discovery || 0;
-        const totalCapacity = (row.advancedCapacity || 0) + (row.standardCapacity || 0);
+        const totalCapacity = row.capacity && row.capacity.total_analysis !== null
+            ? row.capacity.total_analysis
+            : (row.advancedCapacity || 0) + (row.standardCapacity || 0);
         const overPacket = row.packetCapacity > 0 && row.packetPeak >= row.packetCapacity;
         const overThroughput = row.throughputCapacity > 0 && row.throughputGbps >= row.throughputCapacity;
         const overTriggers = row.triggerCyclesAvail > 0 && row.triggerCyclesPeak >= row.triggerCyclesAvail;
-        const triggerDropsDetected = row.triggerDropsTotal > 0 || row.triggerDropsPeak > 0;
+        const triggerDropsDetected = row.triggerDropsTotal > 0;
         const overAdvanced = row.advancedCapacity > 0 && advancedCount > row.advancedCapacity;
         const overStandard = row.standardCapacity > 0 && standardCount > row.standardCapacity;
         const overDiscovery = discoveryCount > 0;
         const rowFlagged = overPacket || overThroughput || overTriggers || triggerDropsDetected || overAdvanced || overStandard || overDiscovery;
         const cellClass = flag => flag ? ' class="system-health-overflow-cell"' : '';
 
+        const statusText = systemHealthRowStatusText(row);
         return `
         <tr class="${rowFlagged ? 'system-health-overflow-row' : ''}">
-            <td>${escapeSystemHealthHtml(row.name || row.hostname || row.id)}</td>
+            <td>${escapeSystemHealthHtml(row.name || row.hostname || row.id)}${statusText ? `<br><span class="field-hint">${escapeSystemHealthHtml(statusText)}</span>` : ''}</td>
             <td>${escapeSystemHealthHtml(row.license_platform || '')}</td>
             <td${cellClass(overPacket)}>${formatSystemHealthRate(row.packetPeak)}</td>
             <td>${formatSystemHealthRate(row.packetCapacity)}</td>
             <td${cellClass(overThroughput)}>${formatSystemHealthGbps(row.throughputGbps)}</td>
             <td>${formatSystemHealthGbps(row.throughputCapacity)}</td>
             <td${cellClass(overTriggers)}>${formatSystemHealthTriggerCapacity(row)}</td>
-            <td${cellClass(triggerDropsDetected)}>${formatSystemHealthNumber(row.triggerDropsTotal || row.triggerDropsPeak || 0)}</td>
+            <td${cellClass(triggerDropsDetected)}>${formatSystemHealthNumber(row.triggerDropsTotal)}</td>
             <td${cellClass(overAdvanced)}>${formatSystemHealthTierValue(advancedCount, row.advancedCapacity || 0)}</td>
             <td${cellClass(overStandard)}>${formatSystemHealthTierValue(standardCount, row.standardCapacity || 0)}</td>
             <td${cellClass(overDiscovery)}>${formatSystemHealthNumber(discoveryCount)}</td>
@@ -894,7 +980,8 @@ function updateSystemHealthModelHeader(key, meta, options) {
         const parts = [
             `${meta.totalRows} ${meta.totalRows === 1 ? 'sensor' : 'sensors'}`,
             meta.capacity ? `${options.label} cap ${options.formatter(meta.capacity)}` : 'No catalog capacity match',
-            'Sorted by percent of model capacity'
+            'Sorted by percent of model capacity',
+            `Peak ${systemHealthReportCycleLabel(systemHealthState.currentReport || {})} average`
         ];
         if (meta.maxUtilization) parts.push(`Peak ${Math.round(meta.maxUtilization * 100)}%`);
         if (meta.alertRows) parts.push(`${meta.alertRows} with drops`);
@@ -965,7 +1052,7 @@ function updateSystemHealthUtilizationLegend() {
     document.querySelectorAll('[data-system-health-util-swatch="mid"]').forEach(el => { el.style.background = colors.mid; });
     document.querySelectorAll('[data-system-health-util-swatch="high"]').forEach(el => { el.style.background = colors.high; });
     document.querySelectorAll('[data-system-health-util-swatch="discovery"]').forEach(el => {
-        el.style.background = `linear-gradient(135deg, ${colors.discovery}, ${colors.high})`;
+        el.style.background = `linear-gradient(135deg, ${colors.mid}, ${colors.high})`;
     });
 }
 
@@ -996,6 +1083,15 @@ function drawSystemHealthEmpty(ctx, width, height, message) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(message, width / 2, height / 2);
+}
+
+function systemHealthChartCollectionStatus(row, key) {
+    const metrics = key === 'packet' ? ['pkts']
+        : key === 'throughput' ? ['bytes']
+            : key === 'triggers' ? ['trigger_utilization']
+                : [];
+    const statuses = metrics.map(metric => row.collectionStatus && row.collectionStatus[metric]).filter(Boolean);
+    return statuses.find(status => !['complete', 'zero_valued'].includes(status)) || statuses[0] || 'unknown';
 }
 
 function truncateSystemHealthCanvasText(ctx, text, maxWidth) {
@@ -1072,7 +1168,9 @@ function drawSystemHealthUtilizationCanvas(canvas, rows, options, meta) {
         const value = Number(row[options.valueKey] || 0);
         const capacity = Number(row[options.capacityKey] || 0);
         const utilization = capacity > 0 ? value / capacity : null;
-        const fillRatio = row.offline ? 0 : utilization === null ? value / maxValue : Math.min(1.1, utilization);
+        const collectionStatus = systemHealthChartCollectionStatus(row, options.key);
+        const unavailable = row.offline || !['complete', 'zero_valued'].includes(collectionStatus);
+        const fillRatio = unavailable ? 0 : utilization === null ? value / maxValue : Math.min(1.1, utilization);
         const fillWidth = Math.min(plotWidth, plotWidth * fillRatio);
         const labelY = y + barHeight / 2;
 
@@ -1095,15 +1193,15 @@ function drawSystemHealthUtilizationCanvas(canvas, rows, options, meta) {
         ctx.textAlign = 'left';
         ctx.fillStyle = colors.text;
         ctx.font = '11px Arial';
-        const primaryLabel = row.offline
-            ? 'offline'
+        const primaryLabel = unavailable
+            ? (row.offline ? 'offline' : collectionStatus.replace(/_/g, ' '))
             : utilization === null
                 ? options.formatter(value)
                 : `${Math.round(utilization * 100)}%`;
         ctx.fillText(primaryLabel, left + plotWidth + 10, labelY);
         ctx.fillStyle = colors.muted;
         ctx.font = '10px Arial';
-        const secondaryLabel = row.offline || utilization === null ? '' : options.formatter(value);
+        const secondaryLabel = unavailable || utilization === null ? '' : options.formatter(value);
         if (secondaryLabel) {
             ctx.fillText(secondaryLabel, left + plotWidth + (compact ? 48 : 56), labelY);
         }
@@ -1184,7 +1282,7 @@ function drawSystemHealthDiscoveryChip(ctx, x, y, height, value) {
     const padX = 8;
     const chipWidth = ctx.measureText(label).width + padX * 2;
     const gradient = ctx.createLinearGradient(x, y, x + chipWidth, y);
-    gradient.addColorStop(0, colors.discovery);
+    gradient.addColorStop(0, colors.mid);
     gradient.addColorStop(1, colors.high);
     ctx.fillStyle = gradient;
     if (typeof ctx.roundRect === 'function') {
@@ -1382,10 +1480,18 @@ function buildSystemHealthReportFromCsvSummaries(csv) {
                 hostname: row.hostname || '',
                 platform: row.platform || '',
                 license_platform: row.license_platform || '',
-                capacity: capacityForSystemHealthAppliance(row),
+                online: row.online === '' ? true : String(row.online).toLowerCase() === 'true',
+                metric_eligible: row.metric_eligible === '' ? true : String(row.metric_eligible).toLowerCase() === 'true',
+                data_access: row.data_access === '' ? undefined : String(row.data_access).toLowerCase() === 'true',
+                license_status: row.license_status || '',
+                status_message: row.status_message || '',
+                advanced_analysis_capacity: systemHealthNumber(row.advanced_analysis_capacity),
+                total_capacity: systemHealthNumber(row.total_capacity),
+                health_conditions: [],
                 uuid: '',
                 firmware_version: ''
             };
+            appliance.capacity = capacityForSystemHealthAppliance(appliance);
             appliances.set(id, appliance);
         }
     });
@@ -1393,15 +1499,36 @@ function buildSystemHealthReportFromCsvSummaries(csv) {
     const deviceAnalysis = {};
     csv.deviceSummary.forEach(row => {
         deviceAnalysis[systemHealthCsvKey(row)] = {
-            advanced: Number(row.advanced_devices || 0),
-            standard: Number(row.standard_devices || 0),
-            discovery: Number(row.discovery_devices || 0),
-            total: Number(row.analysis_total_devices || 0)
+            advanced: systemHealthNumber(row.advanced_devices),
+            standard: systemHealthNumber(row.standard_devices),
+            discovery: systemHealthNumber(row.discovery_devices),
+            unrecognized: systemHealthNumber(row.unrecognized_analysis_devices),
+            total: systemHealthNumber(row.analysis_total_devices),
+            status: row.collection_status || 'unknown'
         };
     });
 
     const cycleInput = document.getElementById('systemHealthCycle');
     const cycle = cycleInput ? cycleInput.value || '1hr' : '1hr';
+    const triggerUtilization = {
+        aggregation_mode: 'aligned_time_series_ratio',
+        zero_available_policy: 'invalid_bucket_excluded',
+        peak_by_sensor: {},
+        invalid_by_sensor: {}
+    };
+    csv.triggerCyclesSummary.forEach(row => {
+        const id = systemHealthCsvKey(row);
+        const utilization = systemHealthNumber(row.trigger_utilization);
+        if (utilization === null) return;
+        triggerUtilization.peak_by_sensor[id] = {
+            utilization,
+            used_cycles: systemHealthNumber(row.trigger_used_cycles),
+            available_cycles: systemHealthNumber(row.trigger_available_cycles),
+            timestamp_ms: systemHealthNumber(row.trigger_peak_timestamp_ms),
+            duration_ms: systemHealthNumber(row.trigger_peak_duration_ms),
+            actual_cycle: row.actual_cycle || cycle
+        };
+    });
     return {
         generated_at: new Date().toISOString(),
         target: { type: 'csv', name: 'summary CSV files' },
@@ -1415,47 +1542,82 @@ function buildSystemHealthReportFromCsvSummaries(csv) {
             bytes: {
                 metric_category_used: 'csv summary',
                 rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.bytesSummary)
+                summary: summarizeSystemHealthSummaryCsv(csv.bytesSummary),
+                sensor_status: systemHealthCsvSensorStatus(csv.bytesSummary)
             },
             pkts: {
                 metric_category_used: 'csv summary',
                 rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.pktsSummary)
+                summary: summarizeSystemHealthSummaryCsv(csv.pktsSummary),
+                sensor_status: systemHealthCsvSensorStatus(csv.pktsSummary)
             },
             trigger_cycles: {
                 metric_category_used: 'csv summary',
                 rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.triggerCyclesSummary)
+                summary: summarizeSystemHealthSummaryCsv(csv.triggerCyclesSummary),
+                sensor_status: systemHealthCsvSensorStatus(csv.triggerCyclesSummary)
             },
             trigger_cycles_avail: {
                 metric_category_used: 'csv summary',
                 rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.triggerCyclesAvailSummary)
+                summary: summarizeSystemHealthSummaryCsv(csv.triggerCyclesAvailSummary),
+                sensor_status: systemHealthCsvSensorStatus(csv.triggerCyclesAvailSummary)
             },
             trigger_drops: {
                 metric_category_used: 'csv summary',
                 rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.triggerDropsSummary)
+                summary: summarizeSystemHealthSummaryCsv(csv.triggerDropsSummary),
+                sensor_status: systemHealthCsvSensorStatus(csv.triggerDropsSummary)
             }
         },
+        trigger_utilization: triggerUtilization,
         errors: []
     };
 }
 
 function summarizeSystemHealthSummaryCsv(rows) {
-    const summary = { totals: {}, point_counts: {}, avg_values: {}, peak_values: {}, peak_times: {}, latest_values: {}, peak_duration_ms: {} };
+    const summary = {
+        aggregation_mode: rows[0] && rows[0].aggregation_mode || 'time_series',
+        totals: {},
+        point_counts: {},
+        avg_values: {},
+        peak_values: {},
+        peak_times: {},
+        latest_values: {},
+        latest_times: {},
+        peak_duration_ms: {},
+        average_rates: {},
+        aggregation_duration_ms: {},
+        actual_cycles: {}
+    };
     rows.forEach(row => {
         const id = systemHealthCsvKey(row);
-        summary.totals[id] = systemHealthNumber(row.total_value) || 0;
-        summary.point_counts[id] = systemHealthNumber(row.point_count) || 0;
-        summary.avg_values[id] = systemHealthNumber(row.avg_value) || 0;
-        summary.peak_values[id] = systemHealthNumber(row.peak_value) || 0;
-        summary.latest_values[id] = systemHealthNumber(row.latest_value) || 0;
-        summary.peak_duration_ms[id] = systemHealthNumber(row.peak_duration_ms) || null;
+        const assignments = [
+            ['totals', 'total_value'],
+            ['point_counts', 'point_count'],
+            ['avg_values', 'avg_value'],
+            ['peak_values', 'peak_value'],
+            ['latest_values', 'latest_value'],
+            ['peak_duration_ms', 'peak_duration_ms'],
+            ['average_rates', 'average_rate'],
+            ['aggregation_duration_ms', 'aggregation_duration_ms']
+        ];
+        assignments.forEach(([target, source]) => {
+            const value = systemHealthNumber(row[source]);
+            if (value !== null) summary[target][id] = value;
+        });
+        if (row.actual_cycle) summary.actual_cycles[id] = row.actual_cycle;
         const peakMs = Date.parse(row.peak_time_iso || '');
         if (Number.isFinite(peakMs)) summary.peak_times[id] = peakMs;
     });
     return summary;
+}
+
+function systemHealthCsvSensorStatus(rows) {
+    return Object.fromEntries(rows.map(row => [
+        systemHealthCsvKey(row),
+        { status: row.collection_status || 'unknown' }
+    ]));
 }
 
 function exportSystemHealthCsvFiles() {
@@ -1486,7 +1648,7 @@ async function exportSystemHealthPdf() {
         const response = await fetch('/backend/system-health/pdf', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/pdf' },
-            body: JSON.stringify({ report, style: systemHealthState.style })
+            body: JSON.stringify({ report: systemHealthPdfProjection(report), style: systemHealthPdfStyle() })
         });
         if (!response.ok) {
             let message = `PDF export failed with HTTP ${response.status}`;
@@ -1513,15 +1675,27 @@ async function exportSystemHealthPdf() {
     }
 }
 
+function systemHealthPdfProjection(report) {
+    return {
+        ...report,
+        metrics: Object.fromEntries(Object.entries(report.metrics || {}).map(([name, metric]) => [
+            name,
+            { ...metric, rows: [] }
+        ]))
+    };
+}
+
 function systemHealthPdfFilename(report) {
     const day = String(report.generated_at || new Date().toISOString()).slice(0, 10);
     return `system-health-report-${day}.pdf`;
 }
 
 function systemHealthMetricRowsCsv(rows, appliancesById, metricName) {
-    const columns = ['appliance_id', 'metric_object_id', 'appliance_name', 'hostname', 'platform', 'license_platform', 'metric', 'timestamp_ms', 'time_iso', 'duration_ms', 'value'];
+    const columns = ['appliance_id', 'metric_object_id', 'appliance_name', 'hostname', 'platform', 'license_platform', 'metric', 'aggregation_mode', 'actual_cycle', 'timestamp_ms', 'time_iso', 'duration_ms', 'aggregation_duration_ms', 'value', 'collection_status'];
     const csvRows = rows.map(row => {
         const appliance = appliancesById[String(row.appliance_id)] || {};
+        const metric = (systemHealthState.currentReport.metrics || {})[metricName] || {};
+        const status = metric.sensor_status && metric.sensor_status[String(row.appliance_id)];
         return {
             appliance_id: row.appliance_id,
             metric_object_id: row.metric_object_id || row.appliance_id,
@@ -1530,55 +1704,103 @@ function systemHealthMetricRowsCsv(rows, appliancesById, metricName) {
             platform: row.platform || appliance.platform || '',
             license_platform: row.license_platform || appliance.license_platform || '',
             metric: row.metric || metricName,
+            aggregation_mode: row.aggregation_mode || metric.aggregation_mode || '',
+            actual_cycle: row.actual_cycle || '',
             timestamp_ms: row.timestamp_ms || '',
             time_iso: row.time_iso || systemHealthMsToIso(row.timestamp_ms),
             duration_ms: row.duration_ms || '',
-            value: row.value === null || row.value === undefined ? '' : row.value
+            aggregation_duration_ms: row.aggregation_duration_ms || '',
+            value: row.value === null || row.value === undefined ? '' : row.value,
+            collection_status: status ? status.status : ''
         };
     });
     return systemHealthRowsToCsv(columns, csvRows);
 }
 
 function systemHealthSummaryCsv(report, metricName, appliancesById) {
-    const columns = ['appliance_id', 'appliance_name', 'hostname', 'platform', 'license_platform', 'point_count', 'total_value', 'avg_value', 'peak_value', 'peak_time_iso', 'peak_duration_ms', 'latest_value'];
+    const columns = [
+        'appliance_id', 'appliance_name', 'hostname', 'platform', 'license_platform',
+        'aggregation_mode', 'collection_status', 'actual_cycle', 'report_from_ms', 'report_until_ms',
+        'point_count', 'total_value', 'avg_value', 'average_rate', 'aggregation_duration_ms',
+        'peak_value', 'peak_time_iso', 'peak_duration_ms', 'latest_value',
+        'trigger_utilization', 'trigger_used_cycles', 'trigger_available_cycles',
+        'trigger_peak_timestamp_ms', 'trigger_peak_duration_ms'
+    ];
     const summary = (report.metrics[metricName] && report.metrics[metricName].summary) || summarizeSystemHealthRows([]);
+    const metric = report.metrics[metricName] || {};
     const ids = new Set([...Object.keys(appliancesById), ...Object.keys(summary.point_counts || {})]);
     const rows = Array.from(ids).sort(systemHealthSortIds).map(id => {
         const appliance = appliancesById[String(id)] || {};
+        const alignedTrigger = report.trigger_utilization
+            && report.trigger_utilization.peak_by_sensor
+            && report.trigger_utilization.peak_by_sensor[String(id)];
+        const status = metric.sensor_status && metric.sensor_status[String(id)];
         return {
             appliance_id: id,
             appliance_name: appliance.name || appliance.appliance_name || `Sensor ${id}`,
             hostname: appliance.hostname || '',
             platform: appliance.platform || '',
             license_platform: appliance.license_platform || '',
+            aggregation_mode: metric.aggregation_mode || summary.aggregation_mode || '',
+            collection_status: status ? status.status : '',
+            actual_cycle: summary.actual_cycles && summary.actual_cycles[id] || (alignedTrigger && alignedTrigger.actual_cycle) || '',
+            report_from_ms: report.window && report.window.from_ms,
+            report_until_ms: report.window && report.window.until_ms,
             point_count: summary.point_counts && summary.point_counts[id] || 0,
             total_value: summary.totals && summary.totals[id] !== undefined ? summary.totals[id] : '',
             avg_value: summary.avg_values && summary.avg_values[id] !== undefined ? summary.avg_values[id] : '',
+            average_rate: summary.average_rates && summary.average_rates[id] !== undefined ? summary.average_rates[id] : '',
+            aggregation_duration_ms: summary.aggregation_duration_ms && summary.aggregation_duration_ms[id] !== undefined ? summary.aggregation_duration_ms[id] : '',
             peak_value: summary.peak_values && summary.peak_values[id] !== undefined ? summary.peak_values[id] : '',
             peak_time_iso: systemHealthMsToIso(summary.peak_times && summary.peak_times[id]),
             peak_duration_ms: summary.peak_duration_ms && summary.peak_duration_ms[id] !== undefined ? summary.peak_duration_ms[id] : '',
-            latest_value: summary.latest_values && summary.latest_values[id] !== undefined ? summary.latest_values[id] : ''
+            latest_value: summary.latest_values && summary.latest_values[id] !== undefined ? summary.latest_values[id] : '',
+            trigger_utilization: metricName === 'trigger_cycles' && alignedTrigger ? alignedTrigger.utilization : '',
+            trigger_used_cycles: metricName === 'trigger_cycles' && alignedTrigger ? alignedTrigger.used_cycles : '',
+            trigger_available_cycles: metricName === 'trigger_cycles' && alignedTrigger ? alignedTrigger.available_cycles : '',
+            trigger_peak_timestamp_ms: metricName === 'trigger_cycles' && alignedTrigger ? alignedTrigger.timestamp_ms : '',
+            trigger_peak_duration_ms: metricName === 'trigger_cycles' && alignedTrigger ? alignedTrigger.duration_ms : ''
         };
     });
     return systemHealthRowsToCsv(columns, rows);
 }
 
 function systemHealthDeviceAnalysisCsv(report, appliancesById) {
-    const columns = ['appliance_id', 'appliance_name', 'hostname', 'platform', 'license_platform', 'advanced_devices', 'standard_devices', 'discovery_devices', 'analysis_total_devices'];
+    const columns = [
+        'appliance_id', 'appliance_name', 'hostname', 'platform', 'license_platform',
+        'status_message', 'online', 'metric_eligible', 'data_access', 'license_status',
+        'advanced_analysis_capacity', 'total_capacity', 'advanced_capacity_used', 'standard_capacity_used',
+        'capacity_source_advanced', 'capacity_source_standard', 'collection_status',
+        'advanced_devices', 'standard_devices', 'discovery_devices', 'unrecognized_analysis_devices', 'analysis_total_devices'
+    ];
     const ids = new Set([...Object.keys(appliancesById), ...Object.keys(report.device_analysis || {})]);
     const rows = Array.from(ids).sort(systemHealthSortIds).map(id => {
         const appliance = appliancesById[String(id)] || {};
         const analysis = report.device_analysis && report.device_analysis[String(id)] || {};
+        const capacity = appliance.capacity || {};
         return {
             appliance_id: id,
             appliance_name: appliance.name || appliance.appliance_name || `Sensor ${id}`,
             hostname: appliance.hostname || '',
             platform: appliance.platform || '',
             license_platform: appliance.license_platform || '',
-            advanced_devices: analysis.advanced || 0,
-            standard_devices: analysis.standard || 0,
-            discovery_devices: analysis.discovery || 0,
-            analysis_total_devices: analysis.total || 0
+            status_message: appliance.status_message || '',
+            online: appliance.online,
+            metric_eligible: appliance.metric_eligible,
+            data_access: appliance.data_access,
+            license_status: appliance.license_status || '',
+            advanced_analysis_capacity: appliance.advanced_analysis_capacity,
+            total_capacity: appliance.total_capacity,
+            advanced_capacity_used: capacity.advanced_analysis,
+            standard_capacity_used: capacity.standard_analysis,
+            capacity_source_advanced: capacity.advanced_source,
+            capacity_source_standard: capacity.standard_source,
+            collection_status: analysis.status || '',
+            advanced_devices: analysis.advanced === null || analysis.advanced === undefined ? '' : analysis.advanced,
+            standard_devices: analysis.standard === null || analysis.standard === undefined ? '' : analysis.standard,
+            discovery_devices: analysis.discovery === null || analysis.discovery === undefined ? '' : analysis.discovery,
+            unrecognized_analysis_devices: analysis.unrecognized === null || analysis.unrecognized === undefined ? '' : analysis.unrecognized,
+            analysis_total_devices: analysis.total === null || analysis.total === undefined ? '' : analysis.total
         };
     });
     return systemHealthRowsToCsv(columns, rows);
@@ -1672,144 +1894,22 @@ function systemHealthSortIds(a, b) {
 }
 
 function setupSystemHealthStylePanel() {
-    const panel = document.querySelector('.system-health-style-panel');
-    if (!panel) return;
-    hydrateSystemHealthStyleInputs(panel);
-    refreshSystemHealthStylePanel();
-    panel.querySelectorAll('[data-system-health-style-key]').forEach(el => {
-        const key = el.dataset.systemHealthStyleKey;
-        const update = () => {
-            systemHealthState.style[key] = el.type === 'checkbox' ? el.checked : el.value;
-            persistSystemHealthStyle();
-            refreshSystemHealthStylePanel();
+    initChartThemePanel({
+        onChange: () => {
             if (systemHealthState.currentReport) renderSystemHealthReport(systemHealthState.currentReport);
-        };
-        el.addEventListener('change', update);
-        if (el.type === 'color') el.addEventListener('input', update);
-    });
-    const resetButton = document.getElementById('systemHealthStyleReset');
-    if (resetButton) resetButton.addEventListener('click', () => {
-        systemHealthState.style = defaultSystemHealthStyle();
-        persistSystemHealthStyle();
-        hydrateSystemHealthStyleInputs(panel);
-        refreshSystemHealthStylePanel();
-        if (systemHealthState.currentReport) renderSystemHealthReport(systemHealthState.currentReport);
-    });
-}
-
-function hydrateSystemHealthStyleInputs(panel) {
-    panel.querySelectorAll('[data-system-health-style-key]').forEach(el => {
-        const key = el.dataset.systemHealthStyleKey;
-        if (!(key in systemHealthState.style)) return;
-        if (el.type === 'checkbox') {
-            el.checked = !!systemHealthState.style[key];
-        } else {
-            el.value = systemHealthState.style[key];
         }
     });
-}
-
-function refreshSystemHealthStylePanel() {
-    document.querySelectorAll('[data-system-health-style-when]').forEach(el => {
-        const [key, value] = el.dataset.systemHealthStyleWhen.split('=');
-        el.hidden = systemHealthState.style[key] !== value;
-    });
-    const hint = document.getElementById('systemHealthStyleHint');
-    if (hint) {
-        const theme = { light: 'Light', dark: 'Dark', mono: 'Monochrome', custom: 'Custom' }[systemHealthState.style.theme] || 'Light';
-        const bg = systemHealthState.style.transparent
-            ? 'Transparent background'
-            : systemHealthState.style.theme === 'dark'
-                ? 'Sapphire background'
-                : systemHealthState.style.theme === 'custom'
-                    ? `Custom ${systemHealthState.style.bgHex}`
-                    : 'White background';
-        hint.textContent = `${theme} · ${bg}`;
-    }
-}
-
-function persistSystemHealthStyle() {
-    try {
-        localStorage.setItem(SYSTEM_HEALTH_STYLE_STORAGE_KEY, JSON.stringify(systemHealthState.style));
-    } catch {}
 }
 
 function systemHealthStyleColors() {
-    const style = systemHealthState.style;
-    const presets = {
-        light: {
-            bg: '#ffffff',
-            text: SYSTEM_HEALTH_COLORS.sapphire,
-            muted: '#6b7280',
-            subtle: '#4b5563',
-            grid: '#e5e7eb',
-            track: '#eef2f7',
-            altRow: '#fafbfc',
-            low: '#4aa7df',
-            mid: SYSTEM_HEALTH_COLORS.tangerine,
-            high: SYSTEM_HEALTH_COLORS.magenta,
-            advanced: SYSTEM_HEALTH_COLORS.cyan,
-            standard: SYSTEM_HEALTH_COLORS.plum,
-            discovery: SYSTEM_HEALTH_COLORS.tangerine
-        },
-        dark: {
-            bg: SYSTEM_HEALTH_COLORS.sapphire,
-            text: '#ffffff',
-            muted: '#dbe4f0',
-            subtle: '#f5f5fb',
-            grid: '#64748b',
-            track: '#334155',
-            altRow: 'rgba(255,255,255,0.05)',
-            low: '#4aa7df',
-            mid: SYSTEM_HEALTH_COLORS.tangerine,
-            high: SYSTEM_HEALTH_COLORS.magenta,
-            advanced: SYSTEM_HEALTH_COLORS.cyan,
-            standard: SYSTEM_HEALTH_COLORS.plum,
-            discovery: SYSTEM_HEALTH_COLORS.tangerine
-        },
-        mono: {
-            bg: '#ffffff',
-            text: '#111827',
-            muted: '#6b7280',
-            subtle: '#4b5563',
-            grid: '#d1d5db',
-            track: '#e5e7eb',
-            altRow: '#f9fafb',
-            low: '#9ca3af',
-            mid: '#6b7280',
-            high: '#111827',
-            advanced: '#111827',
-            standard: '#6b7280',
-            discovery: '#d1d5db'
-        },
-        custom: {
-            bg: style.bgHex,
-            text: style.textHex,
-            muted: isLightSystemHealthHex(style.bgHex) ? '#6b7280' : '#cbd5e1',
-            subtle: isLightSystemHealthHex(style.bgHex) ? '#4b5563' : '#e5e7eb',
-            grid: isLightSystemHealthHex(style.bgHex) ? '#d1d5db' : '#64748b',
-            track: isLightSystemHealthHex(style.bgHex) ? '#eef2f7' : '#334155',
-            altRow: isLightSystemHealthHex(style.bgHex) ? '#fafbfc' : 'rgba(255,255,255,0.05)',
-            low: style.advHex,
-            mid: style.stdHex,
-            high: style.discHex,
-            advanced: style.advHex,
-            standard: style.stdHex,
-            discovery: style.discHex
-        }
-    };
-    const selected = presets[style.theme] || presets.light;
-    return { ...selected, transparent: !!style.transparent };
+    return chartThemeResolvedColors();
 }
 
-function isLightSystemHealthHex(hex) {
-    const match = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
-    if (!match) return true;
-    const value = parseInt(match[1], 16);
-    const r = (value >> 16) & 255;
-    const g = (value >> 8) & 255;
-    const b = value & 255;
-    return (0.299 * r + 0.587 * g + 0.114 * b) > 160;
+// The PDF renderer takes the already-resolved palette rather than a theme name,
+// so a saved custom theme needs no duplicate definition on the Python side.
+function systemHealthPdfStyle() {
+    const { transparent, ...colors } = systemHealthStyleColors();
+    return { transparent, colors };
 }
 
 function systemHealthChartBackgroundPlugin() {
@@ -1894,10 +1994,6 @@ function formatSystemHealthTriggerCapacity(row) {
     const available = Number(row.triggerCyclesAvail || 0);
     if (!available) return used ? formatSystemHealthCycles(used) : '-';
     return `${Math.round((used / available) * 100)}% (${formatSystemHealthCycles(used)} / ${formatSystemHealthCycles(available)})`;
-}
-
-function waitSystemHealth(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function escapeSystemHealthHtml(value) {

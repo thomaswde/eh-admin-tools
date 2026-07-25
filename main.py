@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import suppress
 from pathlib import Path
 import html
 import json
@@ -22,6 +24,10 @@ SESSION_COOKIE = "eh_admin_session"
 SESSION_TTL_SECONDS = int(os.environ.get("EH_SESSION_TTL_SECONDS", 12 * 60 * 60))
 MAX_SESSIONS = int(os.environ.get("EH_MAX_SESSIONS", 32))
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+HEX_PATTERN = r"^#[0-9a-fA-F]{6}$"
+CHART_THEME_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+# Built-in theme ids ship in js/modules/chart-theme.js and must stay unshadowed.
+CHART_THEME_RESERVED_IDS = {"auto", "draft", "light", "dark", "midnight", "slate", "mono"}
 VERSION_PATH = APP_ROOT.parent / "VERSION" if APP_ROOT.name == "app" else APP_ROOT / "VERSION"
 APP_VERSION = VERSION_PATH.read_text(encoding="utf-8").strip() if VERSION_PATH.exists() else "development"
 
@@ -88,6 +94,29 @@ class SystemHealthPdfRequest(BaseModel):
     style: dict[str, Any] = Field(default_factory=dict)
 
 
+class ChartThemeColors(BaseModel):
+    """The five colors that define a chart theme.
+
+    Every other color the report needs is mixed from ``bg`` and ``text`` at
+    render time, in the browser and in the PDF alike.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    bg: str = Field(pattern=HEX_PATTERN)
+    text: str = Field(pattern=HEX_PATTERN)
+    low: str = Field(pattern=HEX_PATTERN)
+    mid: str = Field(pattern=HEX_PATTERN)
+    high: str = Field(pattern=HEX_PATTERN)
+
+
+class ChartTheme(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=60)
+    colors: ChartThemeColors
+
+
 @app.exception_handler(RequestValidationError)
 async def request_validation_error_handler(
     request: Request,
@@ -131,12 +160,17 @@ async def create_session(
     response: Response,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
+    client: ExtraHopClient | None = None
     try:
         client = ExtraHopClient(config.model_dump(exclude_none=True), api_response_logger)
         await client.authenticate()
     except ExtraHopApiError as error:
+        if client:
+            await client.aclose()
         raise http_exception(error) from error
     except Exception as error:
+        if client:
+            await client.aclose()
         raise HTTPException(
             status_code=502,
             detail={
@@ -151,7 +185,7 @@ async def create_session(
             },
         ) from error
 
-    session_id = sessions.create(client, replace_session_id=eh_admin_session)
+    session_id = await sessions.acreate(client, replace_session_id=eh_admin_session)
     response.set_cookie(
         SESSION_COOKIE,
         session_id,
@@ -178,6 +212,52 @@ async def update_api_logging(config: ApiLoggingConfig) -> dict[str, Any]:
             status_code=400,
             detail={"message": str(error), "valid": sorted(LOG_VERBOSITIES)},
         ) from error
+
+
+@app.get("/backend/chart-themes")
+async def list_chart_themes() -> dict[str, Any]:
+    directory = resolve_chart_themes_dir()
+    themes = []
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.json")):
+            theme = read_chart_theme(path)
+            if theme:
+                themes.append(theme)
+    return {
+        "directory": str(directory),
+        "writable": chart_themes_dir_writable(directory),
+        "themes": themes,
+    }
+
+
+@app.put("/backend/chart-themes/{theme_id}")
+async def save_chart_theme(theme_id: str, theme: ChartTheme) -> dict[str, Any]:
+    path = chart_theme_path(theme_id)
+    payload = {"id": theme_id, "name": theme.name, "colors": theme.colors.model_dump()}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError as error:
+        raise HTTPException(
+            status_code=500,
+            detail={"message": f"Could not write theme file: {error}"},
+        ) from error
+    return payload
+
+
+@app.delete("/backend/chart-themes/{theme_id}")
+async def delete_chart_theme(theme_id: str) -> dict[str, bool]:
+    path = chart_theme_path(theme_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail={"message": "Theme not found"})
+    try:
+        path.unlink()
+    except OSError as error:
+        raise HTTPException(
+            status_code=500,
+            detail={"message": f"Could not delete theme file: {error}"},
+        ) from error
+    return {"deleted": True}
 
 
 @app.get("/backend/session")
@@ -267,7 +347,7 @@ async def delete_session(
     response: Response,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, bool]:
-    sessions.delete(eh_admin_session)
+    await sessions.adelete(eh_admin_session)
     response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
     return {"connected": False}
 
@@ -296,26 +376,56 @@ async def proxy_extrahop_request(
     client = get_session_client(eh_admin_session)
     body = await request.body()
 
+    upstream_task = asyncio.create_task(client.request(
+        request.method,
+        endpoint,
+        query_string=request.url.query,
+        body=body or None,
+        content_type=request.headers.get("content-type"),
+    ))
+    disconnect_task = asyncio.create_task(wait_for_client_disconnect(request))
     try:
-        return await client.request(
-            request.method,
-            endpoint,
-            query_string=request.url.query,
-            body=body or None,
-            content_type=request.headers.get("content-type"),
+        done, _ = await asyncio.wait(
+            {upstream_task, disconnect_task},
+            return_when=asyncio.FIRST_COMPLETED,
         )
+        if disconnect_task in done and not upstream_task.done():
+            upstream_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await upstream_task
+            raise HTTPException(status_code=499, detail={"message": "Client disconnected"})
+        return await upstream_task
     except ExtraHopApiError as error:
         raise http_exception(error) from error
+    finally:
+        disconnect_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await disconnect_task
 
 
-SYSTEM_HEALTH_PDF_PALETTE = {
-    "sapphire": "#261f63",
-    "plum": "#7f2854",
-    "magenta": "#ec0089",
-    "cyan": "#00aaef",
-    "tangerine": "#f05918",
-    "border": "#e5e7eb",
+async def wait_for_client_disconnect(request: Request) -> None:
+    while not await request.is_disconnected():
+        await asyncio.sleep(0.1)
+
+
+@app.on_event("shutdown")
+async def close_session_clients() -> None:
+    await sessions.aclose()
+
+
+# Used only when the browser sends an incomplete palette. These are the built-in
+# Light theme values from js/modules/chart-theme.js, derived neutrals included.
+SYSTEM_HEALTH_PDF_FALLBACK_COLORS = {
+    "bg": "#ffffff",
     "text": "#261f63",
+    "subtle": "#4d477f",
+    "muted": "#74709b",
+    "grid": "#dcdbe6",
+    "track": "#e9e9ef",
+    "altRow": "#f5f5f8",
+    "low": "#00aaef",
+    "mid": "#f05918",
+    "high": "#ec0089",
 }
 
 
@@ -323,10 +433,11 @@ def render_system_health_pdf_html(report: dict[str, Any], style: dict[str, Any])
     rows = system_health_pdf_rows(report)
     colors = system_health_pdf_style_colors(style)
     page_background = "transparent" if colors["transparent"] else colors["bg"]
+    cycle_label = system_health_pdf_cycle_label(report)
     metric_pages = [
-        ("Packet Rate vs Model Capacity", "Peak packet rate by sensor", "packet_peak", "packet_capacity", "pps", rows),
-        ("Throughput vs Model Capacity", "Peak throughput by sensor", "throughput_gbps", "throughput_capacity", "gbps", rows),
-        ("Trigger Cycles vs Available Capacity", "Peak trigger cycles consumed by sensor", "trigger_cycles_peak", "trigger_cycles_avail", "number", rows),
+        ("Packet Rate vs Model Capacity", f"Peak {cycle_label} average packet rate by sensor", "packet_peak", "packet_capacity", "pps", rows),
+        ("Throughput vs Model Capacity", f"Peak {cycle_label} average throughput by sensor", "throughput_gbps", "throughput_capacity", "gbps", rows),
+        ("Trigger Cycles vs Available Capacity", f"Maximum aligned {cycle_label} trigger utilization by sensor", "trigger_cycles_peak", "trigger_cycles_avail", "number", rows),
         ("Analysis Tier Pressure", "Advanced, Standard, and Discovery device pressure", None, None, "analysis", rows),
     ]
     pages = []
@@ -338,7 +449,7 @@ def render_system_health_pdf_html(report: dict[str, Any], style: dict[str, Any])
 
     generated = html.escape(str(report.get("generated_at") or ""))
     lookback = html.escape(str(((report.get("window") or {}).get("lookback_days")) or ""))
-    cycle = html.escape(str(report.get("cycle") or ""))
+    cycle = html.escape(cycle_label)
     summary = system_health_pdf_summary(rows, report)
     body_pages = "\n".join(pages)
     return f"""<!doctype html>
@@ -356,7 +467,7 @@ h2 {{ margin: 0 0 4px; font-size: 24px; }}
 .muted {{ color: {colors["muted"]}; }}
 .meta {{ display: flex; gap: 18px; margin-top: 12px; font-size: 13px; }}
 .summary {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 34px; }}
-.card {{ background: {colors["card_bg"]}; border: 1px solid {colors["border"]}; border-left: 5px solid {colors["advanced"]}; border-radius: 6px; padding: 14px; }}
+.card {{ background: {colors["card_bg"]}; border: 1px solid {colors["border"]}; border-left: 5px solid {colors["accent"]}; border-radius: 6px; padding: 14px; }}
 .card b {{ display: block; font-size: 26px; margin-top: 7px; }}
 .page-head {{ display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; border-bottom: 1px solid {colors["border"]}; padding-bottom: 12px; margin-bottom: 16px; }}
 .model {{ text-align: right; font-size: 13px; }}
@@ -369,7 +480,7 @@ h2 {{ margin: 0 0 4px; font-size: 24px; }}
 .bar.hot {{ background: {colors["high"]}; }}
 .value {{ font-size: 11px; color: {colors["text"]}; }}
 .analysis {{ grid-template-columns: 190px 1fr 1fr 230px; }}
-.chip {{ display: inline-block; min-width: 28px; padding: 3px 8px; border-radius: 12px; color: white; background: linear-gradient(135deg, {colors["discovery"]}, {colors["high"]}); text-align: center; font-size: 10px; font-weight: 700; }}
+.chip {{ display: inline-block; min-width: 28px; padding: 3px 8px; border-radius: 12px; color: white; background: linear-gradient(135deg, {colors["mid"]}, {colors["high"]}); text-align: center; font-size: 10px; font-weight: 700; }}
 .footer {{ position: fixed; bottom: 0.1in; left: 0.12in; right: 0.12in; display: flex; justify-content: space-between; color: {colors["muted"]}; font-size: 10px; }}
 </style>
 </head>
@@ -388,117 +499,30 @@ h2 {{ margin: 0 0 4px; font-size: 24px; }}
 
 
 def system_health_pdf_style_colors(style: dict[str, Any] | None) -> dict[str, Any]:
-    style = system_health_pdf_normalize_style(style)
-    presets = {
-        "light": {
-            "bg": "#ffffff",
-            "text": SYSTEM_HEALTH_PDF_PALETTE["text"],
-            "muted": "#6b7280",
-            "subtle": "#4b5563",
-            "border": SYSTEM_HEALTH_PDF_PALETTE["border"],
-            "track": "#eef2f7",
-            "card_bg": "#ffffff",
-            "low": "#4aa7df",
-            "mid": SYSTEM_HEALTH_PDF_PALETTE["tangerine"],
-            "high": SYSTEM_HEALTH_PDF_PALETTE["magenta"],
-            "advanced": SYSTEM_HEALTH_PDF_PALETTE["cyan"],
-            "standard": SYSTEM_HEALTH_PDF_PALETTE["plum"],
-            "discovery": SYSTEM_HEALTH_PDF_PALETTE["tangerine"],
-        },
-        "dark": {
-            "bg": SYSTEM_HEALTH_PDF_PALETTE["sapphire"],
-            "text": "#ffffff",
-            "muted": "#dbe4f0",
-            "subtle": "#f5f5fb",
-            "border": "#64748b",
-            "track": "#334155",
-            "card_bg": "rgba(255,255,255,0.05)",
-            "low": "#4aa7df",
-            "mid": SYSTEM_HEALTH_PDF_PALETTE["tangerine"],
-            "high": SYSTEM_HEALTH_PDF_PALETTE["magenta"],
-            "advanced": SYSTEM_HEALTH_PDF_PALETTE["cyan"],
-            "standard": SYSTEM_HEALTH_PDF_PALETTE["plum"],
-            "discovery": SYSTEM_HEALTH_PDF_PALETTE["tangerine"],
-        },
-        "mono": {
-            "bg": "#ffffff",
-            "text": "#111827",
-            "muted": "#6b7280",
-            "subtle": "#4b5563",
-            "border": "#d1d5db",
-            "track": "#e5e7eb",
-            "card_bg": "#ffffff",
-            "low": "#9ca3af",
-            "mid": "#6b7280",
-            "high": "#111827",
-            "advanced": "#111827",
-            "standard": "#6b7280",
-            "discovery": "#d1d5db",
-        },
+    """Map the palette the browser resolved onto the PDF template's color names.
+
+    Theme resolution lives in the browser so a PNG and the PDF from the same run
+    cannot disagree. This function only validates and renames.
+    """
+    style = style or {}
+    palette = style.get("colors")
+    palette = palette if isinstance(palette, dict) else {}
+    colors = {
+        key: system_health_pdf_hex(palette.get(key), fallback)
+        for key, fallback in SYSTEM_HEALTH_PDF_FALLBACK_COLORS.items()
     }
-    theme = str(style.get("theme") or "light")
-    if theme == "custom":
-        bg = system_health_pdf_hex(style.get("bgHex"), "#ffffff")
-        dark = not system_health_pdf_is_light_hex(bg)
-        colors = {
-            "bg": bg,
-            "text": system_health_pdf_hex(style.get("textHex"), "#ffffff" if dark else SYSTEM_HEALTH_PDF_PALETTE["text"]),
-            "muted": "#cbd5e1" if dark else "#6b7280",
-            "subtle": "#e5e7eb" if dark else "#4b5563",
-            "border": "#64748b" if dark else SYSTEM_HEALTH_PDF_PALETTE["border"],
-            "track": "#334155" if dark else "#eef2f7",
-            "card_bg": "rgba(255,255,255,0.05)" if dark else "#ffffff",
-            "low": system_health_pdf_hex(style.get("advHex"), SYSTEM_HEALTH_PDF_PALETTE["cyan"]),
-            "mid": system_health_pdf_hex(style.get("stdHex"), SYSTEM_HEALTH_PDF_PALETTE["plum"]),
-            "high": system_health_pdf_hex(style.get("discHex"), SYSTEM_HEALTH_PDF_PALETTE["tangerine"]),
-            "advanced": system_health_pdf_hex(style.get("advHex"), SYSTEM_HEALTH_PDF_PALETTE["cyan"]),
-            "standard": system_health_pdf_hex(style.get("stdHex"), SYSTEM_HEALTH_PDF_PALETTE["plum"]),
-            "discovery": system_health_pdf_hex(style.get("discHex"), SYSTEM_HEALTH_PDF_PALETTE["tangerine"]),
-        }
-    else:
-        colors = presets.get(theme, presets["light"]).copy()
+    colors["border"] = colors["grid"]
+    colors["card_bg"] = colors["altRow"]
+    colors["accent"] = colors["low"]
     colors["transparent"] = bool(style.get("transparent"))
     return colors
 
 
-def system_health_pdf_normalize_style(style: dict[str, Any] | None) -> dict[str, Any]:
-    style = dict(style or {})
-    theme = str(style.get("theme") or "light")
-    if theme == "default":
-        theme = "light"
-    legacy_bg = style.get("bg")
-    if legacy_bg == "transparent":
-        style["transparent"] = True
-    elif legacy_bg == "sapphire":
-        theme = "dark"
-    elif legacy_bg == "custom":
-        theme = "custom"
-    if theme not in {"light", "dark", "mono", "custom"}:
-        theme = "light"
-    style["theme"] = theme
-    return style
-
-
 def system_health_pdf_hex(value: Any, fallback: str) -> str:
-    raw = str(value or "").strip()
-    if len(raw) == 7 and raw.startswith("#"):
-        body = raw[1:]
-    elif len(raw) == 6:
-        body = raw
-    else:
-        return fallback
-    if all(char in "0123456789abcdefABCDEF" for char in body):
-        return f"#{body.lower()}"
+    raw = str(value or "").strip().lstrip("#")
+    if len(raw) == 6 and all(char in "0123456789abcdefABCDEF" for char in raw):
+        return f"#{raw.lower()}"
     return fallback
-
-
-def system_health_pdf_is_light_hex(hex_value: str) -> bool:
-    raw = system_health_pdf_hex(hex_value, "#ffffff").lstrip("#")
-    value = int(raw, 16)
-    red = (value >> 16) & 255
-    green = (value >> 8) & 255
-    blue = value & 255
-    return (0.299 * red + 0.587 * green + 0.114 * blue) > 160
 
 
 def system_health_pdf_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -506,6 +530,11 @@ def system_health_pdf_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
     for sensor in report.get("appliances") or []:
         capacity = sensor.get("capacity") or {}
         sid = str(sensor.get("id"))
+        trigger = (((report.get("trigger_utilization") or {}).get("peak_by_sensor") or {}).get(sid) or {})
+        metric_status = {
+            metric: (((details.get("sensor_status") or {}).get(sid) or {}).get("status") or "unknown")
+            for metric, details in (report.get("metrics") or {}).items()
+        }
         rows.append({
             "id": sid,
             "name": sensor.get("name") or sensor.get("hostname") or f"Appliance {sid}",
@@ -515,12 +544,15 @@ def system_health_pdf_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             "packet_capacity": float(capacity.get("base_packetrate") or 0),
             "throughput_gbps": metric_peak_rate(report, "bytes", sid) * 8 / 1_000_000_000,
             "throughput_capacity": float(capacity.get("base_gbps") or 0),
-            "trigger_cycles_peak": metric_peak(report, "trigger_cycles", sid),
-            "trigger_cycles_avail": metric_capacity(report, "trigger_cycles_avail", sid),
+            "trigger_cycles_peak": float(trigger.get("used_cycles") or 0),
+            "trigger_cycles_avail": float(trigger.get("available_cycles") or 0),
+            "trigger_utilization": float(trigger.get("utilization") or 0),
             "trigger_drops": metric_total(report, "trigger_drops", sid),
             "analysis": (report.get("device_analysis") or {}).get(sid) or {},
             "advanced_capacity": float(capacity.get("advanced_analysis") or 0),
             "standard_capacity": float(capacity.get("standard_analysis") or 0),
+            "metric_status": metric_status,
+            "health_conditions": sensor.get("health_conditions") or [],
         })
     return rows
 
@@ -555,14 +587,20 @@ def system_health_pdf_bar_row(row: dict[str, Any], value_key: str, capacity_key:
     value = float(row.get(value_key) or 0)
     capacity = float(row.get(capacity_key) or 0)
     util = ratio(value, capacity)
-    width = min(100, max(0, util * 100 if capacity else value))
+    metric = "pkts" if value_key == "packet_peak" else "bytes" if value_key == "throughput_gbps" else "trigger_cycles"
+    collection_status = str((row.get("metric_status") or {}).get(metric) or "unknown")
+    available = collection_status in {"complete", "zero_valued"}
+    width = min(100, max(0, util * 100 if capacity else value)) if available else 0
     state = "hot" if util >= 1 else "warn" if util >= 0.8 else ""
-    label = "offline" if not row.get("online", True) else f"{util * 100:.0f}% | {format_pdf_value(value, unit)}" if capacity else format_pdf_value(value, unit)
+    label = "offline" if not row.get("online", True) else collection_status.replace("_", " ") if not available else f"{util * 100:.0f}% | {format_pdf_value(value, unit)}" if capacity else format_pdf_value(value, unit)
     return f"""<div class="row"><div class="name">{html.escape(str(row.get("name") or ""))}</div><div class="track"><div class="bar {state}" style="width:{width:.2f}%"></div></div><div class="value">{html.escape(label)}</div></div>"""
 
 
 def system_health_pdf_analysis_row(row: dict[str, Any]) -> str:
     analysis = row.get("analysis") or {}
+    if analysis.get("status") not in {None, "complete", "zero_valued"}:
+        status = html.escape(str(analysis.get("status") or "unknown").replace("_", " "))
+        return f"""<div class="row analysis"><div class="name">{html.escape(str(row.get("name") or ""))}</div><div class="muted">{status}</div><div></div><div></div></div>"""
     advanced = float(analysis.get("advanced") or 0)
     standard = float(analysis.get("standard") or 0)
     discovery = int(analysis.get("discovery") or 0)
@@ -580,6 +618,22 @@ def system_health_pdf_summary(rows: list[dict[str, Any]], report: dict[str, Any]
         ("Trigger Drops", f"{sum(1 for r in rows if r['trigger_drops'] > 0):,}", "Sensors with drops"),
     ]
     return "".join(f"<div class='card'><span>{html.escape(label)}</span><b>{html.escape(value)}</b><small class='muted'>{html.escape(note)}</small></div>" for label, value, note in cards)
+
+
+def system_health_pdf_cycle_label(report: dict[str, Any]) -> str:
+    cycles = {
+        str(cycle)
+        for details in (report.get("metrics") or {}).values()
+        for cycle in (((details.get("summary") or {}).get("actual_cycles") or {}).values())
+        if cycle
+    }
+    cycles.update(
+        str(metadata.get("cycle"))
+        for details in (report.get("metrics") or {}).values()
+        for metadata in (details.get("collection_metadata") or [])
+        if isinstance(metadata, dict) and metadata.get("cycle")
+    )
+    return "/".join(sorted(cycles)) if cycles else str(report.get("cycle") or report.get("requested_cycle") or "unknown-cycle")
 
 
 def metric_peak(report: dict[str, Any], metric: str, sid: str) -> float:
@@ -631,6 +685,53 @@ def resolve_catalog_path() -> Path:
         return Path(env_path).expanduser()
 
     return APP_ROOT / "catalog.eh.json"
+
+
+def resolve_chart_themes_dir() -> Path:
+    """Where custom chart themes live.
+
+    In a distribution APP_ROOT is ``<install>/app``, so themes land one level up
+    beside README.md where someone can find and back them up without digging
+    through code. In a source checkout they sit at the repository root.
+    """
+    env_path = os.environ.get("EH_CHART_THEMES_DIR")
+    if env_path:
+        return Path(env_path).expanduser()
+
+    base = APP_ROOT.parent if APP_ROOT.name == "app" else APP_ROOT
+    return base / "chart-themes"
+
+
+def chart_theme_path(theme_id: str) -> Path:
+    if not CHART_THEME_ID_PATTERN.match(theme_id):
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Theme id must be lowercase letters, digits, and hyphens."},
+        )
+    if theme_id in CHART_THEME_RESERVED_IDS:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": f"'{theme_id}' is a built-in theme name. Choose another."},
+        )
+    return resolve_chart_themes_dir() / f"{theme_id}.json"
+
+
+def chart_themes_dir_writable(directory: Path) -> bool:
+    target = directory if directory.is_dir() else directory.parent
+    return os.access(target, os.W_OK)
+
+
+def read_chart_theme(path: Path) -> dict[str, Any] | None:
+    """Load one theme file, ignoring anything that is not a valid theme.
+
+    A hand-edited or half-written file should not break the theme list.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        theme = ChartTheme.model_validate({"name": raw.get("name"), "colors": raw.get("colors")})
+    except (OSError, json.JSONDecodeError, AttributeError, ValueError):
+        return None
+    return {"id": path.stem, "name": theme.name, "colors": theme.colors.model_dump()}
 
 
 def build_catalog_lookup(models: Any) -> dict[str, dict[str, Any]]:

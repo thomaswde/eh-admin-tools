@@ -81,6 +81,7 @@ async function handleConnect() {
         showStatus('✓ Connected successfully', false);
         document.getElementById('moduleSelection').style.display = 'block';
         showConnectedState();
+        await openConnectedAppliances();
         
         connectBtn.textContent = 'Connected';
         setTimeout(() => {

@@ -355,7 +355,7 @@ async function generateDeviceDiscoveryReport() {
         }
 
         loading.style.display = 'none';
-        results.style.display = 'block';
+        results.style.display = 'flex';
     } catch (error) {
         console.error('Error generating device discovery report', error);
         loading.style.display = 'none';

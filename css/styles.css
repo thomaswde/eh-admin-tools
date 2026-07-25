@@ -1425,7 +1425,7 @@ td.actions .btn-danger { margin-left: 6px; }
 .graph-controls {
     position: absolute;
     top: 14px;
-    left: 14px;
+    right: 14px;
     display: flex;
     gap: 8px;
     z-index: 10;
@@ -1512,12 +1512,6 @@ td.actions .btn-danger { margin-left: 6px; }
     color: var(--text-2);
 }
 
-.system-health-catalog-status.is-loaded {
-    background-color: var(--ok-bg);
-    border-color: var(--ok-border);
-    color: var(--ok-text);
-}
-
 .system-health-catalog-status.is-missing {
     background-color: var(--warn-bg);
     border-color: var(--warn-border);
@@ -1535,11 +1529,168 @@ td.actions .btn-danger { margin-left: 6px; }
     overflow-wrap: anywhere;
 }
 
-.system-health-style-grid {
+/* ---------- Chart theme picker ---------- */
+.theme-panel {
+    display: grid;
+    gap: 18px;
+}
+
+.theme-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 10px;
+}
+
+.theme-card {
+    display: grid;
+    gap: 2px;
+    padding: 8px;
+    text-align: left;
+    background-color: var(--surface-sub);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: border-color .14s, background-color .14s, box-shadow .14s;
+}
+
+.theme-card:hover {
+    background-color: var(--surface-hover);
+    border-color: var(--border-strong);
+}
+
+.theme-card.is-active {
+    background-color: var(--raised);
+    border-color: var(--cyan);
+    box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* Miniature of the exported chart: three ramp bars over the theme background. */
+.theme-card-preview {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 34px;
+    padding: 6px;
+    margin-bottom: 6px;
+    border: 1px solid var(--hairline);
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.theme-card-bar {
+    flex: 1 1 0;
+    border-radius: 1px;
+}
+
+.theme-card-bar:nth-child(1) { height: 40%; }
+.theme-card-bar:nth-child(2) { height: 70%; }
+.theme-card-bar:nth-child(3) { height: 100%; }
+
+.theme-card-ink {
+    flex: 0 0 3px;
+    height: 100%;
+    opacity: .55;
+    border-radius: 1px;
+}
+
+.theme-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+}
+
+.theme-card-note {
+    font-size: 11px;
+    color: var(--gray);
+}
+
+.theme-editor {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+    gap: 14px;
+}
+
+.theme-slot { display: grid; gap: 6px; min-width: 0; }
+
+.theme-slot-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-2);
+}
+
+.theme-slot-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.theme-swatch {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    padding: 2px;
+    background-color: var(--input-bg);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.theme-hex {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    text-transform: lowercase;
+}
+
+.theme-hex.is-invalid {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px var(--danger-bg);
+}
+
+.theme-slot-hint {
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--gray);
+}
+
+.theme-actions {
+    display: flex;
+    flex-wrap: wrap;
     gap: 12px;
-    align-items: end;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 14px;
+    border-top: 1px solid var(--hairline);
+}
+
+.theme-actions-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.theme-name-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.theme-name-form input { width: 190px; }
+
+#chartThemeStatus:empty { display: none; }
+
+#chartThemeStatus.is-error { color: var(--danger-text); }
+
+.system-health-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (min-width: 1660px) {
+    .system-health-summary {
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+    }
 }
 
 .system-health-chart-frame {

@@ -43,6 +43,7 @@ async function restoreBackendSession() {
         window.apiClient = api;
 
         showConnectedState();
+        await openConnectedAppliances();
         showStatus('Reconnected to the existing session.', false);
     } catch (error) {
         console.warn('No existing backend session to restore:', error);
@@ -79,7 +80,7 @@ function loadSavedConfig() {
             document.getElementById('enterpriseHost').value = config.host || '';
             document.getElementById('enterpriseAllowUntrustedTls').checked = config.verifyTls === false;
             document.getElementById('config360').style.display = 'none';
-            document.getElementById('configEnterprise').style.display = 'block';
+            document.getElementById('configEnterprise').style.display = 'flex';
         }
     } catch (error) {
         console.warn('Discarding invalid saved connection metadata:', error);
@@ -94,7 +95,7 @@ function setupGlobalEventListeners() {
     document.getElementById('deploymentType').addEventListener('change', (e) => {
         const is360 = e.target.value === '360';
         document.getElementById('config360').style.display = is360 ? 'block' : 'none';
-        document.getElementById('configEnterprise').style.display = is360 ? 'none' : 'block';
+        document.getElementById('configEnterprise').style.display = is360 ? 'none' : 'flex';
     });
 
     // Connect button

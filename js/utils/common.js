@@ -47,7 +47,7 @@ function hideConnectedState() {
     const chip = document.getElementById('apiConfigToggle');
 
     document.getElementById('connectedState').classList.add('hidden');
-    document.getElementById('configForm').style.display = 'block';
+    document.getElementById('configForm').style.display = 'flex';
     document.getElementById('moduleSelection').style.display = 'none';
 
     chip.classList.remove('is-connected');
@@ -102,6 +102,14 @@ function switchModule(moduleName) {
             console.error(`Error activating module '${moduleName}':`, error);
         }
     }
+}
+
+async function openConnectedAppliances() {
+    const switched = await moduleLoader.switchToModule('nodemap');
+    if (!switched) {
+        console.error('Connected successfully, but the Connected Appliances view could not be opened.');
+    }
+    return switched;
 }
 
 function showModal(modalId) {

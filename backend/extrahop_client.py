@@ -1,4 +1,7 @@
+import asyncio
+from email.utils import parsedate_to_datetime
 import json
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -12,6 +15,8 @@ from backend.api_response_logger import ApiResponseLogger
 
 DEFAULT_360_TOKEN_TTL_SECONDS = 30 * 60
 TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
+MAX_REQUEST_ATTEMPTS = 4
+RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
@@ -46,6 +51,8 @@ class ExtraHopClient:
         self.access_token: str | None = None
         self.access_token_expires_at = 0.0
         self.verify_tls = True
+        self._http_client: httpx.AsyncClient | None = None
+        self._auth_lock = asyncio.Lock()
 
         if config["type"] == "360":
             tenant = config["tenant"].strip().lower()
@@ -64,75 +71,82 @@ class ExtraHopClient:
 
     async def authenticate(self) -> None:
         if self.config["type"] == "360":
-            await self._authenticate_360()
+            await self._authenticate_360(force=True)
             return
 
         await self.request("GET", "/api/v1/extrahop")
 
-    async def _authenticate_360(self) -> None:
-        payload = {
-            "grant_type": "client_credentials",
-            "client_id": self.config["apiId"],
-            "client_secret": self.config["apiSecret"],
-        }
+    async def _authenticate_360(self, *, force: bool) -> None:
+        async with self._auth_lock:
+            if (
+                not force
+                and self.access_token
+                and time.time() < self.access_token_expires_at - TOKEN_REFRESH_BUFFER_SECONDS
+            ):
+                return
+            payload = {
+                "grant_type": "client_credentials",
+                "client_id": self.config["apiId"],
+                "client_secret": self.config["apiSecret"],
+            }
 
-        url = f"{self.base_url}/oauth2/token"
-        started_at = time.perf_counter()
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
+            url = f"{self.base_url}/oauth2/token"
+            started_at = time.perf_counter()
+            try:
+                response = await self._client().post(
                     url,
                     data=payload,
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    timeout=30.0,
                 )
-        except httpx.RequestError as error:
+            except httpx.RequestError as error:
+                if self.response_logger:
+                    self.response_logger.log_network_error(
+                        method="POST",
+                        endpoint="/oauth2/token",
+                        url=url,
+                        error=error,
+                        started_at=started_at,
+                        context="auth",
+                    )
+                raise self._network_error(error, url, "Authentication request failed") from error
+
             if self.response_logger:
-                self.response_logger.log_network_error(
+                self.response_logger.log_response(
                     method="POST",
                     endpoint="/oauth2/token",
-                    url=url,
-                    error=error,
+                    response=response,
                     started_at=started_at,
+                    request_body={"grant_type": payload["grant_type"], "client_id": payload["client_id"]},
                     context="auth",
                 )
-            raise self._network_error(error, url, "Authentication request failed") from error
 
-        if self.response_logger:
-            self.response_logger.log_response(
-                method="POST",
-                endpoint="/oauth2/token",
-                response=response,
-                started_at=started_at,
-                request_body={"grant_type": payload["grant_type"], "client_id": payload["client_id"]},
-                context="auth",
-            )
+            if response.status_code < 200 or response.status_code >= 300:
+                raise self._api_error_from_response(response, "Authentication failed")
 
-        if response.status_code < 200 or response.status_code >= 300:
-            raise self._api_error_from_response(response, "Authentication failed")
+            try:
+                data = response.json()
+            except ValueError as error:
+                raise self._malformed_response_error(response, "Authentication response was not valid JSON") from error
 
-        try:
-            data = response.json()
-        except ValueError as error:
-            raise self._malformed_response_error(response, "Authentication response was not valid JSON") from error
+            access_token = data.get("access_token") if isinstance(data, dict) else None
+            if not isinstance(access_token, str) or not access_token:
+                raise self._malformed_response_error(response, "Authentication response did not include an access token")
 
-        access_token = data.get("access_token") if isinstance(data, dict) else None
-        if not isinstance(access_token, str) or not access_token:
-            raise self._malformed_response_error(response, "Authentication response did not include an access token")
+            try:
+                ttl = int(data.get("expires_in") or DEFAULT_360_TOKEN_TTL_SECONDS)
+            except (TypeError, ValueError) as error:
+                raise self._malformed_response_error(response, "Authentication response included an invalid token lifetime") from error
 
-        try:
-            ttl = int(data.get("expires_in") or DEFAULT_360_TOKEN_TTL_SECONDS)
-        except (TypeError, ValueError) as error:
-            raise self._malformed_response_error(response, "Authentication response included an invalid token lifetime") from error
-
-        self.access_token = access_token
-        self.access_token_expires_at = time.time() + ttl
+            self.access_token = access_token
+            self.access_token_expires_at = time.time() + ttl
 
     async def refresh_if_needed(self) -> None:
         if self.config["type"] != "360":
             return
 
         if not self.access_token or time.time() >= self.access_token_expires_at - TOKEN_REFRESH_BUFFER_SECONDS:
-            await self._authenticate_360()
+            await self._authenticate_360(force=False)
 
     async def request(
         self,
@@ -148,7 +162,7 @@ class ExtraHopClient:
 
         response = await self._send(method, endpoint, query_string, body, content_type)
         if response.status_code == 401 and self.config["type"] == "360":
-            await self._authenticate_360()
+            await self._authenticate_360(force=True)
             response = await self._send(method, endpoint, query_string, body, content_type)
 
         if response.status_code < 200 or response.status_code >= 300:
@@ -190,31 +204,99 @@ class ExtraHopClient:
         if query_string:
             url = f"{url}?{query_string}"
 
-        started_at = time.perf_counter()
-        try:
-            async with httpx.AsyncClient(timeout=60.0, verify=self.verify_tls) as client:
-                response = await client.request(method, url, headers=headers, content=body)
-        except httpx.RequestError as error:
+        last_error: httpx.RequestError | None = None
+        for attempt in range(MAX_REQUEST_ATTEMPTS):
+            started_at = time.perf_counter()
+            try:
+                response = await self._client().request(method, url, headers=headers, content=body)
+            except asyncio.CancelledError:
+                raise
+            except httpx.RequestError as error:
+                last_error = error
+                if self.response_logger:
+                    self.response_logger.log_network_error(
+                        method=method,
+                        endpoint=endpoint,
+                        url=url,
+                        error=error,
+                        started_at=started_at,
+                    )
+                if (
+                    not self._retryable_request(method, endpoint)
+                    or not self._retryable_network_error(error)
+                    or attempt >= MAX_REQUEST_ATTEMPTS - 1
+                ):
+                    raise self._network_error(error, url, "API request failed") from error
+                await asyncio.sleep(self._retry_delay_seconds(attempt, None))
+                continue
+
             if self.response_logger:
-                self.response_logger.log_network_error(
+                self.response_logger.log_response(
                     method=method,
                     endpoint=endpoint,
-                    url=url,
-                    error=error,
+                    response=response,
                     started_at=started_at,
+                    request_body=self._request_body_for_log(body, content_type),
                 )
-            raise self._network_error(error, url, "API request failed") from error
 
-        if self.response_logger:
-            self.response_logger.log_response(
-                method=method,
-                endpoint=endpoint,
-                response=response,
-                started_at=started_at,
-                request_body=self._request_body_for_log(body, content_type),
-            )
+            if (
+                response.status_code not in RETRYABLE_STATUS_CODES
+                or not self._retryable_request(method, endpoint)
+                or attempt >= MAX_REQUEST_ATTEMPTS - 1
+            ):
+                return response
+            await asyncio.sleep(self._retry_delay_seconds(attempt, response.headers.get("retry-after")))
 
-        return response
+        if last_error:
+            raise self._network_error(last_error, url, "API request failed") from last_error
+        raise ExtraHopApiError("API request failed after retry exhaustion", 502, {"url": url})
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(timeout=60.0, verify=self.verify_tls)
+        return self._http_client
+
+    async def aclose(self) -> None:
+        if self._http_client is not None and not self._http_client.is_closed:
+            await self._http_client.aclose()
+
+    @staticmethod
+    def _retryable_network_error(error: httpx.RequestError) -> bool:
+        return isinstance(
+            error,
+            (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.RemoteProtocolError,
+            ),
+        )
+
+    @staticmethod
+    def _retryable_request(method: str, endpoint: str) -> bool:
+        if method.upper() in {"GET", "HEAD", "OPTIONS"}:
+            return True
+        return method.upper() == "POST" and endpoint in {
+            "/api/v1/devices/search",
+            "/api/v1/metrics",
+            "/api/v1/metrics/total",
+            "/api/v1/metrics/totalbyobject",
+            "/api/v1/metrics/catalog/search",
+        }
+
+    @staticmethod
+    def _retry_delay_seconds(attempt: int, retry_after: str | None) -> float:
+        if retry_after:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                try:
+                    retry_at = parsedate_to_datetime(retry_after)
+                    return max(0.0, retry_at.timestamp() - time.time())
+                except (TypeError, ValueError, OverflowError):
+                    pass
+        base = min(10.0, 0.5 * (2 ** attempt))
+        return base * random.uniform(0.8, 1.2)
 
     def _normalize_endpoint(self, endpoint: str) -> str:
         if not endpoint.startswith("/"):
@@ -237,6 +319,8 @@ class ExtraHopClient:
             "status": f"{response.status_code} {response.reason_phrase}",
             "response": response_body,
         }
+        if response.headers.get("retry-after"):
+            details["retry_after"] = response.headers["retry-after"]
         return ExtraHopApiError(f"{prefix}: {response.status_code} - {message}", response.status_code, details)
 
     def _network_error(self, error: httpx.RequestError, url: str, prefix: str) -> ExtraHopApiError:

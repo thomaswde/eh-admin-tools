@@ -37,7 +37,7 @@ function updateCapacityInputOptions() {
         capacityInputSection.style.display = 'none';
         crsState.inputMethod = 'csv';
         document.getElementById('manualCapacityInput').style.display = 'none';
-        document.getElementById('csvCapacityInput').style.display = 'block';
+        document.getElementById('csvCapacityInput').style.display = 'flex';
     } else {
         // For single day, show button section
         capacityInputSection.style.display = 'block';
@@ -49,13 +49,13 @@ function updateCapacityInputOptions() {
         if (crsState.inputMethod === 'manual') {
             manualBtn.classList.add('active');
             csvBtn.classList.remove('active');
-            document.getElementById('manualCapacityInput').style.display = 'block';
+            document.getElementById('manualCapacityInput').style.display = 'flex';
             document.getElementById('csvCapacityInput').style.display = 'none';
         } else {
             manualBtn.classList.remove('active');
             csvBtn.classList.add('active');
             document.getElementById('manualCapacityInput').style.display = 'none';
-            document.getElementById('csvCapacityInput').style.display = 'block';
+            document.getElementById('csvCapacityInput').style.display = 'flex';
         }
     }
 
@@ -349,7 +349,7 @@ async function generateCRSReport() {
         renderDataTable(compressedData, compressionRatio);
         
         document.getElementById('crsLoading').style.display = 'none';
-        document.getElementById('crsResults').style.display = 'block';
+        document.getElementById('crsResults').style.display = 'flex';
         
     } catch (error) {
         alert(`Error generating report: ${error.message}`);
@@ -524,11 +524,11 @@ function initCrsUsageModule() {
                 crsState.inputMethod = btn.dataset.input;
                 
                 if (crsState.inputMethod === 'manual') {
-                    document.getElementById('manualCapacityInput').style.display = 'block';
+                    document.getElementById('manualCapacityInput').style.display = 'flex';
                     document.getElementById('csvCapacityInput').style.display = 'none';
                 } else {
                     document.getElementById('manualCapacityInput').style.display = 'none';
-                    document.getElementById('csvCapacityInput').style.display = 'block';
+                    document.getElementById('csvCapacityInput').style.display = 'flex';
                 }
 
                 // Update helper tips when the input method changes
