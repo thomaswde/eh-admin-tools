@@ -18,7 +18,7 @@ const PPTXGEN_URL = 'js/vendor/pptxgen.bundle.js?v=4.0.1';
 const SLIDE_WIDTH = 13.333;
 const SLIDE_HEIGHT = 7.5;
 const MARGIN = 0.7;
-const FONT = 'Arial';
+const FONT = 'Source Sans 3';
 const BRAND_SAPPHIRE = '#261f63';
 const BRAND_PLUM = '#7f2854';
 const BRAND_LIME = '#daed43';
@@ -109,7 +109,9 @@ function mixHex(fromHex, toHex, weight) {
 }
 
 function sensorStatus(row) {
-    const states = Object.values(row.collectionStatus || {});
+    const states = Object.entries(row.collectionStatus || {})
+        .filter(([key]) => key !== 'device_analysis' || supportsDeviceAnalysis(row))
+        .map(([, state]) => state);
     const incomplete = states.find(state => !['complete', 'zero_valued'].includes(state));
     if (incomplete) return incomplete;
     if (states.length && states.every(state => state === 'zero_valued')) return 'zero_valued';
@@ -121,6 +123,23 @@ function sensorStatus(row) {
 // repeating the same seven-clause sentence once per row.
 function isAbsent(row) {
     return !!row.offline || row.data_access === false;
+}
+
+// Flow Sensors collect flow telemetry and IDS Sensors process IDS rules; neither
+// role is expected to discover devices or report device-analysis tiers.
+function applianceRole(row) {
+    const model = cleanText(row.license_platform || (row.capacity && row.capacity.model), 80)
+        .replace(/\s+/g, '').toUpperCase();
+    const platform = cleanText(row.platform, 80).toLowerCase().replace(/[_-]+/g, ' ');
+    if (model.startsWith('EFC') || platform.includes('flow sensor') || platform.includes('flow collector')) {
+        return 'flow_sensor';
+    }
+    if (model.startsWith('IDS') || platform === 'ids' || platform.startsWith('ids ')) return 'ids';
+    return 'packet_sensor';
+}
+
+function supportsDeviceAnalysis(row) {
+    return applianceRole(row) === 'packet_sensor';
 }
 
 // Conditions are emitted in priority order. The first one becomes the row's
@@ -195,6 +214,7 @@ function findingForRow(row) {
     };
     const gaps = Object.entries(collectionLabels)
         .filter(([key]) => {
+            if (key === 'device_analysis' && !supportsDeviceAnalysis(row)) return false;
             const status = collection[key];
             return status && !['complete', 'zero_valued'].includes(status);
         })
@@ -718,11 +738,16 @@ function addOverview(model, assets) {
         chipX += width + 0.14;
     });
 
-    slide.addText('Counts reflect sensors that returned data. Unavailable statistics are held as missing '
-        + 'rather than zero; per-sensor collection status is in the appendix.', {
-        x: MARGIN, y: 6.44, w: barWidth, h: 0.22, fontFace: FONT, fontSize: 10,
-        color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
-    });
+    if (overview.offline > 0) {
+        slide.addText(formatInteger(overview.offline), {
+            x: MARGIN, y: 6.30, w: 1.0, h: 0.44, fontFace: FONT, fontSize: 27,
+            bold: true, color: pptColor(palette.high), margin: 0, fit: 'shrink'
+        });
+        slide.addText(`Offline ${overview.offline === 1 ? 'appliance' : 'appliances'}`, {
+            x: MARGIN + 1.12, y: 6.39, w: 3.0, h: 0.25, fontFace: FONT, fontSize: 12,
+            bold: true, color: pptColor(palette.high), margin: 0, fit: 'shrink'
+        });
+    }
     addNotes(slide, model, 'Headline counts calculated from the normalized System Health sensor rows.');
 }
 
@@ -885,6 +910,7 @@ function chartSpecs(model) {
             subtitle: 'Devices in Advanced Analysis against licensed capacity',
             value: row => finiteNumber(row.analysis && row.analysis.advanced),
             capacity: row => finiteNumber(row.advancedCapacity),
+            eligible: supportsDeviceAnalysis,
             format: value => `${formatInteger(value)} devices`,
             note: row => {
                 const discovery = finiteNumber(row.analysis && row.analysis.discovery);
@@ -897,6 +923,7 @@ function chartSpecs(model) {
             subtitle: 'Devices in Standard Analysis against licensed capacity',
             value: row => finiteNumber(row.analysis && row.analysis.standard),
             capacity: row => finiteNumber(row.standardCapacity),
+            eligible: supportsDeviceAnalysis,
             format: value => `${formatInteger(value)} devices`,
             note: row => {
                 const discovery = finiteNumber(row.analysis && row.analysis.discovery);
@@ -912,7 +939,7 @@ function chartSpecs(model) {
 // licensed capacity, and the appendix preserves the model detail.
 function chartPagesForSpec(model, spec) {
     const measured = model.rows
-        .filter(row => !isAbsent(row))
+        .filter(row => !isAbsent(row) && (!spec.eligible || spec.eligible(row)))
         .map(row => ({
             row,
             model: cleanText(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', 80),
@@ -936,7 +963,7 @@ function chartPagesForSpec(model, spec) {
             entries,
             measured: measured.length,
             withheld: measured.length - shown.length,
-            total: model.rows.length
+            offline: model.overview.offline
         };
     });
 }
@@ -1014,21 +1041,26 @@ function addChartSlide(model, assets, spec, page, title, subtitle) {
         x: MARGIN, y: y + 0.22, w: SLIDE_WIDTH - MARGIN * 2, h: 0,
         line: { color: pptColor(palette.grid), width: 0.75 }
     });
-    const excluded = page.total - page.measured;
     const caption = [
-        `${formatInteger(page.measured)} of ${formatInteger(page.total)} sensors supplied a usable value and capacity`,
-        excluded > 0 ? `${formatInteger(excluded)} are excluded rather than shown as zero` : '',
+        page.offline > 0
+            ? `${formatInteger(page.offline)} offline ${page.offline === 1 ? 'sensor' : 'sensors'} not shown`
+            : '',
         page.withheld > 0 ? `${formatInteger(page.withheld)} lower-ranked sensors continue in the appendix` : ''
     ].filter(Boolean).join(' · ');
-    slide.addText(caption, {
-        x: MARGIN, y: y + 0.36, w: 8.8, h: 0.22, fontFace: FONT, fontSize: 10,
-        color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
-    });
+    if (caption) {
+        slide.addText(caption, {
+            x: MARGIN, y: y + 0.36, w: 8.8, h: 0.22, fontFace: FONT, fontSize: 10,
+            color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
+        });
+    }
     slide.addText('Sorted by percent of model capacity', {
         x: 9.2, y: y + 0.36, w: 3.45, h: 0.22, fontFace: FONT, fontSize: 10,
         color: pptColor(palette.muted), margin: 0, align: 'right'
     });
-    addNotes(slide, model, `Drawn from the normalized System Health rows for ${page.model}; sensors without a measured value for this statistic are excluded.`);
+    const roleNote = spec.eligible
+        ? ' IDS and Flow Sensors are omitted because device-analysis tiers do not apply to those roles.'
+        : '';
+    addNotes(slide, model, `Drawn from the normalized System Health rows for ${page.model}; offline sensors are not plotted.${roleNote}`);
 }
 
 function clipName(value, limit = 30) {
@@ -1044,7 +1076,7 @@ function addRecommendationSlide(model, assets) {
         'Actions derived from the conditions observed in this report', assets);
     model.recommendations.forEach((recommendation, index) => {
         const y = 1.72 + index * 1.02;
-        const color = index === 0 ? palette.high : palette.low;
+        const color = recommendationColor(recommendation, palette);
         slide.addShape(model.pptx.ShapeType.ellipse, {
             x: MARGIN, y, w: 0.44, h: 0.44,
             fill: { color: pptColor(color) }, line: { type: 'none' }
@@ -1060,6 +1092,15 @@ function addRecommendationSlide(model, assets) {
         });
     });
     addNotes(slide, model, 'Recommended actions are deterministic suggestions derived from the findings in this report and should be validated against deployment context.');
+}
+
+function recommendationColor(recommendation, palette) {
+    const text = String(recommendation || '');
+    if (/restore(?: appliance)? connectivity|data access|trigger drops/i.test(text)) return palette.high;
+    if (/capacity pressure|analysis assignments|licensed capacity|license|synchronization/i.test(text)) {
+        return palette.mid;
+    }
+    return palette.low;
 }
 
 /* ---------------------------------------------------------------- appendix */

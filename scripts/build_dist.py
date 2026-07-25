@@ -38,6 +38,7 @@ APP_TREES = {
 }
 
 LICENSE_TREE = ("licenses", {"", ".md", ".txt"})
+FONT_TREE = ("fonts", {".ttf"})
 
 
 def sha256(path: Path) -> str:
@@ -110,6 +111,8 @@ def validate_package(package_root: Path) -> None:
         "app/js/vendor/d3.min.js",
         "app/js/vendor/pptxgen.bundle.js",
         "app/catalog.eh.json",
+        "fonts/SourceSans3-Regular.ttf",
+        "fonts/SourceSans3-Bold.ttf",
         "SHA256SUMS",
     ]
     missing = [name for name in required if not (package_root / name).is_file()]
@@ -181,6 +184,12 @@ def build() -> Path:
             REPO_ROOT / license_name,
             package_root / license_name,
             license_suffixes,
+        )
+        font_name, font_suffixes = FONT_TREE
+        copy_tree(
+            REPO_ROOT / font_name,
+            package_root / font_name,
+            font_suffixes,
         )
 
         for launcher in (package_root / "start.sh", package_root / "START-HERE.command"):

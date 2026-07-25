@@ -129,6 +129,39 @@ function sensorRow(overrides = {}) {
     };
 }
 
+class FakePptx {
+    constructor() {
+        this._slides = [];
+        this.ShapeType = { line: 'line', rect: 'rect', roundRect: 'roundRect', ellipse: 'ellipse' };
+    }
+
+    addSlide() {
+        const slide = {
+            texts: [], shapes: [], tables: [], images: [], notes: [],
+            addText(text, options = {}) { this.texts.push({ text: String(text), options }); },
+            addShape(type, options = {}) { this.shapes.push({ type, options }); },
+            addTable(rows, options = {}) { this.tables.push({ rows, options }); },
+            addImage(options = {}) { this.images.push(options); },
+            addNotes(notes) { this.notes.push(notes); }
+        };
+        this._slides.push(slide);
+        return slide;
+    }
+}
+
+function presentationFor(rows) {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        palette: { bg: '#ffffff', text: '#261f63', low: '#00aaef', mid: '#f05918', high: '#ec0089' },
+        rows
+    });
+    return { model, pptx: pptxApi.createPresentation(model, FakePptx) };
+}
+
+function presentationText(pptx) {
+    return pptx._slides.flatMap(slide => slide.texts.map(item => item.text)).join('\n');
+}
+
 test('sensors that returned no data roll up instead of filling the findings table', () => {
     const rows = [
         sensorRow({ id: 'up', name: 'Reporting sensor' }),
@@ -153,6 +186,59 @@ test('sensors that returned no data roll up instead of filling the findings tabl
     assert.equal(model.findings[0].name, 'Busy sensor');
     assert.ok(model.findings.every(item => !item.absent));
     assert.equal(model.absent.length, 13);
+});
+
+test('IDS and EFC device-analysis gaps are expected and do not create findings', () => {
+    const roleRows = [
+        sensorRow({
+            id: 'ids', name: 'IDS sensor', license_platform: '', platform: 'ids_standalone',
+            advancedCapacity: null, standardCapacity: null,
+            analysis: { advanced: null, standard: null, discovery: null },
+            collectionStatus: { ...sensorRow().collectionStatus, device_analysis: 'empty' }
+        }),
+        sensorRow({
+            id: 'efc', name: 'Flow collector', license_platform: '', platform: 'flow_collector',
+            advancedCapacity: null, standardCapacity: null,
+            analysis: { advanced: null, standard: null, discovery: null },
+            collectionStatus: { ...sensorRow().collectionStatus, device_analysis: 'empty' }
+        })
+    ];
+    const { model, pptx } = presentationFor(roleRows);
+
+    assert.equal(model.findings.length, 0);
+    assert.equal(model.overview.reporting, 2);
+    assert.equal(model.overview.healthy, 2);
+    assert.doesNotMatch(presentationText(pptx), /incomplete collection/i);
+});
+
+test('offline hero, chart caption, recommendation colors, and Source Sans 3 are preserved', () => {
+    const rows = [
+        sensorRow({ id: 'busy', name: 'Busy sensor', packetPeak: 9000 }),
+        sensorRow({ id: 'offline', name: 'Offline sensor', online: false, offline: true })
+    ];
+    const { pptx } = presentationFor(rows);
+    const allText = presentationText(pptx);
+
+    assert.equal(pptx.theme.headFontFace, 'Source Sans 3');
+    assert.equal(pptx.theme.bodyFontFace, 'Source Sans 3');
+    assert.match(allText, /Offline appliance/);
+    assert.match(allText, /1 offline sensor not shown/);
+    assert.doesNotMatch(allText, /supplied a usable value|excluded rather than shown as zero/);
+
+    const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet health at a glance'));
+    const offlineHero = overviewSlide.texts.find(item => item.text === 'Offline appliance');
+    assert.equal(offlineHero.options.color, 'EC0089');
+
+    const recommendationSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Recommended next steps'));
+    const bulletColors = recommendationSlide.shapes
+        .filter(shape => shape.type === 'ellipse')
+        .map(shape => shape.options.fill.color);
+    assert.deepEqual(bulletColors, ['EC0089', 'F05918']);
+});
+
+test('offline hero is omitted when the fleet has no offline appliances', () => {
+    const { pptx } = presentationFor([sensorRow({ id: 'healthy', name: 'Healthy sensor' })]);
+    assert.doesNotMatch(presentationText(pptx), /Offline appliance/);
 });
 
 test('verdict names the dominant condition rather than the first one found', () => {

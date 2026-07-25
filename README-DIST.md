@@ -82,9 +82,13 @@ Start again without `--skip-pdf-setup`. On some Linux distributions, Playwright 
 
 ## Chart themes
 
-System Health charts export as PNGs sized for slide decks. **Export PowerPoint** builds a turn-key, editable review deck whose chart images and slide colors use the active chart theme. The optional export fields can be left empty; the app falls back to the report title, connected target, and report window.
+**Export PowerPoint** builds a turn-key, editable review deck whose native chart shapes and slide colors use the active chart theme. The optional export fields can be left empty; the app falls back to the report title, connected target, and report window.
 
-Open **Chart theme** above the charts to switch between the built-in themes or set exact colors before exporting. PowerPoint charts are embedded as high-resolution PNGs for reliable PowerPoint and Google Slides rendering, while titles, findings, recommendations, and appendix tables remain editable.
+Open **Chart theme** above the charts to switch between the built-in themes or set exact colors before exporting. Charts, titles, findings, recommendations, and appendix tables remain editable.
+
+### PowerPoint typography
+
+PowerPoint decks request **Source Sans 3**. Install `SourceSans3-Regular.ttf` and `SourceSans3-Bold.ttf` from the package's `fonts` folder before opening or editing a deck. PowerPoint substitutes another font when Source Sans 3 is unavailable, which can change text proportions. The browser-based deck generator does not embed fonts in the PowerPoint file.
 
 Themes you save are written to the `chart-themes` folder beside this file, one small JSON file each. Copy that folder to back up your themes or to give them to someone else — drop the files into their `chart-themes` folder and they appear in the picker.
 

@@ -98,8 +98,9 @@ between Light, Auto, and Dark, and the choice persists in `localStorage`.
 Charts in the System Health report are deliberately independent of the app theme. Their palette
 is set in the report's own Chart style panel so exported PNGs, PDFs, and PowerPoint decks use the
 same resolved colors regardless of how the app is being viewed. PowerPoint export is generated
-in the browser: charts are portable high-resolution PNGs, while slide text and appendix tables
-remain editable.
+in the browser with editable native shapes and text. Decks request Source Sans 3; distributions
+include installable Regular and Bold font files because PowerPoint otherwise substitutes a local
+font and can change text proportions.
 
 ## Styling
 
