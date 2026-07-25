@@ -560,6 +560,7 @@ SYSTEM_HEALTH_PDF_FALLBACK_COLORS = {
 
 def render_system_health_pdf_html(report: dict[str, Any], style: dict[str, Any]) -> str:
     rows = system_health_pdf_rows(report)
+    packetstore_rows = system_health_pdf_packetstore_rows(report)
     colors = system_health_pdf_style_colors(style)
     page_background = "transparent" if colors["transparent"] else colors["bg"]
     cycle_label = system_health_pdf_cycle_label(report)
@@ -575,11 +576,16 @@ def render_system_health_pdf_html(report: dict[str, Any], style: dict[str, Any])
             chunks = [model_rows[i:i + 22] for i in range(0, len(model_rows), 22)] or [[]]
             for index, chunk in enumerate(chunks, start=1):
                 pages.append(system_health_pdf_page(title, subtitle, model, chunk, index, len(chunks), value_key, capacity_key, unit))
+    packetstore_chunks = [packetstore_rows[i:i + 12] for i in range(0, len(packetstore_rows), 12)]
+    for index, chunk in enumerate(packetstore_chunks, start=1):
+        pages.append(system_health_pdf_packetstore_page(
+            chunk, index, len(packetstore_chunks), system_health_pdf_packetstore_cycle_label(report)
+        ))
 
     generated = html.escape(str(report.get("generated_at") or ""))
     lookback = html.escape(str(((report.get("window") or {}).get("lookback_days")) or ""))
     cycle = html.escape(cycle_label)
-    summary = system_health_pdf_summary(rows, report)
+    summary = system_health_pdf_summary(rows, report, packetstore_rows)
     body_pages = "\n".join(pages)
     return f"""<!doctype html>
 <html>
@@ -609,6 +615,10 @@ h2 {{ margin: 0 0 4px; font-size: 24px; }}
 .bar.hot {{ background: {colors["high"]}; }}
 .value {{ font-size: 11px; color: {colors["text"]}; }}
 .analysis {{ grid-template-columns: 190px 1fr 1fr 230px; }}
+.packetstore-grid {{ display: grid; grid-template-columns: 175px 1fr 1.35fr 1.25fr; gap: 8px 12px; align-items: center; font-size: 10px; }}
+.packetstore-grid .head {{ font-weight: 700; color: {colors["subtle"]}; border-bottom: 1px solid {colors["border"]}; padding-bottom: 6px; }}
+.mini {{ height: 9px; background: {colors["track"]}; margin: 2px 0; }}
+.mini > span {{ display:block; height:100%; background:{colors["low"]}; }}
 .chip {{ display: inline-block; min-width: 28px; padding: 3px 8px; border-radius: 12px; color: white; background: linear-gradient(135deg, {colors["mid"]}, {colors["high"]}); text-align: center; font-size: 10px; font-weight: 700; }}
 .footer {{ position: fixed; bottom: 0.1in; left: 0.12in; right: 0.12in; display: flex; justify-content: space-between; color: {colors["muted"]}; font-size: 10px; }}
 </style>
@@ -657,6 +667,8 @@ def system_health_pdf_hex(value: Any, fallback: str) -> str:
 def system_health_pdf_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for sensor in report.get("appliances") or []:
+        if sensor.get("appliance_role") == "packetstore":
+            continue
         capacity = sensor.get("capacity") or {}
         sid = str(sensor.get("id"))
         trigger = (((report.get("trigger_utilization") or {}).get("peak_by_sensor") or {}).get(sid) or {})
@@ -684,6 +696,92 @@ def system_health_pdf_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
             "health_conditions": sensor.get("health_conditions") or [],
         })
     return rows
+
+
+def system_health_pdf_packetstore_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    packetstore = report.get("packetstore") or {}
+    ids = {str(value) for value in packetstore.get("appliance_ids") or []}
+    metrics = packetstore.get("metrics") or {}
+
+    def value(metric: str, field: str, sid: str) -> float | None:
+        raw = (((metrics.get(metric) or {}).get("summary") or {}).get(field) or {}).get(sid)
+        try:
+            return float(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    rows = []
+    for appliance in report.get("appliances") or []:
+        sid = str(appliance.get("id"))
+        if sid not in ids:
+            continue
+        packets = value("pkts", "totals", sid)
+        packet_drops = value("pkts_dropped", "totals", sid)
+        secrets = value("secrets", "totals", sid)
+        secret_drops = value("secrets_dropped", "totals", sid)
+        rows.append({
+            "id": sid,
+            "name": appliance.get("name") or appliance.get("hostname") or f"Appliance {sid}",
+            "role": appliance.get("appliance_role") or "packetstore",
+            "lookback_latest": value("est_lookback_sec", "latest_values", sid),
+            "lookback_min": value("est_lookback_sec", "min_values", sid),
+            "packets": packets,
+            "packet_drops": packet_drops,
+            "packet_drop_ratio": packet_drops / packets if packets and packet_drops is not None else None,
+            "slow_write_drops": value("pkts_dropped_wrslow", "totals", sid),
+            "interface_drops": value("if_drops", "totals", sid),
+            "secrets": secrets,
+            "secret_drops": secret_drops,
+            "secret_drop_ratio": secret_drops / secrets if secrets and secret_drops is not None else None,
+            "input_load": value("input_load", "peak_values", sid),
+            "compress_load": value("compress_load", "peak_values", sid),
+            "write_load": value("disk_write_load", "peak_values", sid),
+        })
+    return rows
+
+
+def system_health_pdf_packetstore_page(rows: list[dict[str, Any]], page: int, pages: int, cycle_label: str) -> str:
+    body = ["<div class='packetstore-grid'><div class='head'>APPLIANCE</div><div class='head'>RETENTION</div><div class='head'>CAPTURE &amp; SECRET FIDELITY</div><div class='head'>PEAK PROCESSING LOAD</div>"]
+    for row in rows:
+        latest = row.get("lookback_latest")
+        minimum = row.get("lookback_min")
+        lookback = f"{latest / 86400:.1f}d latest · {minimum / 86400:.1f}d min" if latest is not None and minimum is not None else "unavailable"
+        packet_ratio = row.get("packet_drop_ratio")
+        secret_ratio = row.get("secret_drop_ratio")
+        packet_label = f"{packet_ratio * 100:.4g}%" if packet_ratio is not None else "unavailable"
+        secret_label = f"{secret_ratio * 100:.4g}%" if secret_ratio is not None else "unavailable"
+        fidelity = (
+            f"Packets {packet_label} ({int(row.get('packet_drops') or 0):,} dropped) · "
+            f"Secrets {secret_label} ({int(row.get('secret_drops') or 0):,} dropped)<br>"
+            f"Slow-write {int(row.get('slow_write_drops') or 0):,} · interface {int(row.get('interface_drops') or 0):,}"
+        )
+        load_values = [("Input", row.get("input_load")), ("Compress", row.get("compress_load")), ("Write", row.get("write_load"))]
+        loads = "".join(
+            f"{label} {float(value):.1f}%<div class='mini'><span style='width:{min(100, max(0, float(value))):.2f}%'></span></div>"
+            if value is not None else f"{label} unavailable<br>"
+            for label, value in load_values
+        )
+        role = "All in One" if row.get("role") == "all_in_one" else "Packetstore"
+        body.extend([
+            f"<div class='name'>{html.escape(str(row.get('name') or ''))}<br><span class='muted'>{role}</span></div>",
+            f"<div>{html.escape(lookback)}</div>",
+            f"<div>{fidelity}</div>",
+            f"<div>{loads}</div>",
+        ])
+    body.append("</div>")
+    subtitle = f"Retention, capture fidelity, and peak sampled 30-second processing load at {cycle_label} cadence"
+    return f"""<section class="page"><div class="page-head"><div><h2>Packetstore Health</h2><div class="muted">{html.escape(subtitle)}</div></div><div class="model">{len(rows)} appliances | Page {page} of {pages}</div></div>{''.join(body)}</section>"""
+
+
+def system_health_pdf_packetstore_cycle_label(report: dict[str, Any]) -> str:
+    packetstore_metrics = ((report.get("packetstore") or {}).get("metrics") or {}).values()
+    cycles = {
+        str(cycle)
+        for details in packetstore_metrics
+        for cycle in (((details.get("summary") or {}).get("actual_cycles") or {}).values())
+        if cycle
+    }
+    return "/".join(sorted(cycles)) if cycles else str(report.get("cycle") or report.get("requested_cycle") or "unknown-cycle")
 
 
 def system_health_pdf_model_groups(rows: list[dict[str, Any]], value_key: str | None, capacity_key: str | None, unit: str) -> list[tuple[str, list[dict[str, Any]]]]:
@@ -739,12 +837,15 @@ def system_health_pdf_analysis_row(row: dict[str, Any]) -> str:
     return f"""<div class="row analysis"><div class="name">{html.escape(str(row.get("name") or ""))}</div><div class="track"><div class="bar {'hot' if adv_util >= 1 else 'warn' if adv_util >= 0.8 else ''}" style="width:{min(100, adv_util * 100):.2f}%"></div></div><div class="track"><div class="bar {'hot' if std_util >= 1 else 'warn' if std_util >= 0.8 else ''}" style="width:{min(100, std_util * 100):.2f}%"></div></div><div class="value">{advanced:,.0f} adv | {standard:,.0f} std | {discovery_label}</div></div>"""
 
 
-def system_health_pdf_summary(rows: list[dict[str, Any]], report: dict[str, Any]) -> str:
+def system_health_pdf_summary(rows: list[dict[str, Any]], report: dict[str, Any], packetstore_rows: list[dict[str, Any]] | None = None) -> str:
+    packetstore_rows = packetstore_rows or []
     cards = [
         ("Sensors", f"{len(rows):,}", "Discover sensors returned"),
         ("Packet Risk", f"{sum(1 for r in rows if ratio(r['packet_peak'], r['packet_capacity']) >= 1):,}", "At model packet rating"),
         ("Throughput Watch", f"{sum(1 for r in rows if ratio(r['throughput_gbps'], r['throughput_capacity']) >= 0.8):,}", "At 80%+ throughput"),
         ("Trigger Drops", f"{sum(1 for r in rows if r['trigger_drops'] > 0):,}", "Sensors with drops"),
+        ("PCAP Stores", f"{len(packetstore_rows):,}", "AIO and Packetstore appliances"),
+        ("PCAP Loss", f"{sum(1 for r in packetstore_rows if (r.get('packet_drops') or 0) > 0 or (r.get('interface_drops') or 0) > 0 or (r.get('secret_drops') or 0) > 0):,}", "Stores with observed loss"),
     ]
     return "".join(f"<div class='card'><span>{html.escape(label)}</span><b>{html.escape(value)}</b><small class='muted'>{html.escape(note)}</small></div>" for label, value, note in cards)
 

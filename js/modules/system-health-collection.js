@@ -15,6 +15,8 @@
     };
     const ORDERED_CYCLES = ['1sec', '30sec', '5min', '1hr', '24hr'];
     const TIME_SERIES_METRICS = ['bytes', 'pkts', 'trigger_cycles', 'trigger_cycles_avail'];
+    const PACKETSTORE_TIME_SERIES_METRICS = ['est_lookback_sec', 'input_load', 'compress_load', 'disk_write_load'];
+    const PACKETSTORE_TOTAL_METRICS = ['pkts', 'pkts_dropped', 'pkts_dropped_wrslow', 'secrets', 'secrets_dropped', 'if_drops'];
     const MAX_BUCKETS_PER_SENSOR = 10_000;
     const MAX_SCALAR_POINTS_PER_REPORT = 500_000;
     const DEFAULT_XID_DEADLINE_MS = 5 * 60 * 1000;
@@ -72,18 +74,22 @@
         windowMs,
         sensorCount,
         metricCount = TIME_SERIES_METRICS.length,
+        scalarSeriesCount = null,
         maxBucketsPerSensor = MAX_BUCKETS_PER_SENSOR,
         maxScalarPoints = MAX_SCALAR_POINTS_PER_REPORT
     }) {
         const requested = String(requestedCycle || '1hr');
         const sensors = Math.max(0, Number(sensorCount) || 0);
         const metrics = Math.max(1, Number(metricCount) || 1);
+        const scalarSeries = scalarSeriesCount === null
+            ? sensors * metrics
+            : Math.max(0, Number(scalarSeriesCount) || 0);
 
         if (requested === 'auto') {
             const minimumSafeCycle = ORDERED_CYCLES.find(cycle => {
                 const buckets = estimateBucketCount(windowMs, cycle);
                 return buckets <= maxBucketsPerSensor
-                    && buckets * sensors * metrics <= maxScalarPoints;
+                    && buckets * scalarSeries <= maxScalarPoints;
             });
             if (!minimumSafeCycle) {
                 throw new RangeError('The requested report exceeds the maximum time-series point budget even at the 24-hour cycle.');
@@ -93,7 +99,7 @@
                 query_cycle: minimumSafeCycle,
                 minimum_safe_cycle: minimumSafeCycle,
                 estimated_buckets_per_sensor: estimateBucketCount(windowMs, minimumSafeCycle),
-                estimated_scalar_points: estimateBucketCount(windowMs, minimumSafeCycle) * sensors * metrics,
+                estimated_scalar_points: estimateBucketCount(windowMs, minimumSafeCycle) * scalarSeries,
                 adjusted: true,
                 policy: 'deterministic-auto-resolution'
             };
@@ -103,7 +109,7 @@
         const queryCycle = ORDERED_CYCLES.slice(requestedIndex).find(cycle => {
             const buckets = estimateBucketCount(windowMs, cycle);
             return buckets <= maxBucketsPerSensor
-                && buckets * sensors * metrics <= maxScalarPoints;
+                && buckets * scalarSeries <= maxScalarPoints;
         });
         if (!queryCycle) {
             throw new RangeError('The requested report exceeds the maximum time-series point budget even at the 24-hour cycle.');
@@ -114,20 +120,20 @@
             query_cycle: queryCycle,
             minimum_safe_cycle: queryCycle,
             estimated_buckets_per_sensor: buckets,
-            estimated_scalar_points: buckets * sensors * metrics,
+            estimated_scalar_points: buckets * scalarSeries,
             adjusted: queryCycle !== requested,
             policy: 'deterministic-coarsening'
         };
     }
 
-    function buildMetricRequest({ cycle, fromMs, untilMs, objectIds, metricNames }) {
+    function buildMetricRequest({ cycle, fromMs, untilMs, objectIds, metricNames, metricCategory = 'capture' }) {
         return {
             cycle,
             from: fromMs,
             until: untilMs,
             object_type: 'system',
             object_ids: Array.from(objectIds || []),
-            metric_category: 'capture',
+            metric_category: metricCategory,
             metric_specs: Array.from(metricNames || []).map(name => ({ name }))
         };
     }
@@ -367,6 +373,9 @@
         const peakValues = {};
         const peakTimes = {};
         const peakDurationMs = {};
+        const minValues = {};
+        const minTimes = {};
+        const minDurationMs = {};
         const actualCycles = {};
 
         (rows || []).forEach(row => {
@@ -390,6 +399,13 @@
                 peakTimes[id] = row.timestamp_ms;
                 peakDurationMs[id] = row.duration_ms;
             }
+            if (minValues[id] === undefined
+                || value < minValues[id]
+                || (value === minValues[id] && Number(row.timestamp_ms) < Number(minTimes[id]))) {
+                minValues[id] = value;
+                minTimes[id] = row.timestamp_ms;
+                minDurationMs[id] = row.duration_ms;
+            }
             if (row.actual_cycle) actualCycles[id] = row.actual_cycle;
         });
 
@@ -405,6 +421,9 @@
             peak_values: peakValues,
             peak_times: peakTimes,
             peak_duration_ms: peakDurationMs,
+            min_values: minValues,
+            min_times: minTimes,
+            min_duration_ms: minDurationMs,
             latest_values: latestValues,
             latest_times: latestTimes,
             actual_cycles: actualCycles
@@ -549,6 +568,8 @@
         DAY_MS,
         CYCLE_MS,
         TIME_SERIES_METRICS,
+        PACKETSTORE_TIME_SERIES_METRICS,
+        PACKETSTORE_TOTAL_METRICS,
         MAX_BUCKETS_PER_SENSOR,
         MAX_SCALAR_POINTS_PER_REPORT,
         SystemHealthIncompleteResultError,

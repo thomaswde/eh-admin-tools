@@ -3,11 +3,12 @@
 const SYSTEM_HEALTH_ROWS_PER_PAGE = 22;
 const SYSTEM_HEALTH_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_HEALTH_DEVICE_LIMIT = 5000;
-const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '1';
+const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '2';
 const SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS = [
     'schema_version', 'generated_at', 'report_lookback_days', 'report_from_ms', 'report_until_ms',
     'requested_cycle', 'query_cycle', 'capacity_catalog_loaded', 'report_errors_json',
     'appliance_id', 'appliance_name', 'hostname', 'platform', 'license_platform', 'uuid',
+    'appliance_role', 'packetstore_metric_eligible', 'packetstore_metrics_json',
     'status_message', 'online', 'metric_eligible', 'data_access', 'license_status', 'sync_time',
     'firmware_version', 'health_conditions_json',
     'packet_peak_value', 'packet_peak_duration_ms', 'packet_peak_time_ms', 'packet_peak_pps',
@@ -47,7 +48,8 @@ const systemHealthState = {
         triggersModel: 0,
         triggersRow: 0,
         analysisModel: 0,
-        analysisRow: 0
+        analysisRow: 0,
+        packetstoreRow: 0
     }
 };
 
@@ -163,11 +165,20 @@ async function generateSystemHealthReport() {
         const appliances = normalizeSystemHealthAppliances(await window.apiClient.getAppliances({ signal: abortController.signal }));
         const discoverSensors = appliances.filter(item => String(item.platform || '').toLowerCase() === 'discover');
         const metricSensors = discoverSensors.filter(isSystemHealthMetricSensor);
-        const appliancesById = Object.fromEntries(discoverSensors.map(item => [String(item.id), item]));
+        const packetstoreAppliances = appliances.filter(isSystemHealthPacketstoreAppliance);
+        const reportAppliances = Array.from(new Map(
+            [...discoverSensors, ...packetstoreAppliances].map(item => [String(item.id), item])
+        ).values());
+        const packetstoreMetricAppliances = packetstoreAppliances.filter(isSystemHealthMetricSensor);
+        const appliancesById = Object.fromEntries(reportAppliances.map(item => [String(item.id), item]));
         const cyclePolicy = SystemHealthCollection.chooseCyclePolicy({
             requestedCycle,
             windowMs: untilMs - fromMs,
-            sensorCount: metricSensors.length
+            sensorCount: reportAppliances.length,
+            scalarSeriesCount: (
+                metricSensors.length * SystemHealthCollection.TIME_SERIES_METRICS.length
+                + packetstoreMetricAppliances.length * SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS.length
+            )
         });
 
         loadingText.textContent = 'Collecting device tiers and batched system metrics...';
@@ -180,21 +191,21 @@ async function generateSystemHealthReport() {
                     error
                 };
             }),
-            collectSystemHealthMetrics(metricSensors, discoverSensors, appliancesById, {
+            collectSystemHealthMetrics(metricSensors, discoverSensors, packetstoreMetricAppliances, packetstoreAppliances, appliancesById, {
                 fromMs,
                 untilMs,
                 cycle: cyclePolicy.query_cycle,
                 signal: abortController.signal
             })
         ]);
-        const { timeSeriesResult, triggerDropResult } = metricCollection;
+        const { timeSeriesResult, triggerDropResult, packetstoreResult } = metricCollection;
         const metricResults = {
             ...timeSeriesResult.metrics,
             trigger_drops: triggerDropResult
         };
 
         const report = buildSystemHealthReport({
-            appliances: discoverSensors,
+            appliances: reportAppliances,
             deviceAnalysis: deviceResult.by_sensor,
             metricResults,
             lookbackDays,
@@ -204,11 +215,13 @@ async function generateSystemHealthReport() {
             fromMs,
             untilMs,
             triggerUtilization: timeSeriesResult.trigger_utilization,
+            packetstore: packetstoreResult,
             deviceAnalysisError: deviceResult.error,
             collectionErrors: [
                 ...deviceResult.warnings,
                 ...timeSeriesResult.errors,
                 ...(triggerDropResult.errors || []),
+                ...(packetstoreResult.errors || []),
                 ...(cyclePolicy.adjusted
                     ? [`Metric cycle was automatically changed from ${requestedCycle} to ${cyclePolicy.query_cycle} to stay within the ${SystemHealthCollection.MAX_BUCKETS_PER_SENSOR.toLocaleString()}-bucket per-sensor and ${SystemHealthCollection.MAX_SCALAR_POINTS_PER_REPORT.toLocaleString()}-point report budgets.`]
                     : [])
@@ -238,7 +251,7 @@ async function generateSystemHealthReport() {
     }
 }
 
-async function collectSystemHealthMetrics(metricSensors, allSensors, appliancesById, options) {
+async function collectSystemHealthMetrics(metricSensors, allSensors, packetstoreMetricAppliances, allPacketstoreAppliances, appliancesById, options) {
     // A console can return one XID per query and forward each continuation to
     // attached sensors. Drain one query completely before starting the next so
     // time-series and total polling do not contend for the same remote sensors.
@@ -254,7 +267,15 @@ async function collectSystemHealthMetrics(metricSensors, allSensors, appliancesB
         appliancesById,
         options
     );
-    return { timeSeriesResult, triggerDropResult };
+    const packetstoreResult = Array.isArray(packetstoreMetricAppliances) && Array.isArray(allPacketstoreAppliances)
+        ? await collectSystemHealthPacketstoreMetrics(
+            packetstoreMetricAppliances,
+            allPacketstoreAppliances,
+            appliancesById,
+            options
+        )
+        : { metric_category_used: 'cpc', appliance_ids: [], metrics: {}, errors: [] };
+    return { timeSeriesResult, triggerDropResult, packetstoreResult };
 }
 
 function normalizeSystemHealthAppliances(response) {
@@ -267,6 +288,24 @@ function normalizeSystemHealthAppliances(response) {
 function isSystemHealthMetricSensor(appliance) {
     const status = String(appliance.status_message || '').toLowerCase();
     return status === 'online' && appliance.data_access !== false;
+}
+
+function isSystemHealthPacketstoreAppliance(appliance) {
+    if (String(appliance && appliance.platform || '').toLowerCase() === 'trace') return true;
+    const catalog = capacityForSystemHealthAppliance(appliance || {});
+    if (String(catalog.platform || '').toLowerCase() === 'all_in_one') return true;
+    const licensedFeatures = appliance && appliance.licensed_features || {};
+    const productModules = appliance && appliance.product_modules;
+    const moduleValues = [
+        ...(Array.isArray(licensedFeatures) ? licensedFeatures : Object.entries(licensedFeatures).flatMap(([key, value]) => [key, value])),
+        ...(Array.isArray(productModules) ? productModules : productModules ? String(productModules).split(',') : [])
+    ].map(value => String(value).toLowerCase());
+    return moduleValues.some(value => /packet[_ -]?forensics|network[_ -]?forensics|packetstore/.test(value));
+}
+
+function systemHealthApplianceRole(appliance) {
+    if (String(appliance && appliance.platform || '').toLowerCase() === 'trace') return 'packetstore';
+    return isSystemHealthPacketstoreAppliance(appliance) ? 'all_in_one' : 'packet_sensor';
 }
 
 async function collectSystemHealthTimeSeries(metricSensors, allSensors, appliancesById, options) {
@@ -414,6 +453,112 @@ async function collectSystemHealthTriggerDrops(metricSensors, allSensors, applia
     }
 }
 
+async function collectSystemHealthPacketstoreMetrics(metricAppliances, allAppliances, appliancesById, options) {
+    const timeSeriesNames = SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS;
+    const totalNames = SystemHealthCollection.PACKETSTORE_TOTAL_METRICS;
+    const metrics = {};
+    const errors = [];
+
+    const emptyMetric = (name, aggregationMode) => ({
+        metric_category_used: 'cpc',
+        aggregation_mode: aggregationMode,
+        rows: [],
+        summary: aggregationMode === 'time_series'
+            ? SystemHealthCollection.summarizeTimeSeriesRows([], name)
+            : SystemHealthCollection.summarizeAggregateRows([]),
+        sensor_status: SystemHealthCollection.buildSensorCoverage(allAppliances, []),
+        errors: []
+    });
+    [...timeSeriesNames, ...totalNames].forEach(name => {
+        metrics[name] = emptyMetric(name, timeSeriesNames.includes(name) ? 'time_series' : 'total_by_object');
+    });
+    if (!metricAppliances.length) return { appliance_ids: allAppliances.map(item => String(item.id)), metrics, errors };
+
+    const request = window.apiClient.request.bind(window.apiClient);
+    const decorateRows = rows => rows.map(row => {
+        const appliance = appliancesById[String(row.appliance_id)] || {};
+        return {
+            ...row,
+            appliance_name: systemHealthApplianceName(appliance, row.appliance_id),
+            hostname: appliance.hostname || '',
+            platform: appliance.platform || '',
+            license_platform: appliance.license_platform || '',
+            time_iso: systemHealthMsToIso(row.timestamp_ms)
+        };
+    });
+
+    try {
+        const body = SystemHealthCollection.buildMetricRequest({
+            cycle: options.cycle,
+            fromMs: options.fromMs,
+            untilMs: options.untilMs,
+            objectIds: metricAppliances.map(item => item.id),
+            metricNames: timeSeriesNames,
+            metricCategory: 'cpc'
+        });
+        const result = await SystemHealthCollection.collectMetricEndpoint(request, '/metrics', body, { signal: options.signal });
+        const normalized = SystemHealthCollection.normalizeTimeSeriesChunks(result.chunks, appliancesById, timeSeriesNames);
+        timeSeriesNames.forEach(name => {
+            const rows = decorateRows(normalized.rows.map(row => ({ ...row, metric: name, value: row.values[name] })));
+            const coverage = SystemHealthCollection.buildSensorCoverage(allAppliances, rows, { sensorFailures: result.sensor_failures });
+            metrics[name] = {
+                metric_category_used: 'cpc', aggregation_mode: 'time_series', rows,
+                collection_metadata: normalized.metadata, sensor_failures: result.sensor_failures,
+                summary: SystemHealthCollection.summarizeTimeSeriesRows(normalized.rows, name),
+                sensor_status: coverage, errors: []
+            };
+            errors.push(...systemHealthCoverageErrors(coverage, `Packetstore ${name}`));
+        });
+    } catch (error) {
+        if (options.signal.aborted) throw error;
+        const coverage = SystemHealthCollection.buildSensorCoverage(allAppliances, [], { error });
+        timeSeriesNames.forEach(name => {
+            metrics[name].sensor_status = coverage;
+            metrics[name].errors = [error.message];
+        });
+        errors.push(`Packetstore time-series collection failed without substituting zero values: ${error.message}`);
+    }
+
+    try {
+        const body = SystemHealthCollection.buildMetricRequest({
+            cycle: options.cycle,
+            fromMs: options.fromMs,
+            untilMs: options.untilMs,
+            objectIds: metricAppliances.map(item => item.id),
+            metricNames: totalNames,
+            metricCategory: 'cpc'
+        });
+        const result = await SystemHealthCollection.collectMetricEndpoint(request, '/metrics/totalbyobject', body, { signal: options.signal });
+        const normalized = SystemHealthCollection.normalizeAggregateChunks(result.chunks, appliancesById, totalNames);
+        totalNames.forEach(name => {
+            const rows = decorateRows(normalized.rows.filter(row => row.metric === name));
+            const coverage = SystemHealthCollection.buildSensorCoverage(allAppliances, rows, { sensorFailures: result.sensor_failures });
+            metrics[name] = {
+                metric_category_used: 'cpc', aggregation_mode: 'total_by_object', rows,
+                collection_metadata: normalized.metadata, sensor_failures: result.sensor_failures,
+                summary: SystemHealthCollection.summarizeAggregateRows(rows),
+                sensor_status: coverage, errors: []
+            };
+            errors.push(...systemHealthCoverageErrors(coverage, `Packetstore ${name}`));
+        });
+    } catch (error) {
+        if (options.signal.aborted) throw error;
+        const coverage = SystemHealthCollection.buildSensorCoverage(allAppliances, [], { error });
+        totalNames.forEach(name => {
+            metrics[name].sensor_status = coverage;
+            metrics[name].errors = [error.message];
+        });
+        errors.push(`Packetstore total collection failed without substituting zero values: ${error.message}`);
+    }
+
+    return {
+        metric_category_used: 'cpc',
+        appliance_ids: allAppliances.map(item => String(item.id)),
+        metrics,
+        errors: Array.from(new Set(errors))
+    };
+}
+
 function systemHealthCoverageErrors(coverage, label) {
     return Object.entries(coverage || {})
         .filter(([, value]) => !['complete', 'zero_valued'].includes(value.status))
@@ -502,21 +647,25 @@ function buildSystemHealthReport({
     fromMs = null,
     untilMs = null,
     triggerUtilization = null,
+    packetstore = null,
     deviceAnalysisError = null,
     collectionErrors = []
 }) {
     const compactAppliances = appliances.map(item => {
         const capacity = capacityForSystemHealthAppliance(item);
         const conditions = systemHealthApplianceHealthConditions(item, untilMs);
+        const applianceRole = systemHealthApplianceRole(item);
         return {
             id: String(item.id),
             name: systemHealthApplianceName(item, item.id),
             hostname: item.hostname || '',
             platform: item.platform || '',
             license_platform: item.license_platform || '',
+            appliance_role: applianceRole,
             status_message: item.status_message || '',
             online: String(item.status_message || '').toLowerCase() === 'online',
-            metric_eligible: isSystemHealthMetricSensor(item),
+            metric_eligible: applianceRole !== 'packetstore' && isSystemHealthMetricSensor(item),
+            packetstore_metric_eligible: isSystemHealthPacketstoreAppliance(item) && isSystemHealthMetricSensor(item),
             data_access: item.data_access,
             license_status: item.license_status || '',
             sync_time: item.sync_time,
@@ -532,7 +681,9 @@ function buildSystemHealthReport({
     const normalizedDeviceAnalysis = {};
     compactAppliances.forEach(appliance => {
         const returned = deviceAnalysis && deviceAnalysis[String(appliance.id)];
-        normalizedDeviceAnalysis[String(appliance.id)] = returned
+        normalizedDeviceAnalysis[String(appliance.id)] = appliance.appliance_role === 'packetstore'
+            ? { advanced: null, standard: null, discovery: null, unrecognized: null, total: null, status: 'not_applicable' }
+            : returned
             ? { ...returned, status: returned.status || 'complete' }
             : {
                 advanced: null,
@@ -564,9 +715,11 @@ function buildSystemHealthReport({
         device_analysis: normalizedDeviceAnalysis,
         metrics: metricResults,
         trigger_utilization: triggerUtilization || SystemHealthCollection.summarizeTriggerUtilization([]),
+        packetstore: packetstore || { appliance_ids: [], metrics: {}, errors: [] },
         errors: Array.from(new Set([
             ...collectionErrors,
             ...Object.values(metricResults).flatMap(result => result.errors || []),
+            ...((packetstore && packetstore.errors) || []),
             ...compactAppliances.flatMap(appliance => appliance.health_conditions.map(condition => `${appliance.name}: ${condition.message}`))
         ]))
     };
@@ -630,7 +783,7 @@ function normalizeSystemHealthModelName(value) {
 }
 
 function systemHealthRows(report) {
-    return (report.appliances || []).map(sensor => {
+    return (report.appliances || []).filter(sensor => sensor.appliance_role !== 'packetstore').map(sensor => {
         const capacity = sensor.capacity || {};
         const offline = !sensor.online;
         const analysis = (report.device_analysis && report.device_analysis[String(sensor.id)])
@@ -670,6 +823,59 @@ function systemHealthRows(report) {
             advancedCapacity: Number(capacity.advanced_analysis || 0),
             standardCapacity: Number(capacity.standard_analysis || 0)
         };
+    });
+}
+
+function systemHealthPacketstoreMetric(report, metricName) {
+    return report.packetstore && report.packetstore.metrics && report.packetstore.metrics[metricName] || null;
+}
+
+function systemHealthPacketstoreSummaryValue(report, metricName, field, id) {
+    const metric = systemHealthPacketstoreMetric(report, metricName);
+    const values = metric && metric.summary && metric.summary[field];
+    return values && values[String(id)] !== undefined ? values[String(id)] : null;
+}
+
+function systemHealthPacketstoreRows(report) {
+    const ids = new Set((report.packetstore && report.packetstore.appliance_ids || []).map(String));
+    return (report.appliances || []).filter(appliance => ids.has(String(appliance.id))).map(appliance => {
+        const id = String(appliance.id);
+        const total = name => systemHealthPacketstoreSummaryValue(report, name, 'totals', id);
+        const peak = name => systemHealthPacketstoreSummaryValue(report, name, 'peak_values', id);
+        const latest = name => systemHealthPacketstoreSummaryValue(report, name, 'latest_values', id);
+        const minimum = name => systemHealthPacketstoreSummaryValue(report, name, 'min_values', id);
+        const status = {};
+        [...SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS, ...SystemHealthCollection.PACKETSTORE_TOTAL_METRICS].forEach(name => {
+            const metric = systemHealthPacketstoreMetric(report, name);
+            status[name] = metric && metric.sensor_status && metric.sensor_status[id]
+                ? metric.sensor_status[id].status : 'unknown';
+        });
+        const packets = total('pkts');
+        const packetDrops = total('pkts_dropped');
+        const secrets = total('secrets');
+        const secretDrops = total('secrets_dropped');
+        return {
+            ...appliance,
+            offline: !appliance.online,
+            collectionStatus: status,
+            lookbackLatestSec: latest('est_lookback_sec'),
+            lookbackMinSec: minimum('est_lookback_sec'),
+            packetsTotal: packets,
+            packetDropsTotal: packetDrops,
+            slowWriteDropsTotal: total('pkts_dropped_wrslow'),
+            interfaceDropsTotal: total('if_drops'),
+            packetDropRatio: packets !== null && packets > 0 && packetDrops !== null ? packetDrops / packets : null,
+            secretsTotal: secrets,
+            secretDropsTotal: secretDrops,
+            secretDropRatio: secrets !== null && secrets > 0 && secretDrops !== null ? secretDrops / secrets : null,
+            inputLoadPeak: peak('input_load'),
+            compressionLoadPeak: peak('compress_load'),
+            diskWriteLoadPeak: peak('disk_write_load')
+        };
+    }).sort((a, b) => {
+        const aRisk = Math.max(a.packetDropRatio || 0, a.secretDropRatio || 0, (a.inputLoadPeak || 0) / 100, (a.compressionLoadPeak || 0) / 100, (a.diskWriteLoadPeak || 0) / 100);
+        const bRisk = Math.max(b.packetDropRatio || 0, b.secretDropRatio || 0, (b.inputLoadPeak || 0) / 100, (b.compressionLoadPeak || 0) / 100, (b.diskWriteLoadPeak || 0) / 100);
+        return bRisk - aRisk || (a.name || '').localeCompare(b.name || '');
     });
 }
 
@@ -738,14 +944,17 @@ function systemHealthRowStatusText(row) {
 
 function renderSystemHealthReport(report) {
     const rows = systemHealthRows(report);
-    renderSystemHealthSummary(report, rows);
+    const packetstoreRows = systemHealthPacketstoreRows(report);
+    renderSystemHealthSummary(report, rows, packetstoreRows);
     renderSystemHealthCharts(rows);
+    renderSystemHealthPacketstoreCharts(report, packetstoreRows);
     renderSystemHealthTable(rows);
+    renderSystemHealthPacketstoreTable(packetstoreRows);
     renderSystemHealthErrors(systemHealthCollectorNotes(report));
     updateSystemHealthCsvButtons();
 }
 
-function renderSystemHealthSummary(report, rows) {
+function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
     const offlineSensors = rows.filter(row => row.offline).length;
     const dataUnavailableSensors = rows.filter(row => row.data_access === false).length;
     const packetRisk = rows.filter(row => row.packetCapacity && row.packetPeak >= row.packetCapacity).length;
@@ -753,6 +962,7 @@ function renderSystemHealthSummary(report, rows) {
     const triggerWatch = rows.filter(row => row.triggerUtilization !== null && row.triggerUtilization >= 0.8).length;
     const triggerDropSensors = rows.filter(row => row.triggerDropsTotal > 0).length;
     const discoverySensors = rows.filter(row => (row.analysis.discovery || 0) > 0).length;
+    const packetstoreLoss = packetstoreRows.filter(row => (row.packetDropsTotal || 0) > 0 || (row.interfaceDropsTotal || 0) > 0 || (row.secretDropsTotal || 0) > 0).length;
     const cards = [
         ['Sensors', formatSystemHealthNumber(rows.length), 'Discover sensors returned'],
         ['Offline', formatSystemHealthNumber(offlineSensors), dataUnavailableSensors ? `${dataUnavailableSensors} also lack data access` : 'Appliance status is not online'],
@@ -761,6 +971,8 @@ function renderSystemHealthSummary(report, rows) {
         ['Throughput Watch', formatSystemHealthNumber(throughputWatch), `At 80%+ on peak ${systemHealthReportCycleLabel(report)} average`],
         ['Trigger Watch', formatSystemHealthNumber(triggerWatch), 'At 80%+ trigger cycle capacity'],
         ['Trigger Drops', formatSystemHealthNumber(triggerDropSensors), 'Sensors with dropped trigger executions'],
+        ['PCAP Stores', formatSystemHealthNumber(packetstoreRows.length), 'AIO and dedicated Packetstore appliances'],
+        ['PCAP Loss', formatSystemHealthNumber(packetstoreLoss), 'Stores with packet, interface, or secret drops'],
         ['Discovery Overflow', formatSystemHealthNumber(discoverySensors), 'Sensors with Discovery devices']
     ];
 
@@ -771,6 +983,118 @@ function renderSystemHealthSummary(report, rows) {
             <div class="stat-sub">${escapeHtml(note)}</div>
         </div>
     `).join('');
+}
+
+function renderSystemHealthPacketstoreCharts(report, rows) {
+    const cycleLabel = document.getElementById('systemHealthPacketstoreCycleLabel');
+    if (cycleLabel) cycleLabel.textContent = `Peak sampled 30-second input, header-compression, and disk-write CPU load at ${systemHealthPacketstoreCycleLabel(report)} cadence. The three loads are separate and are not summed.`;
+    drawSystemHealthPacketstoreLookback(document.getElementById('systemHealthPacketstoreLookbackChart'), rows);
+    drawSystemHealthPacketstoreFidelity(document.getElementById('systemHealthPacketstoreFidelityChart'), rows);
+    drawSystemHealthPacketstoreLoad(document.getElementById('systemHealthPacketstoreLoadChart'), rows);
+}
+
+function systemHealthPacketstoreCycleLabel(report) {
+    const cycles = new Set();
+    Object.values(report.packetstore && report.packetstore.metrics || {}).forEach(metric => {
+        Object.values(metric.summary && metric.summary.actual_cycles || {}).forEach(cycle => {
+            if (cycle) cycles.add(String(cycle));
+        });
+        (metric.collection_metadata || []).forEach(metadata => {
+            if (metadata && metadata.cycle) cycles.add(String(metadata.cycle));
+        });
+    });
+    return cycles.size ? Array.from(cycles).sort().join('/') : (report.cycle || report.requested_cycle || 'unknown-cycle');
+}
+
+function systemHealthPacketstoreMetricAvailable(row, metricName) {
+    return ['complete', 'zero_valued'].includes(row.collectionStatus && row.collectionStatus[metricName]);
+}
+
+function drawSystemHealthPacketstoreLookback(canvas, rows) {
+    const height = 62 + Math.max(1, rows.length) * 30;
+    const state = setupSystemHealthCanvas(canvas, height);
+    if (!state) return;
+    const { ctx, width } = state;
+    if (!rows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore-capable appliances were found');
+    const colors = systemHealthStyleColors();
+    const left = width < 760 ? 135 : 220;
+    const right = 125;
+    const plotWidth = Math.max(100, width - left - right);
+    const maxDays = Math.max(1, ...rows.map(row => Number(row.lookbackLatestSec || 0) / 86400));
+    drawSystemHealthValueGrid(ctx, left, 18, plotWidth, rows.length * 30, maxDays, value => `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}d`);
+    rows.forEach((row, index) => {
+        const y = 24 + index * 30;
+        const latestDays = Number(row.lookbackLatestSec || 0) / 86400;
+        const minDays = Number(row.lookbackMinSec || 0) / 86400;
+        ctx.fillStyle = colors.subtle; ctx.font = '11px Arial'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillText(truncateSystemHealthCanvasText(ctx, row.name || row.id, left - 12), left - 8, y + 7);
+        ctx.fillStyle = colors.track; ctx.fillRect(left, y, plotWidth, 14);
+        if (systemHealthPacketstoreMetricAvailable(row, 'est_lookback_sec')) {
+            ctx.fillStyle = colors.low; ctx.fillRect(left, y, plotWidth * Math.min(1, latestDays / maxDays), 14);
+            const markerX = left + plotWidth * Math.min(1, minDays / maxDays);
+            ctx.fillStyle = colors.high; ctx.fillRect(markerX - 1, y - 2, 3, 18);
+            ctx.fillStyle = colors.text; ctx.textAlign = 'left'; ctx.fillText(`${formatSystemHealthDays(latestDays)} latest · ${formatSystemHealthDays(minDays)} min`, left + plotWidth + 8, y + 7);
+        } else {
+            ctx.fillStyle = colors.muted; ctx.textAlign = 'left'; ctx.fillText((row.collectionStatus.est_lookback_sec || 'unavailable').replace(/_/g, ' '), left + plotWidth + 8, y + 7);
+        }
+    });
+}
+
+function drawSystemHealthPacketstoreFidelity(canvas, rows) {
+    const height = 72 + Math.max(1, rows.length) * 42;
+    const state = setupSystemHealthCanvas(canvas, height);
+    if (!state) return;
+    const { ctx, width } = state;
+    if (!rows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore-capable appliances were found');
+    const colors = systemHealthStyleColors();
+    const left = width < 760 ? 135 : 220;
+    const right = 205;
+    const plotWidth = Math.max(100, width - left - right);
+    const maxRatio = Math.max(0.000001, ...rows.flatMap(row => [row.packetDropRatio || 0, row.secretDropRatio || 0]));
+    drawSystemHealthValueGrid(ctx, left, 18, plotWidth, rows.length * 42, maxRatio * 100, value => formatSystemHealthPercent(value / 100));
+    rows.forEach((row, index) => {
+        const y = 24 + index * 42;
+        ctx.fillStyle = colors.subtle; ctx.font = '11px Arial'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillText(truncateSystemHealthCanvasText(ctx, row.name || row.id, left - 12), left - 8, y + 13);
+        [['packetDropRatio', colors.high, 0], ['secretDropRatio', colors.mid, 16]].forEach(([key, color, offset]) => {
+            const value = row[key];
+            ctx.fillStyle = colors.track; ctx.fillRect(left, y + offset, plotWidth, 10);
+            if (value !== null) { ctx.fillStyle = color; ctx.fillRect(left, y + offset, plotWidth * Math.min(1, value / maxRatio), 10); }
+        });
+        ctx.fillStyle = colors.text; ctx.textAlign = 'left'; ctx.font = '10px Arial';
+        ctx.fillText(`packets ${formatSystemHealthPercent(row.packetDropRatio)} · secrets ${formatSystemHealthPercent(row.secretDropRatio)}`, left + plotWidth + 8, y + 7);
+        ctx.fillStyle = colors.muted;
+        ctx.fillText(`slow-write ${formatSystemHealthNumber(row.slowWriteDropsTotal)} · interface ${formatSystemHealthNumber(row.interfaceDropsTotal)}`, left + plotWidth + 8, y + 23);
+    });
+}
+
+function drawSystemHealthPacketstoreLoad(canvas, rows) {
+    const height = 72 + Math.max(1, rows.length) * 42;
+    const state = setupSystemHealthCanvas(canvas, height);
+    if (!state) return;
+    const { ctx, width } = state;
+    if (!rows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore-capable appliances were found');
+    const colors = systemHealthStyleColors();
+    const left = width < 760 ? 135 : 220;
+    const right = 155;
+    const plotWidth = Math.max(100, width - left - right);
+    drawSystemHealthPercentGrid(ctx, left, 18, plotWidth, rows.length * 42);
+    rows.forEach((row, index) => {
+        const y = 24 + index * 42;
+        ctx.fillStyle = colors.subtle; ctx.font = '11px Arial'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillText(truncateSystemHealthCanvasText(ctx, row.name || row.id, left - 12), left - 8, y + 13);
+        const loads = [['inputLoadPeak', 'input_load', 0], ['compressionLoadPeak', 'compress_load', 11], ['diskWriteLoadPeak', 'disk_write_load', 22]];
+        loads.forEach(([key, metric, offset]) => {
+            const value = row[key];
+            ctx.fillStyle = colors.track; ctx.fillRect(left, y + offset, plotWidth, 8);
+            if (value !== null && systemHealthPacketstoreMetricAvailable(row, metric)) {
+                ctx.fillStyle = systemHealthUtilizationColor(Number(value) / 100);
+                ctx.fillRect(left, y + offset, plotWidth * Math.min(1, Number(value) / 100), 8);
+            }
+        });
+        ctx.fillStyle = colors.text; ctx.textAlign = 'left'; ctx.font = '10px Arial';
+        ctx.fillText(`input ${formatSystemHealthPercentValue(row.inputLoadPeak)} · compress ${formatSystemHealthPercentValue(row.compressionLoadPeak)} · write ${formatSystemHealthPercentValue(row.diskWriteLoadPeak)}`, left + plotWidth + 8, y + 13);
+    });
 }
 
 function renderSystemHealthCharts(rows) {
@@ -856,6 +1180,32 @@ function renderSystemHealthTable(rows) {
         </tr>
     `;
     }).join('') || '<tr><td colspan="13">No Discover sensors were returned.</td></tr>';
+}
+
+function renderSystemHealthPacketstoreTable(rows) {
+    const body = document.getElementById('systemHealthPacketstoreTableBody');
+    if (!body) return;
+    body.innerHTML = rows.map(row => {
+        const dropped = (row.packetDropsTotal || 0) > 0 || (row.interfaceDropsTotal || 0) > 0 || (row.secretDropsTotal || 0) > 0;
+        const hot = Math.max(row.inputLoadPeak || 0, row.compressionLoadPeak || 0, row.diskWriteLoadPeak || 0) >= 80;
+        return `<tr class="${dropped || hot ? 'system-health-overflow-row' : ''}">
+            <td>${escapeSystemHealthHtml(row.name || row.id)}</td>
+            <td>${escapeSystemHealthHtml(row.appliance_role === 'all_in_one' ? 'All in One' : 'Packetstore')}</td>
+            <td>${escapeSystemHealthHtml(row.license_platform || '')}</td>
+            <td>${escapeSystemHealthHtml(systemHealthRowStatusText(row) || 'complete')}</td>
+            <td>${formatSystemHealthDays(Number(row.lookbackLatestSec) / 86400)}</td>
+            <td>${formatSystemHealthDays(Number(row.lookbackMinSec) / 86400)}</td>
+            <td>${formatSystemHealthNumber(row.packetsTotal)}</td>
+            <td${dropped ? ' class="system-health-overflow-cell"' : ''}>${formatSystemHealthNumber(row.packetDropsTotal)} (${formatSystemHealthPercent(row.packetDropRatio)})</td>
+            <td>${formatSystemHealthNumber(row.slowWriteDropsTotal)}</td>
+            <td>${formatSystemHealthNumber(row.interfaceDropsTotal)}</td>
+            <td>${formatSystemHealthNumber(row.secretsTotal)}</td>
+            <td>${formatSystemHealthNumber(row.secretDropsTotal)} (${formatSystemHealthPercent(row.secretDropRatio)})</td>
+            <td>${formatSystemHealthPercentValue(row.inputLoadPeak)}</td>
+            <td>${formatSystemHealthPercentValue(row.compressionLoadPeak)}</td>
+            <td>${formatSystemHealthPercentValue(row.diskWriteLoadPeak)}</td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="15">No Packetstore-capable appliances were returned.</td></tr>';
 }
 
 function sortSystemHealthDetailRows(rows) {
@@ -1637,7 +1987,10 @@ function systemHealthPngFilename(canvasId) {
         systemHealthPacketChart: ['packet-rate', 'packet'],
         systemHealthThroughputChart: ['throughput', 'throughput'],
         systemHealthTriggersChart: ['trigger-cycle-capacity', 'triggers'],
-        systemHealthAnalysisChart: ['analysis-tier-pressure', 'analysis']
+        systemHealthAnalysisChart: ['analysis-tier-pressure', 'analysis'],
+        systemHealthPacketstoreLookbackChart: ['packetstore-lookback', ''],
+        systemHealthPacketstoreFidelityChart: ['packetstore-fidelity', ''],
+        systemHealthPacketstoreLoadChart: ['packetstore-load', '']
     };
     const [prefix, key] = map[canvasId] || [canvasId, ''];
     const report = systemHealthState.currentReport;
@@ -1652,8 +2005,8 @@ function systemHealthPngFilename(canvasId) {
                     : { valueKey: 'triggerCyclesPeak', capacityKey: 'triggerCyclesAvail' })
             : [];
     const modelPage = Math.min(systemHealthState.pages[`${key}Model`] || 0, Math.max(0, pages.length - 1));
-    const model = pages[modelPage] ? pages[modelPage].model : 'unknown';
-    return `${prefix}-${slugSystemHealthFilename(model)}.png`;
+    const model = pages[modelPage] ? pages[modelPage].model : '';
+    return model ? `${prefix}-${slugSystemHealthFilename(model)}.png` : `${prefix}.png`;
 }
 
 function slugSystemHealthFilename(value) {
@@ -1761,6 +2114,13 @@ function buildSystemHealthReportFromUnifiedCsv(rows) {
         peak_by_sensor: {},
         invalid_by_sensor: {}
     };
+    const packetstore = { metric_category_used: 'cpc', appliance_ids: [], metrics: {}, errors: [] };
+    SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS.forEach(name => {
+        packetstore.metrics[name] = systemHealthEmptyImportedMetric('time_series');
+    });
+    SystemHealthCollection.PACKETSTORE_TOTAL_METRICS.forEach(name => {
+        packetstore.metrics[name] = systemHealthEmptyImportedMetric('total_by_object');
+    });
     const seenIds = new Set();
 
     rows.forEach((row, index) => {
@@ -1795,6 +2155,8 @@ function buildSystemHealthReportFromUnifiedCsv(rows) {
             platform: row.platform || '',
             license_platform: row.license_platform || '',
             uuid: row.uuid || '',
+            appliance_role: row.appliance_role || 'packet_sensor',
+            packetstore_metric_eligible: systemHealthBoolean(row.packetstore_metric_eligible, false),
             status_message: row.status_message || '',
             online: systemHealthBoolean(row.online, true),
             metric_eligible: systemHealthBoolean(row.metric_eligible, true),
@@ -1806,6 +2168,27 @@ function buildSystemHealthReportFromUnifiedCsv(rows) {
             total_capacity: systemHealthNumber(row.api_total_capacity),
             health_conditions: healthConditions,
             capacity
+        });
+        const packetstoreSnapshot = systemHealthJsonObject(row.packetstore_metrics_json, 'packetstore_metrics_json', index);
+        if (Object.keys(packetstoreSnapshot).length) packetstore.appliance_ids.push(id);
+        Object.entries(packetstoreSnapshot).forEach(([name, value]) => {
+            const metric = packetstore.metrics[name];
+            if (!metric || !value || typeof value !== 'object') return;
+            const summary = metric.summary;
+            if (metric.aggregation_mode === 'time_series') {
+                systemHealthImportPeak(summary, id, value.peak, value.peak_duration_ms, value.peak_time_ms, value.actual_cycle);
+                const latest = systemHealthNumber(value.latest);
+                const latestTime = systemHealthNumber(value.latest_time_ms);
+                const minimum = systemHealthNumber(value.minimum);
+                const minimumTime = systemHealthNumber(value.minimum_time_ms);
+                if (latest !== null) summary.latest_values[id] = latest;
+                if (latestTime !== null) summary.latest_times[id] = latestTime;
+                if (minimum !== null) summary.min_values[id] = minimum;
+                if (minimumTime !== null) summary.min_times[id] = minimumTime;
+            } else {
+                systemHealthImportTotal(summary, id, value.total, value.aggregation_duration_ms);
+            }
+            metric.sensor_status[id] = { status: value.status || 'unknown' };
         });
         deviceAnalysis[id] = {
             advanced: systemHealthNumber(row.advanced_devices),
@@ -1863,6 +2246,7 @@ function buildSystemHealthReportFromUnifiedCsv(rows) {
         device_analysis: deviceAnalysis,
         metrics,
         trigger_utilization: triggerUtilization,
+        packetstore,
         errors: systemHealthJsonArray(first.report_errors_json, 'report_errors_json', 0)
     };
 }
@@ -1881,6 +2265,9 @@ function systemHealthEmptyImportedMetric(aggregationMode) {
             peak_times: {},
             latest_values: {},
             latest_times: {},
+            min_values: {},
+            min_times: {},
+            min_duration_ms: {},
             peak_duration_ms: {},
             average_rates: {},
             aggregation_duration_ms: {},
@@ -1889,6 +2276,17 @@ function systemHealthEmptyImportedMetric(aggregationMode) {
         sensor_status: {},
         errors: []
     };
+}
+
+function systemHealthJsonObject(value, column, rowIndex) {
+    if (!value) return {};
+    try {
+        const parsed = JSON.parse(value);
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('not an object');
+        return parsed;
+    } catch {
+        throw new Error(`Invalid ${column} JSON in row ${rowIndex + 2}.`);
+    }
 }
 
 function systemHealthImportPeak(summary, id, rawValue, rawDuration, rawTimestamp, actualCycle) {
@@ -1941,7 +2339,13 @@ function systemHealthUnifiedSummaryCsv(report) {
 }
 
 function systemHealthUnifiedSummaryRows(report) {
-    const rows = systemHealthRows(report);
+    const sensorById = Object.fromEntries(systemHealthRows(report).map(row => [String(row.id), row]));
+    const packetstoreById = Object.fromEntries(systemHealthPacketstoreRows(report).map(row => [String(row.id), row]));
+    const rows = (report.appliances || []).map(appliance => ({
+        ...appliance,
+        ...(sensorById[String(appliance.id)] || {}),
+        packetstoreRow: packetstoreById[String(appliance.id)] || null
+    }));
     const errorsJson = JSON.stringify(report.errors || []);
     return rows.map((row, index) => {
         const capacity = row.capacity || {};
@@ -1968,6 +2372,9 @@ function systemHealthUnifiedSummaryRows(report) {
             platform: row.platform || '',
             license_platform: row.license_platform || '',
             uuid: row.uuid || '',
+            appliance_role: row.appliance_role || 'packet_sensor',
+            packetstore_metric_eligible: row.packetstore_metric_eligible,
+            packetstore_metrics_json: JSON.stringify(systemHealthPacketstoreMetricSnapshot(report, id)),
             status_message: row.status_message || '',
             online: row.online,
             metric_eligible: row.metric_eligible,
@@ -2024,6 +2431,31 @@ function systemHealthUnifiedSummaryRows(report) {
     });
 }
 
+function systemHealthPacketstoreMetricSnapshot(report, id) {
+    if (!(report.packetstore && (report.packetstore.appliance_ids || []).map(String).includes(String(id)))) return {};
+    const snapshot = {};
+    [...SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS, ...SystemHealthCollection.PACKETSTORE_TOTAL_METRICS].forEach(name => {
+        const metric = systemHealthPacketstoreMetric(report, name);
+        const summary = metric && metric.summary || {};
+        const status = metric && metric.sensor_status && metric.sensor_status[String(id)];
+        snapshot[name] = {
+            aggregation_mode: metric && metric.aggregation_mode || '',
+            status: status && status.status || 'unknown',
+            total: systemHealthSummaryValue(summary, 'totals', String(id)),
+            aggregation_duration_ms: systemHealthSummaryValue(summary, 'aggregation_duration_ms', String(id)),
+            peak: systemHealthSummaryValue(summary, 'peak_values', String(id)),
+            peak_time_ms: systemHealthSummaryValue(summary, 'peak_times', String(id)),
+            peak_duration_ms: systemHealthSummaryValue(summary, 'peak_duration_ms', String(id)),
+            latest: systemHealthSummaryValue(summary, 'latest_values', String(id)),
+            latest_time_ms: systemHealthSummaryValue(summary, 'latest_times', String(id)),
+            minimum: systemHealthSummaryValue(summary, 'min_values', String(id)),
+            minimum_time_ms: systemHealthSummaryValue(summary, 'min_times', String(id)),
+            actual_cycle: systemHealthSummaryValue(summary, 'actual_cycles', String(id))
+        };
+    });
+    return snapshot;
+}
+
 function systemHealthSummaryValue(summary, key, id) {
     const values = summary && summary[key];
     return values && values[id] !== undefined ? values[id] : '';
@@ -2043,6 +2475,11 @@ function exportSystemHealthApiCsvFiles() {
     downloadSystemHealthCsv('capture_trigger_cycles_summary.csv', systemHealthSummaryCsv(report, 'trigger_cycles', appliancesById));
     downloadSystemHealthCsv('capture_trigger_cycles_avail_summary.csv', systemHealthSummaryCsv(report, 'trigger_cycles_avail', appliancesById));
     downloadSystemHealthCsv('capture_trigger_drops_summary.csv', systemHealthSummaryCsv(report, 'trigger_drops', appliancesById));
+    [...SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS, ...SystemHealthCollection.PACKETSTORE_TOTAL_METRICS].forEach(metricName => {
+        const metric = systemHealthPacketstoreMetric(report, metricName) || { rows: [] };
+        downloadSystemHealthCsv(`packetstore_${metricName}.csv`, systemHealthMetricRowsCsv(metric.rows || [], appliancesById, metricName));
+        downloadSystemHealthCsv(`packetstore_${metricName}_summary.csv`, systemHealthSummaryCsv(report, metricName, appliancesById));
+    });
     downloadSystemHealthCsv('device_analysis_summary.csv', systemHealthDeviceAnalysisCsv(report, appliancesById));
     setSystemHealthCsvStatus('Exported all available System Health API response data and per-metric summaries as CSV files.');
 }
@@ -2109,6 +2546,7 @@ async function exportSystemHealthPptx(event) {
             meta: systemHealthPptxMeta(report),
             options: systemHealthPptxOptionsFromForm(),
             rows: systemHealthRows(report),
+            packetstore_rows: systemHealthPacketstoreRows(report),
             palette: systemHealthStyleColors(),
             collector_notes: systemHealthCollectorNotes(report)
         });
@@ -2168,7 +2606,14 @@ function systemHealthPdfProjection(report) {
         metrics: Object.fromEntries(Object.entries(report.metrics || {}).map(([name, metric]) => [
             name,
             { ...metric, rows: [] }
-        ]))
+        ])),
+        packetstore: report.packetstore ? {
+            ...report.packetstore,
+            metrics: Object.fromEntries(Object.entries(report.packetstore.metrics || {}).map(([name, metric]) => [
+                name,
+                { ...metric, rows: [] }
+            ]))
+        } : { appliance_ids: [], metrics: {}, errors: [] }
     };
 }
 
@@ -2181,7 +2626,9 @@ function systemHealthMetricRowsCsv(rows, appliancesById, metricName) {
     const columns = ['appliance_id', 'metric_object_id', 'appliance_name', 'hostname', 'platform', 'license_platform', 'metric', 'aggregation_mode', 'actual_cycle', 'timestamp_ms', 'time_iso', 'duration_ms', 'aggregation_duration_ms', 'value', 'collection_status'];
     const csvRows = rows.map(row => {
         const appliance = appliancesById[String(row.appliance_id)] || {};
-        const metric = (systemHealthState.currentReport.metrics || {})[metricName] || {};
+        const currentReport = systemHealthState.currentReport || {};
+        const metric = (currentReport.metrics || {})[metricName]
+            || (currentReport.packetstore && currentReport.packetstore.metrics || {})[metricName] || {};
         const status = metric.sensor_status && metric.sensor_status[String(row.appliance_id)];
         return {
             appliance_id: row.appliance_id,
@@ -2213,8 +2660,9 @@ function systemHealthSummaryCsv(report, metricName, appliancesById) {
         'trigger_utilization', 'trigger_used_cycles', 'trigger_available_cycles',
         'trigger_peak_timestamp_ms', 'trigger_peak_duration_ms'
     ];
-    const summary = (report.metrics[metricName] && report.metrics[metricName].summary) || summarizeSystemHealthRows([]);
-    const metric = report.metrics[metricName] || {};
+    const metric = (report.metrics && report.metrics[metricName])
+        || (report.packetstore && report.packetstore.metrics && report.packetstore.metrics[metricName]) || {};
+    const summary = metric.summary || summarizeSystemHealthRows([]);
     const ids = new Set([...Object.keys(appliancesById), ...Object.keys(summary.point_counts || {})]);
     const rows = Array.from(ids).sort(systemHealthSortIds).map(id => {
         const appliance = appliancesById[String(id)] || {};
@@ -2477,6 +2925,23 @@ function formatSystemHealthRate(value) {
 function formatSystemHealthGbps(value) {
     if (value === null || value === undefined || Number.isNaN(Number(value))) return '';
     return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} Gbps`;
+}
+
+function formatSystemHealthPercent(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
+    const percent = Number(value) * 100;
+    const digits = percent > 0 && percent < 0.01 ? 4 : percent < 1 ? 2 : 1;
+    return `${percent.toLocaleString(undefined, { maximumFractionDigits: digits })}%`;
+}
+
+function formatSystemHealthPercentValue(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
+    return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+}
+
+function formatSystemHealthDays(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
+    return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 })}d`;
 }
 
 function formatSystemHealthCycles(value) {

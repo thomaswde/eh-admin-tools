@@ -336,3 +336,25 @@ test('deck findings use the System Health 80 and 100 percent thresholds', () => 
     assert.match(model.findings[0].finding_text, /100% of capacity/);
     assert.match(model.findings[1].finding_text, /80% of capacity/);
 });
+
+test('PowerPoint adds one consolidated Packetstore health slide instead of per-metric slides', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        packetstore_rows: [{
+            id: 'trace', name: 'Packetstore 1', appliance_role: 'packetstore',
+            lookbackLatestSec: 172800, lookbackMinSec: 86400,
+            packetsTotal: 1000, packetDropsTotal: 10, packetDropRatio: 0.01,
+            slowWriteDropsTotal: 4, interfaceDropsTotal: 3,
+            secretsTotal: 100, secretDropsTotal: 2, secretDropRatio: 0.02,
+            inputLoadPeak: 55, compressionLoadPeak: 12, diskWriteLoadPeak: 81
+        }]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const packetstoreSlides = pptx._slides.filter(slide => slide.texts.some(item => item.text === 'Packetstore health'));
+    assert.equal(model.overview.packetstores, 1);
+    assert.equal(model.overview.packetstores_with_loss, 1);
+    assert.equal(packetstoreSlides.length, 1);
+    assert.equal(packetstoreSlides[0].tables.length, 1);
+    assert.equal(packetstoreSlides[0].tables[0].rows.length, 2);
+});

@@ -22,11 +22,24 @@ const csvApi = vm.runInContext(`({
     buildSystemHealthReportFromUnifiedCsv,
     systemHealthUnifiedSummaryCsv,
     systemHealthRows,
+    systemHealthPacketstoreRows,
     systemHealthSensorDetailCsv,
     systemHealthAnalysisModelPages,
     systemHealthCollectorNotes,
     SYSTEM_HEALTH_DETAIL_CSV_COLUMNS
 })`, context);
+
+function packetstoreMetric(mode, id, values) {
+    return {
+        metric_category_used: 'cpc', aggregation_mode: mode, rows: [],
+        sensor_status: { [id]: { status: values === 0 ? 'zero_valued' : 'complete' } },
+        summary: {
+            totals: {}, aggregation_duration_ms: {}, peak_values: {}, peak_times: {},
+            peak_duration_ms: {}, latest_values: {}, latest_times: {}, min_values: {},
+            min_times: {}, actual_cycles: {}, ...values
+        }
+    };
+}
 
 function fixtureReport() {
     const largeId = '90071992547409931234';
@@ -233,6 +246,46 @@ test('unified CSV preserves opaque IDs and legitimate zero values', () => {
     assert.equal(zero.triggerDropsTotal, 0);
     assert.equal(zero.collectionStatus.pkts, 'zero_valued');
     assert.equal(zero.collectionStatus.device_analysis, 'zero_valued');
+});
+
+test('unified CSV round-trips dedicated Packetstore summaries without adding it to sensor charts', () => {
+    const report = fixtureReport();
+    const id = 'trace-9';
+    report.appliances.push({
+        id, name: 'Packetstore 9', platform: 'Trace', license_platform: 'ETA 8250',
+        appliance_role: 'packetstore', online: true, metric_eligible: true,
+        packetstore_metric_eligible: true, data_access: true, health_conditions: [], capacity: {}
+    });
+    report.device_analysis[id] = { status: 'not_applicable' };
+    report.packetstore = {
+        appliance_ids: [id], errors: [], metrics: {
+            est_lookback_sec: packetstoreMetric('time_series', id, {
+                latest_values: { [id]: 172800 }, min_values: { [id]: 86400 },
+                peak_values: { [id]: 200000 }, actual_cycles: { [id]: '1hr' }
+            }),
+            input_load: packetstoreMetric('time_series', id, { peak_values: { [id]: 55 } }),
+            compress_load: packetstoreMetric('time_series', id, { peak_values: { [id]: 12 } }),
+            disk_write_load: packetstoreMetric('time_series', id, { peak_values: { [id]: 81 } }),
+            pkts: packetstoreMetric('total_by_object', id, { totals: { [id]: 1000 } }),
+            pkts_dropped: packetstoreMetric('total_by_object', id, { totals: { [id]: 10 } }),
+            pkts_dropped_wrslow: packetstoreMetric('total_by_object', id, { totals: { [id]: 4 } }),
+            secrets: packetstoreMetric('total_by_object', id, { totals: { [id]: 100 } }),
+            secrets_dropped: packetstoreMetric('total_by_object', id, { totals: { [id]: 2 } }),
+            if_drops: packetstoreMetric('total_by_object', id, { totals: { [id]: 3 } })
+        }
+    };
+
+    const loaded = csvApi.buildSystemHealthReportFromUnifiedCsv(
+        csvApi.parseSystemHealthCsv(csvApi.systemHealthUnifiedSummaryCsv(report))
+    );
+    const packetstores = csvApi.systemHealthPacketstoreRows(loaded);
+    assert.equal(csvApi.systemHealthRows(loaded).length, 2);
+    assert.equal(packetstores.length, 1);
+    assert.equal(packetstores[0].lookbackLatestSec, 172800);
+    assert.equal(packetstores[0].lookbackMinSec, 86400);
+    assert.equal(packetstores[0].packetDropRatio, 0.01);
+    assert.equal(packetstores[0].secretDropRatio, 0.02);
+    assert.equal(packetstores[0].diskWriteLoadPeak, 81);
 });
 
 test('load rejects legacy or incomplete CSVs instead of drawing misleading charts', () => {

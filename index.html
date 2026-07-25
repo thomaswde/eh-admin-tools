@@ -729,7 +729,7 @@
         <div id="system-healthModule" class="module-content page" style="display: none;">
             <div class="page-head">
                 <h1 class="page-title">System Health Report</h1>
-                <p class="page-desc">Peak packet rate, throughput, trigger capacity, and analysis-tier pressure across Discover sensors.</p>
+                <p class="page-desc">Sensor capacity and Packetstore capture health across appliances that analyze or retain network traffic.</p>
             </div>
 
             <div class="stack">
@@ -880,6 +880,51 @@
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
+                                    <h2 class="card-title">Packetstore Retention Lookback</h2>
+                                    <p class="card-desc">Latest estimated PCAP lookback with the minimum observed during the report window marked in magenta.</p>
+                                </div>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreLookbackChart">Export PNG</button>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreLookbackChart"></canvas></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
+                                <div>
+                                    <h2 class="card-title">Packetstore Capture &amp; Secret Fidelity</h2>
+                                    <p class="card-desc">Lookback-total packet and TLS-secret loss ratios. Slow-write drops are shown as a subset of packet drops; interface drops remain a raw count.</p>
+                                </div>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreFidelityChart">Export PNG</button>
+                            </div>
+                            <div class="system-health-tier-legend">
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" style="background:#ec0089"></span>Packet drops</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" style="background:#f05918"></span>Secret drops</span>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreFidelityChart"></canvas></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
+                                <div>
+                                    <h2 class="card-title">Packetstore Processing Load</h2>
+                                    <p class="card-desc" id="systemHealthPacketstoreCycleLabel">Peak sampled 30-second input, header-compression, and disk-write CPU load by appliance. The three loads are separate and are not summed.</p>
+                                </div>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreLoadChart">Export PNG</button>
+                            </div>
+                            <div class="system-health-tier-legend">
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="low"></span>&lt;80%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>100%+</span>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreLoadChart"></canvas></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
+                                <div>
                                     <h2 class="card-title">Trigger Cycles vs Available Capacity</h2>
                                     <p class="card-desc">Maximum aligned per-bucket trigger utilization; total trigger drops are called out inline.</p>
                                 </div>
@@ -914,6 +959,25 @@
                         </div>
 
                         <!-- Analysis tier -->
+                        <div class="card">
+                            <div class="card-head">
+                                <h2 class="card-title">Packetstore detail</h2>
+                                <p class="card-desc">A compact audit table for AIO and dedicated Packetstore appliances; counters are lookback totals and loads are time-series peaks.</p>
+                            </div>
+                            <div class="table-container table-scroll">
+                                <table>
+                                    <thead><tr>
+                                        <th>Appliance</th><th>Role</th><th>Model</th><th>Status</th>
+                                        <th class="num">Latest lookback</th><th class="num">Min lookback</th><th class="num">Packets</th>
+                                        <th class="num">Packet drops</th><th class="num">Slow-write</th><th class="num">Interface drops</th>
+                                        <th class="num">Secrets</th><th class="num">Secret drops</th><th class="num">Input load</th>
+                                        <th class="num">Compress load</th><th class="num">Write load</th>
+                                    </tr></thead>
+                                    <tbody id="systemHealthPacketstoreTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>

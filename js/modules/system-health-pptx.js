@@ -306,6 +306,8 @@ function buildDeckModel(input) {
     const meta = { ...(input && input.meta || {}) };
     const options = resolveOptions(meta, input && input.options || {});
     const rows = Array.isArray(input && input.rows) ? input.rows.map(row => ({ ...row })) : [];
+    const packetstoreRows = Array.isArray(input && input.packetstore_rows)
+        ? input.packetstore_rows.map(row => ({ ...row })) : [];
     const allFindings = rows.map(findingForRow);
 
     // Absent sensors leave the body narrative and become a counted band. They
@@ -337,6 +339,10 @@ function buildDeckModel(input) {
         attention: findings.length,
         at_capacity: atCapacity,
         trigger_drops: totalDrops,
+        packetstores: packetstoreRows.length,
+        packetstores_with_loss: packetstoreRows.filter(row => (finiteNumber(row.packetDropsTotal) || 0) > 0
+            || (finiteNumber(row.interfaceDropsTotal) || 0) > 0
+            || (finiteNumber(row.secretDropsTotal) || 0) > 0).length,
         model_counts: Object.entries(modelCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     };
     return {
@@ -344,6 +350,7 @@ function buildDeckModel(input) {
         meta,
         palette: normalizedPalette(input && input.palette),
         rows,
+        packetstore_rows: packetstoreRows,
         findings,
         absent,
         overview,
@@ -354,6 +361,46 @@ function buildDeckModel(input) {
             : [],
         filename: deckFilename(meta, options)
     };
+}
+
+function addPacketstoreSlides(model, assets) {
+    if (!model.packetstore_rows.length) return;
+    chunk(model.packetstore_rows, 8).forEach((rows, pageIndex, pages) => {
+        const slide = addContentSlide(
+            model,
+            'Packetstore health',
+            `Retention, capture and secret fidelity, and peak sampled 30-second processing load at ${cleanText(model.meta.cycle_label || 'report', 24)} cadence`,
+            assets,
+            pages.length > 1 ? `PAGE ${pageIndex + 1} OF ${pages.length}` : 'PACKET FORENSICS'
+        );
+        const tableRows = [[
+            tableCell('Appliance', { bold: true }), tableCell('Retention', { bold: true }),
+            tableCell('Capture & secret fidelity', { bold: true }), tableCell('Peak processing load', { bold: true })
+        ]];
+        rows.forEach(row => {
+            const latest = finiteNumber(row.lookbackLatestSec);
+            const minimum = finiteNumber(row.lookbackMinSec);
+            const packetRatio = finiteNumber(row.packetDropRatio);
+            const secretRatio = finiteNumber(row.secretDropRatio);
+            const loadLabel = value => {
+                const number = finiteNumber(value);
+                return number === null ? 'unavailable' : formatPercent(number / 100);
+            };
+            tableRows.push([
+                tableCell(`${cleanText(row.name || row.id, 42)}\n${row.appliance_role === 'all_in_one' ? 'All in One' : 'Packetstore'}`),
+                tableCell(latest === null || minimum === null ? 'Unavailable' : `${(latest / 86400).toFixed(1)}d latest\n${(minimum / 86400).toFixed(1)}d minimum`),
+                tableCell(`Packets ${packetRatio === null ? 'unavailable' : formatPercent(packetRatio)} (${formatInteger(row.packetDropsTotal || 0)} dropped)\nSecrets ${secretRatio === null ? 'unavailable' : formatPercent(secretRatio)} (${formatInteger(row.secretDropsTotal || 0)} dropped)\nSlow-write ${formatInteger(row.slowWriteDropsTotal || 0)} · interface ${formatInteger(row.interfaceDropsTotal || 0)}`),
+                tableCell(`Input ${loadLabel(row.inputLoadPeak)}\nCompress ${loadLabel(row.compressionLoadPeak)}\nWrite ${loadLabel(row.diskWriteLoadPeak)}`)
+            ]);
+        });
+        slide.addTable(tableRows, {
+            x: MARGIN, y: slide.contentTop + 0.08, w: 12.0, h: Math.min(5.45, 0.52 + rows.length * 0.62),
+            colW: [2.35, 2.25, 4.25, 3.15], border: { color: pptColor(model.palette.grid), width: 0.7 },
+            fill: pptColor(model.palette.bg), color: pptColor(model.palette.text), fontFace: FONT,
+            fontSize: 9.5, margin: 0.08, valign: 'mid', breakLine: false
+        });
+        addNotes(slide, model, 'Packetstore cpc metrics. Counter values are report-window totals; lookback and processing loads are time-series summaries.');
+    });
 }
 
 // One deterministic sentence naming the dominant condition. A reader who stops
@@ -1193,6 +1240,7 @@ function createPresentation(deckModel, PptxGenJS, assets = {}) {
     // layout they landed on slide 46, after the reader had already left.
     addRecommendationSlide(model, assets);
     addAttentionSlides(model, assets);
+    addPacketstoreSlides(model, assets);
     addChartSlides(model, assets);
     addAppendixSlides(model, assets);
     return pptx;

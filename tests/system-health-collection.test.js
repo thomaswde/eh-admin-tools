@@ -43,6 +43,22 @@ test('builds one absolute-window request with batched sensors and metric specs',
     assert.equal(body.metric_category, 'capture');
 });
 
+test('builds the exact batched Packetstore cpc metric request', () => {
+    const request = health.buildMetricRequest({
+        cycle: '1hr', fromMs: 100, untilMs: 200, objectIds: ['7', '8'],
+        metricNames: health.PACKETSTORE_TIME_SERIES_METRICS, metricCategory: 'cpc'
+    });
+    assert.equal(request.metric_category, 'cpc');
+    assert.equal(request.object_type, 'system');
+    assert.deepEqual(request.metric_specs, [
+        { name: 'est_lookback_sec' }, { name: 'input_load' },
+        { name: 'compress_load' }, { name: 'disk_write_load' }
+    ]);
+    assert.deepEqual(health.PACKETSTORE_TOTAL_METRICS, [
+        'pkts', 'pkts_dropped', 'pkts_dropped_wrslow', 'secrets', 'secrets_dropped', 'if_drops'
+    ]);
+});
+
 test('drains XID chunks through again, data, and null', async () => {
     const responses = [
         { xid: '90071992547409931234' },
@@ -173,6 +189,16 @@ test('selects latest and peak values deterministically from out-of-order rows', 
     assert.equal(summary.latest_values['7'], 3);
     assert.equal(summary.peak_values['7'], 9);
     assert.equal(summary.peak_times['7'], 10);
+    assert.equal(summary.min_values['7'], 3);
+    assert.equal(summary.min_times['7'], 30);
+});
+
+test('cardinality policy counts the exact number of scalar time-series', () => {
+    const policy = health.chooseCyclePolicy({
+        requestedCycle: '1hr', windowMs: health.DAY_MS, sensorCount: 999,
+        scalarSeriesCount: 12, maxScalarPoints: 1000
+    });
+    assert.equal(policy.estimated_scalar_points, 288);
 });
 
 test('calculates maximum trigger utilization from aligned buckets', () => {
