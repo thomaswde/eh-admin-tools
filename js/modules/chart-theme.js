@@ -508,3 +508,9 @@ function chartThemeEscape(value) {
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[char]));
 }
+
+// This file is loaded as a dependency before the dynamically injected System
+// Health report. Export the small public surface explicitly instead of relying
+// on browser-specific handling of top-level function declarations.
+window.initChartThemePanel = initChartThemePanel;
+window.chartThemeResolvedColors = chartThemeResolvedColors;

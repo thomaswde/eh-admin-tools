@@ -38,7 +38,7 @@ Open <http://127.0.0.1:8000>.
 
 ```bash
 python -m unittest discover -s tests -v
-node --test tests/system-health-collection.test.js
+node --test tests/*.test.js
 for file in $(find js -name '*.js'); do node --check "$file"; done
 ```
 

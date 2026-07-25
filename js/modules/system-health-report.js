@@ -1894,7 +1894,10 @@ function systemHealthSortIds(a, b) {
 }
 
 function setupSystemHealthStylePanel() {
-    initChartThemePanel({
+    if (typeof window.initChartThemePanel !== 'function') {
+        throw new Error('Chart theme dependency did not expose its panel initializer.');
+    }
+    window.initChartThemePanel({
         onChange: () => {
             if (systemHealthState.currentReport) renderSystemHealthReport(systemHealthState.currentReport);
         }
@@ -1902,7 +1905,10 @@ function setupSystemHealthStylePanel() {
 }
 
 function systemHealthStyleColors() {
-    return chartThemeResolvedColors();
+    if (typeof window.chartThemeResolvedColors !== 'function') {
+        throw new Error('Chart theme dependency did not expose its resolved palette.');
+    }
+    return window.chartThemeResolvedColors();
 }
 
 // The PDF renderer takes the already-resolved palette rather than a theme name,
