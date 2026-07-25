@@ -730,10 +730,11 @@
                             <button type="button" id="runSystemHealthReport" class="btn-primary">Run report</button>
                             <button type="button" id="systemHealthLoadCsvButton" class="btn">Load CSV</button>
                             <button type="button" id="systemHealthExportCsvButton" class="btn" disabled>Export CSV</button>
+                            <button type="button" id="systemHealthExportApiCsvButton" class="btn" disabled>Export All API Response Data as CSVs</button>
                             <button type="button" id="systemHealthExportPdfButton" class="btn" disabled>Export PDF</button>
-                            <input id="systemHealthCsvInput" type="file" accept=".csv,text/csv" multiple class="hidden">
+                            <input id="systemHealthCsvInput" type="file" accept=".csv,text/csv" class="hidden">
                         </div>
-                        <p id="systemHealthCsvStatus" class="field-hint" style="margin-top: 10px;">Load system health summary CSV files from a previous run.</p>
+                        <p id="systemHealthCsvStatus" class="field-hint" style="margin-top: 10px;">Load or export one unified per-sensor summary CSV. The API-data export preserves the detailed multi-file export.</p>
                     </div>
                 </div>
 
@@ -911,6 +912,7 @@
                         <div class="card">
                             <div class="card-head">
                                 <h2 class="card-title">Sensor detail</h2>
+                                <p class="card-desc">This unified per-sensor view is the source for chart rendering and summary CSV round trips.</p>
                             </div>
                             <div class="table-container table-scroll">
                                 <table>
@@ -918,6 +920,7 @@
                                         <tr>
                                             <th>Sensor</th>
                                             <th>Model</th>
+                                            <th>Status</th>
                                             <th class="num">Packet peak</th>
                                             <th class="num">Packet capacity</th>
                                             <th class="num">Throughput peak</th>

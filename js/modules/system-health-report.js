@@ -3,6 +3,28 @@
 const SYSTEM_HEALTH_ROWS_PER_PAGE = 22;
 const SYSTEM_HEALTH_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_HEALTH_DEVICE_LIMIT = 5000;
+const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '1';
+const SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS = [
+    'schema_version', 'generated_at', 'report_lookback_days', 'report_from_ms', 'report_until_ms',
+    'requested_cycle', 'query_cycle', 'capacity_catalog_loaded', 'report_errors_json',
+    'appliance_id', 'appliance_name', 'hostname', 'platform', 'license_platform', 'uuid',
+    'status_message', 'online', 'metric_eligible', 'data_access', 'license_status', 'sync_time',
+    'firmware_version', 'health_conditions_json',
+    'packet_peak_value', 'packet_peak_duration_ms', 'packet_peak_time_ms', 'packet_peak_pps',
+    'packet_capacity_pps', 'packet_actual_cycle', 'packet_collection_status',
+    'throughput_peak_bytes', 'throughput_peak_duration_ms', 'throughput_peak_time_ms',
+    'throughput_peak_gbps', 'throughput_capacity_gbps', 'throughput_actual_cycle',
+    'throughput_collection_status',
+    'trigger_used_cycles', 'trigger_available_cycles', 'trigger_utilization',
+    'trigger_peak_timestamp_ms', 'trigger_peak_duration_ms', 'trigger_actual_cycle',
+    'trigger_collection_status', 'trigger_drops_total', 'trigger_drops_aggregation_duration_ms',
+    'trigger_drops_collection_status',
+    'advanced_devices', 'standard_devices', 'discovery_devices', 'unrecognized_analysis_devices',
+    'analysis_total_devices', 'device_analysis_status',
+    'packet_capacity_source', 'throughput_capacity_source', 'advanced_capacity',
+    'standard_capacity', 'total_analysis_capacity', 'advanced_capacity_source',
+    'standard_capacity_source', 'api_advanced_analysis_capacity', 'api_total_capacity'
+];
 const systemHealthState = {
     initialized: false,
     catalog: {},
@@ -519,6 +541,7 @@ function buildSystemHealthReport({
     });
 
     return {
+        source_type: 'api',
         generated_at: new Date().toISOString(),
         target: state.apiConfig || {},
         window: {
@@ -617,7 +640,7 @@ function systemHealthRows(report) {
         const triggerDropsTotal = metricSystemHealthTotal(report, 'trigger_drops', sensor.id);
         const collectionStatus = systemHealthMetricStatus(report, sensor.id);
         collectionStatus.trigger_utilization = alignedTrigger
-            ? 'complete'
+            ? (collectionStatus.trigger_cycles || 'complete')
             : (report.trigger_utilization
                 && report.trigger_utilization.invalid_by_sensor
                 && report.trigger_utilization.invalid_by_sensor[String(sensor.id)])
@@ -673,10 +696,6 @@ function systemHealthBytesToGbps(report, id) {
     const duration = metricSystemHealthDuration(report, 'bytes', id);
     const peak = metricSystemHealthPeak(report, 'bytes', id);
     return duration && peak !== null ? (Number(peak) * 8) / (duration / 1000) / 1_000_000_000 : null;
-}
-
-function systemHealthCycleToMs(cycle) {
-    return SystemHealthCollection.cycleToMs(cycle) || 3600000;
 }
 
 function systemHealthMetricStatus(report, id) {
@@ -830,8 +849,9 @@ function renderSystemHealthTable(rows) {
         const statusText = systemHealthRowStatusText(row);
         return `
         <tr class="${rowFlagged ? 'system-health-overflow-row' : ''}">
-            <td>${escapeSystemHealthHtml(row.name || row.hostname || row.id)}${statusText ? `<br><span class="field-hint">${escapeSystemHealthHtml(statusText)}</span>` : ''}</td>
+            <td>${escapeSystemHealthHtml(row.name || row.hostname || row.id)}</td>
             <td>${escapeSystemHealthHtml(row.license_platform || '')}</td>
+            <td>${escapeSystemHealthHtml(statusText || 'complete')}</td>
             <td${cellClass(overPacket)}>${formatSystemHealthRate(row.packetPeak)}</td>
             <td>${formatSystemHealthRate(row.packetCapacity)}</td>
             <td${cellClass(overThroughput)}>${formatSystemHealthGbps(row.throughputGbps)}</td>
@@ -844,7 +864,7 @@ function renderSystemHealthTable(rows) {
             <td>${formatSystemHealthNumber(totalCapacity)}</td>
         </tr>
     `;
-    }).join('') || '<tr><td colspan="12">No Discover sensors were returned.</td></tr>';
+    }).join('') || '<tr><td colspan="13">No Discover sensors were returned.</td></tr>';
 }
 
 function renderSystemHealthErrors(errors) {
@@ -1433,19 +1453,29 @@ function slugSystemHealthFilename(value) {
 function setupSystemHealthCsvControls() {
     const loadButton = document.getElementById('systemHealthLoadCsvButton');
     const exportButton = document.getElementById('systemHealthExportCsvButton');
+    const apiExportButton = document.getElementById('systemHealthExportApiCsvButton');
     const pdfButton = document.getElementById('systemHealthExportPdfButton');
     const input = document.getElementById('systemHealthCsvInput');
     if (loadButton && input) loadButton.addEventListener('click', () => input.click());
     if (input) input.addEventListener('change', loadSystemHealthCsvFiles);
-    if (exportButton) exportButton.addEventListener('click', exportSystemHealthCsvFiles);
+    if (exportButton) exportButton.addEventListener('click', exportSystemHealthSummaryCsv);
+    if (apiExportButton) apiExportButton.addEventListener('click', exportSystemHealthApiCsvFiles);
     if (pdfButton) pdfButton.addEventListener('click', exportSystemHealthPdf);
     updateSystemHealthCsvButtons();
 }
 
 function updateSystemHealthCsvButtons() {
     const exportButton = document.getElementById('systemHealthExportCsvButton');
+    const apiExportButton = document.getElementById('systemHealthExportApiCsvButton');
     const pdfButton = document.getElementById('systemHealthExportPdfButton');
     if (exportButton) exportButton.disabled = !systemHealthState.currentReport;
+    if (apiExportButton) {
+        const report = systemHealthState.currentReport;
+        apiExportButton.disabled = !report || report.source_type !== 'api';
+        apiExportButton.title = report && report.source_type !== 'api'
+            ? 'Detailed API response rows are not present in a unified summary CSV.'
+            : '';
+    }
     if (pdfButton) pdfButton.disabled = !systemHealthState.currentReport;
 }
 
@@ -1455,195 +1485,320 @@ async function loadSystemHealthCsvFiles(event) {
     if (!files.length) return;
 
     try {
-        const byName = {};
-        for (const file of files) {
-            byName[file.name.toLowerCase()] = parseSystemHealthCsv(await file.text());
-        }
-        const bytesSummary = byName['capture_bytes_summary.csv'] || [];
-        const pktsSummary = byName['capture_pkts_summary.csv'] || [];
-        const triggerCyclesSummary = byName['capture_trigger_cycles_summary.csv'] || [];
-        const triggerCyclesAvailSummary = byName['capture_trigger_cycles_avail_summary.csv'] || [];
-        const triggerDropsSummary = byName['capture_trigger_drops_summary.csv'] || [];
-        const deviceSummary = byName['device_analysis_summary.csv'] || [];
-        if (!bytesSummary.length && !pktsSummary.length && !triggerCyclesSummary.length && !triggerCyclesAvailSummary.length && !triggerDropsSummary.length && !deviceSummary.length) {
-            throw new Error('Select system health summary CSV files from a previous run.');
-        }
-
-        await loadSystemHealthCatalog();
-        const report = buildSystemHealthReportFromCsvSummaries({ bytesSummary, pktsSummary, triggerCyclesSummary, triggerCyclesAvailSummary, triggerDropsSummary, deviceSummary });
+        if (files.length !== 1) throw new Error('Select one system health summary CSV.');
+        const rows = parseSystemHealthCsv(await files[0].text());
+        const report = buildSystemHealthReportFromUnifiedCsv(rows);
         systemHealthState.currentReport = report;
         resetSystemHealthPages();
         document.getElementById('systemHealthResults').style.display = 'block';
         renderSystemHealthReport(report);
-        setSystemHealthCsvStatus(`Loaded CSV summaries: ${files.map(file => file.name).join(', ')}`);
+        setSystemHealthCsvStatus(`Loaded ${rows.length.toLocaleString()} sensor rows from ${files[0].name}.`);
     } catch (error) {
         setSystemHealthCsvStatus(`CSV load failed: ${error.message}`, true);
     }
 }
 
-function buildSystemHealthReportFromCsvSummaries(csv) {
-    const appliances = new Map();
-    [
-        ...csv.bytesSummary,
-        ...csv.pktsSummary,
-        ...csv.triggerCyclesSummary,
-        ...csv.triggerCyclesAvailSummary,
-        ...csv.triggerDropsSummary,
-        ...csv.deviceSummary
-    ].forEach(row => {
-        if (!row.appliance_id) return;
-        const id = systemHealthCsvKey(row);
-        if (!appliances.has(id)) {
-            const appliance = {
-                id,
-                source_appliance_id: systemHealthNumberOrString(row.appliance_id),
-                name: row.appliance_name || `Sensor ${row.appliance_id}`,
-                hostname: row.hostname || '',
-                platform: row.platform || '',
-                license_platform: row.license_platform || '',
-                online: row.online === '' ? true : String(row.online).toLowerCase() === 'true',
-                metric_eligible: row.metric_eligible === '' ? true : String(row.metric_eligible).toLowerCase() === 'true',
-                data_access: row.data_access === '' ? undefined : String(row.data_access).toLowerCase() === 'true',
-                license_status: row.license_status || '',
-                status_message: row.status_message || '',
-                advanced_analysis_capacity: systemHealthNumber(row.advanced_analysis_capacity),
-                total_capacity: systemHealthNumber(row.total_capacity),
-                health_conditions: [],
-                uuid: '',
-                firmware_version: ''
-            };
-            appliance.capacity = capacityForSystemHealthAppliance(appliance);
-            appliances.set(id, appliance);
-        }
-    });
+function buildSystemHealthReportFromUnifiedCsv(rows) {
+    if (!Array.isArray(rows) || !rows.length) {
+        throw new Error('The unified system health CSV does not contain any sensor rows.');
+    }
+    const missingColumns = SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS.filter(column => !(column in rows[0]));
+    if (missingColumns.length) {
+        throw new Error(`This is not a unified system health summary CSV. Missing columns: ${missingColumns.slice(0, 5).join(', ')}${missingColumns.length > 5 ? ', …' : ''}`);
+    }
+    const versions = new Set(rows.map(row => String(row.schema_version || '')));
+    if (versions.size !== 1 || !versions.has(SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION)) {
+        throw new Error(`Unsupported system health summary CSV schema version: ${Array.from(versions).join(', ') || 'missing'}.`);
+    }
 
+    const first = rows[0];
+    const reportColumns = [
+        'generated_at', 'report_lookback_days', 'report_from_ms', 'report_until_ms',
+        'requested_cycle', 'query_cycle', 'capacity_catalog_loaded'
+    ];
+    rows.slice(1).forEach((row, index) => {
+        const changed = reportColumns.find(column => String(row[column] || '') !== String(first[column] || ''));
+        if (changed) throw new Error(`Row ${index + 3} has inconsistent ${changed} report metadata.`);
+    });
+    const appliances = [];
     const deviceAnalysis = {};
-    csv.deviceSummary.forEach(row => {
-        deviceAnalysis[systemHealthCsvKey(row)] = {
-            advanced: systemHealthNumber(row.advanced_devices),
-            standard: systemHealthNumber(row.standard_devices),
-            discovery: systemHealthNumber(row.discovery_devices),
-            unrecognized: systemHealthNumber(row.unrecognized_analysis_devices),
-            total: systemHealthNumber(row.analysis_total_devices),
-            status: row.collection_status || 'unknown'
-        };
-    });
-
-    const cycleInput = document.getElementById('systemHealthCycle');
-    const cycle = cycleInput ? cycleInput.value || '1hr' : '1hr';
+    const metrics = {
+        bytes: systemHealthEmptyImportedMetric('time_series'),
+        pkts: systemHealthEmptyImportedMetric('time_series'),
+        trigger_cycles: systemHealthEmptyImportedMetric('time_series'),
+        trigger_cycles_avail: systemHealthEmptyImportedMetric('time_series'),
+        trigger_drops: systemHealthEmptyImportedMetric('total_by_object')
+    };
     const triggerUtilization = {
         aggregation_mode: 'aligned_time_series_ratio',
         zero_available_policy: 'invalid_bucket_excluded',
         peak_by_sensor: {},
         invalid_by_sensor: {}
     };
-    csv.triggerCyclesSummary.forEach(row => {
-        const id = systemHealthCsvKey(row);
-        const utilization = systemHealthNumber(row.trigger_utilization);
-        if (utilization === null) return;
-        triggerUtilization.peak_by_sensor[id] = {
-            utilization,
-            used_cycles: systemHealthNumber(row.trigger_used_cycles),
-            available_cycles: systemHealthNumber(row.trigger_available_cycles),
-            timestamp_ms: systemHealthNumber(row.trigger_peak_timestamp_ms),
-            duration_ms: systemHealthNumber(row.trigger_peak_duration_ms),
-            actual_cycle: row.actual_cycle || cycle
+    const seenIds = new Set();
+
+    rows.forEach((row, index) => {
+        const id = String(row.appliance_id || '').trim();
+        if (!id) throw new Error(`Row ${index + 2} does not contain an appliance_id.`);
+        if (seenIds.has(id)) throw new Error(`The unified summary contains duplicate appliance_id ${id}.`);
+        seenIds.add(id);
+
+        const healthConditions = systemHealthJsonArray(row.health_conditions_json, 'health_conditions_json', index);
+        const capacity = {
+            model: row.license_platform || '',
+            base_packetrate: systemHealthNumber(row.packet_capacity_pps) || 0,
+            base_gbps: systemHealthNumber(row.throughput_capacity_gbps) || 0,
+            advanced_analysis: systemHealthNumber(row.advanced_capacity) || 0,
+            standard_analysis: systemHealthNumber(row.standard_capacity) || 0,
+            total_analysis: systemHealthNumber(row.total_analysis_capacity),
+            advanced_source: row.advanced_capacity_source || '',
+            standard_source: row.standard_capacity_source || '',
+            capacity_source: {
+                packet_rate: row.packet_capacity_source || '',
+                throughput: row.throughput_capacity_source || '',
+                advanced_analysis: row.advanced_capacity_source || '',
+                standard_analysis: row.standard_capacity_source || ''
+            },
+            api_advanced_analysis_capacity: systemHealthNumber(row.api_advanced_analysis_capacity),
+            api_total_capacity: systemHealthNumber(row.api_total_capacity)
         };
+        appliances.push({
+            id,
+            name: row.appliance_name || `Sensor ${id}`,
+            hostname: row.hostname || '',
+            platform: row.platform || '',
+            license_platform: row.license_platform || '',
+            uuid: row.uuid || '',
+            status_message: row.status_message || '',
+            online: systemHealthBoolean(row.online, true),
+            metric_eligible: systemHealthBoolean(row.metric_eligible, true),
+            data_access: systemHealthOptionalBoolean(row.data_access),
+            license_status: row.license_status || '',
+            sync_time: systemHealthNumberOrString(row.sync_time),
+            firmware_version: row.firmware_version || '',
+            advanced_analysis_capacity: systemHealthNumber(row.api_advanced_analysis_capacity),
+            total_capacity: systemHealthNumber(row.api_total_capacity),
+            health_conditions: healthConditions,
+            capacity
+        });
+        deviceAnalysis[id] = {
+            advanced: systemHealthNumber(row.advanced_devices),
+            standard: systemHealthNumber(row.standard_devices),
+            discovery: systemHealthNumber(row.discovery_devices),
+            unrecognized: systemHealthNumber(row.unrecognized_analysis_devices),
+            total: systemHealthNumber(row.analysis_total_devices),
+            status: row.device_analysis_status || 'unknown'
+        };
+
+        systemHealthImportPeak(metrics.pkts.summary, id, row.packet_peak_value, row.packet_peak_duration_ms, row.packet_peak_time_ms, row.packet_actual_cycle);
+        systemHealthImportPeak(metrics.bytes.summary, id, row.throughput_peak_bytes, row.throughput_peak_duration_ms, row.throughput_peak_time_ms, row.throughput_actual_cycle);
+        systemHealthImportPeak(metrics.trigger_cycles.summary, id, row.trigger_used_cycles, row.trigger_peak_duration_ms, row.trigger_peak_timestamp_ms, row.trigger_actual_cycle);
+        systemHealthImportPeak(metrics.trigger_cycles_avail.summary, id, row.trigger_available_cycles, row.trigger_peak_duration_ms, row.trigger_peak_timestamp_ms, row.trigger_actual_cycle);
+        systemHealthImportTotal(metrics.trigger_drops.summary, id, row.trigger_drops_total, row.trigger_drops_aggregation_duration_ms);
+
+        metrics.pkts.sensor_status[id] = { status: row.packet_collection_status || 'unknown' };
+        metrics.bytes.sensor_status[id] = { status: row.throughput_collection_status || 'unknown' };
+        metrics.trigger_cycles.sensor_status[id] = { status: row.trigger_collection_status || 'unknown' };
+        metrics.trigger_cycles_avail.sensor_status[id] = { status: row.trigger_collection_status || 'unknown' };
+        metrics.trigger_drops.sensor_status[id] = { status: row.trigger_drops_collection_status || 'unknown' };
+
+        const triggerUsed = systemHealthNumber(row.trigger_used_cycles);
+        const triggerAvailable = systemHealthNumber(row.trigger_available_cycles);
+        const triggerRatio = systemHealthNumber(row.trigger_utilization);
+        if (triggerUsed !== null && triggerAvailable !== null && triggerAvailable > 0 && triggerRatio !== null) {
+            triggerUtilization.peak_by_sensor[id] = {
+                used_cycles: triggerUsed,
+                available_cycles: triggerAvailable,
+                utilization: triggerRatio,
+                timestamp_ms: systemHealthNumber(row.trigger_peak_timestamp_ms),
+                duration_ms: systemHealthNumber(row.trigger_peak_duration_ms),
+                actual_cycle: row.trigger_actual_cycle || row.query_cycle || ''
+            };
+        } else if (row.trigger_collection_status) {
+            triggerUtilization.invalid_by_sensor[id] = row.trigger_collection_status;
+        }
     });
+
     return {
-        generated_at: new Date().toISOString(),
-        target: { type: 'csv', name: 'summary CSV files' },
-        window: { lookback_days: 'CSV', until: 'latest CSV row' },
-        cycle,
-        summary_cycle_duration_ms: systemHealthCycleToMs(cycle),
-        capacity_catalog_loaded: systemHealthState.catalogLoaded,
-        appliances: Array.from(appliances.values()),
-        device_analysis: deviceAnalysis,
-        metrics: {
-            bytes: {
-                metric_category_used: 'csv summary',
-                rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.bytesSummary),
-                sensor_status: systemHealthCsvSensorStatus(csv.bytesSummary)
-            },
-            pkts: {
-                metric_category_used: 'csv summary',
-                rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.pktsSummary),
-                sensor_status: systemHealthCsvSensorStatus(csv.pktsSummary)
-            },
-            trigger_cycles: {
-                metric_category_used: 'csv summary',
-                rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.triggerCyclesSummary),
-                sensor_status: systemHealthCsvSensorStatus(csv.triggerCyclesSummary)
-            },
-            trigger_cycles_avail: {
-                metric_category_used: 'csv summary',
-                rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.triggerCyclesAvailSummary),
-                sensor_status: systemHealthCsvSensorStatus(csv.triggerCyclesAvailSummary)
-            },
-            trigger_drops: {
-                metric_category_used: 'csv summary',
-                rows: [],
-                summary: summarizeSystemHealthSummaryCsv(csv.triggerDropsSummary),
-                sensor_status: systemHealthCsvSensorStatus(csv.triggerDropsSummary)
-            }
+        source_type: 'summary_csv',
+        generated_at: first.generated_at || new Date().toISOString(),
+        target: { type: 'csv', name: 'unified system health summary CSV' },
+        window: {
+            lookback_days: systemHealthNumberOrString(first.report_lookback_days),
+            from_ms: systemHealthNumber(first.report_from_ms),
+            until_ms: systemHealthNumber(first.report_until_ms),
+            from_iso: systemHealthMsToIso(first.report_from_ms),
+            until_iso: systemHealthMsToIso(first.report_until_ms)
         },
+        requested_cycle: first.requested_cycle || first.query_cycle || '',
+        cycle: first.query_cycle || first.requested_cycle || '',
+        capacity_catalog_loaded: systemHealthBoolean(first.capacity_catalog_loaded, false),
+        appliances,
+        device_analysis: deviceAnalysis,
+        metrics,
         trigger_utilization: triggerUtilization,
+        errors: systemHealthJsonArray(first.report_errors_json, 'report_errors_json', 0)
+    };
+}
+
+function systemHealthEmptyImportedMetric(aggregationMode) {
+    return {
+        metric_category_used: 'unified summary CSV',
+        aggregation_mode: aggregationMode,
+        rows: [],
+        summary: {
+            aggregation_mode: aggregationMode,
+            totals: {},
+            point_counts: {},
+            avg_values: {},
+            peak_values: {},
+            peak_times: {},
+            latest_values: {},
+            latest_times: {},
+            peak_duration_ms: {},
+            average_rates: {},
+            aggregation_duration_ms: {},
+            actual_cycles: {}
+        },
+        sensor_status: {},
         errors: []
     };
 }
 
-function summarizeSystemHealthSummaryCsv(rows) {
-    const summary = {
-        aggregation_mode: rows[0] && rows[0].aggregation_mode || 'time_series',
-        totals: {},
-        point_counts: {},
-        avg_values: {},
-        peak_values: {},
-        peak_times: {},
-        latest_values: {},
-        latest_times: {},
-        peak_duration_ms: {},
-        average_rates: {},
-        aggregation_duration_ms: {},
-        actual_cycles: {}
-    };
-    rows.forEach(row => {
-        const id = systemHealthCsvKey(row);
-        const assignments = [
-            ['totals', 'total_value'],
-            ['point_counts', 'point_count'],
-            ['avg_values', 'avg_value'],
-            ['peak_values', 'peak_value'],
-            ['latest_values', 'latest_value'],
-            ['peak_duration_ms', 'peak_duration_ms'],
-            ['average_rates', 'average_rate'],
-            ['aggregation_duration_ms', 'aggregation_duration_ms']
-        ];
-        assignments.forEach(([target, source]) => {
-            const value = systemHealthNumber(row[source]);
-            if (value !== null) summary[target][id] = value;
-        });
-        if (row.actual_cycle) summary.actual_cycles[id] = row.actual_cycle;
-        const peakMs = Date.parse(row.peak_time_iso || '');
-        if (Number.isFinite(peakMs)) summary.peak_times[id] = peakMs;
-    });
-    return summary;
+function systemHealthImportPeak(summary, id, rawValue, rawDuration, rawTimestamp, actualCycle) {
+    const value = systemHealthNumber(rawValue);
+    const duration = systemHealthNumber(rawDuration);
+    const timestamp = systemHealthNumber(rawTimestamp);
+    if (value !== null) summary.peak_values[id] = value;
+    if (duration !== null) summary.peak_duration_ms[id] = duration;
+    if (timestamp !== null) summary.peak_times[id] = timestamp;
+    if (actualCycle) summary.actual_cycles[id] = actualCycle;
 }
 
-function systemHealthCsvSensorStatus(rows) {
-    return Object.fromEntries(rows.map(row => [
-        systemHealthCsvKey(row),
-        { status: row.collection_status || 'unknown' }
-    ]));
+function systemHealthImportTotal(summary, id, rawValue, rawDuration) {
+    const value = systemHealthNumber(rawValue);
+    const duration = systemHealthNumber(rawDuration);
+    if (value !== null) summary.totals[id] = value;
+    if (duration !== null) {
+        summary.aggregation_duration_ms[id] = duration;
+        if (value !== null && duration > 0) summary.average_rates[id] = value / (duration / 1000);
+    }
 }
 
-function exportSystemHealthCsvFiles() {
+function systemHealthJsonArray(value, column, rowIndex) {
+    if (!value) return [];
+    try {
+        const parsed = JSON.parse(value);
+        if (!Array.isArray(parsed)) throw new Error('not an array');
+        return parsed;
+    } catch {
+        throw new Error(`Invalid ${column} JSON in row ${rowIndex + 2}.`);
+    }
+}
+
+function exportSystemHealthSummaryCsv() {
     const report = systemHealthState.currentReport;
     if (!report) return;
+    downloadSystemHealthCsv('system_health_summary.csv', systemHealthUnifiedSummaryCsv(report));
+    setSystemHealthCsvStatus('Exported system_health_summary.csv. This single file can rebuild every System Health chart.');
+}
+
+function systemHealthUnifiedSummaryCsv(report) {
+    return systemHealthRowsToCsv(SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS, systemHealthUnifiedSummaryRows(report));
+}
+
+function systemHealthUnifiedSummaryRows(report) {
+    const rows = systemHealthRows(report);
+    const errorsJson = JSON.stringify(report.errors || []);
+    return rows.map((row, index) => {
+        const capacity = row.capacity || {};
+        const packetSummary = report.metrics && report.metrics.pkts && report.metrics.pkts.summary || {};
+        const bytesSummary = report.metrics && report.metrics.bytes && report.metrics.bytes.summary || {};
+        const dropsSummary = report.metrics && report.metrics.trigger_drops && report.metrics.trigger_drops.summary || {};
+        const id = String(row.id);
+        const totalAnalysis = capacity.total_analysis !== null && capacity.total_analysis !== undefined
+            ? capacity.total_analysis
+            : (row.advancedCapacity || 0) + (row.standardCapacity || 0);
+        return {
+            schema_version: SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION,
+            generated_at: report.generated_at || '',
+            report_lookback_days: report.window && report.window.lookback_days,
+            report_from_ms: report.window && report.window.from_ms,
+            report_until_ms: report.window && report.window.until_ms,
+            requested_cycle: report.requested_cycle || '',
+            query_cycle: report.cycle || '',
+            capacity_catalog_loaded: report.capacity_catalog_loaded,
+            report_errors_json: index === 0 ? errorsJson : '',
+            appliance_id: id,
+            appliance_name: row.name || '',
+            hostname: row.hostname || '',
+            platform: row.platform || '',
+            license_platform: row.license_platform || '',
+            uuid: row.uuid || '',
+            status_message: row.status_message || '',
+            online: row.online,
+            metric_eligible: row.metric_eligible,
+            data_access: row.data_access,
+            license_status: row.license_status || '',
+            sync_time: row.sync_time,
+            firmware_version: row.firmware_version || '',
+            health_conditions_json: JSON.stringify(row.health_conditions || []),
+            packet_peak_value: systemHealthSummaryValue(packetSummary, 'peak_values', id),
+            packet_peak_duration_ms: systemHealthSummaryValue(packetSummary, 'peak_duration_ms', id),
+            packet_peak_time_ms: systemHealthSummaryValue(packetSummary, 'peak_times', id),
+            packet_peak_pps: row.packetPeak,
+            packet_capacity_pps: row.packetCapacity,
+            packet_actual_cycle: systemHealthSummaryValue(packetSummary, 'actual_cycles', id),
+            packet_collection_status: row.collectionStatus && row.collectionStatus.pkts,
+            throughput_peak_bytes: systemHealthSummaryValue(bytesSummary, 'peak_values', id),
+            throughput_peak_duration_ms: systemHealthSummaryValue(bytesSummary, 'peak_duration_ms', id),
+            throughput_peak_time_ms: systemHealthSummaryValue(bytesSummary, 'peak_times', id),
+            throughput_peak_gbps: row.throughputGbps,
+            throughput_capacity_gbps: row.throughputCapacity,
+            throughput_actual_cycle: systemHealthSummaryValue(bytesSummary, 'actual_cycles', id),
+            throughput_collection_status: row.collectionStatus && row.collectionStatus.bytes,
+            trigger_used_cycles: row.triggerCyclesPeak,
+            trigger_available_cycles: row.triggerCyclesAvail,
+            trigger_utilization: row.triggerUtilization,
+            trigger_peak_timestamp_ms: row.triggerPeakTimestampMs,
+            trigger_peak_duration_ms: row.triggerPeakDurationMs,
+            trigger_actual_cycle: report.trigger_utilization
+                && report.trigger_utilization.peak_by_sensor
+                && report.trigger_utilization.peak_by_sensor[id]
+                && report.trigger_utilization.peak_by_sensor[id].actual_cycle || '',
+            trigger_collection_status: row.collectionStatus && row.collectionStatus.trigger_utilization,
+            trigger_drops_total: row.triggerDropsTotal,
+            trigger_drops_aggregation_duration_ms: systemHealthSummaryValue(dropsSummary, 'aggregation_duration_ms', id),
+            trigger_drops_collection_status: row.collectionStatus && row.collectionStatus.trigger_drops,
+            advanced_devices: row.analysis && row.analysis.advanced,
+            standard_devices: row.analysis && row.analysis.standard,
+            discovery_devices: row.analysis && row.analysis.discovery,
+            unrecognized_analysis_devices: row.analysis && row.analysis.unrecognized,
+            analysis_total_devices: row.analysis && row.analysis.total,
+            device_analysis_status: row.collectionStatus && row.collectionStatus.device_analysis,
+            packet_capacity_source: capacity.capacity_source && capacity.capacity_source.packet_rate,
+            throughput_capacity_source: capacity.capacity_source && capacity.capacity_source.throughput,
+            advanced_capacity: row.advancedCapacity,
+            standard_capacity: row.standardCapacity,
+            total_analysis_capacity: totalAnalysis,
+            advanced_capacity_source: capacity.advanced_source
+                || capacity.capacity_source && capacity.capacity_source.advanced_analysis,
+            standard_capacity_source: capacity.standard_source
+                || capacity.capacity_source && capacity.capacity_source.standard_analysis,
+            api_advanced_analysis_capacity: row.advanced_analysis_capacity,
+            api_total_capacity: row.total_capacity
+        };
+    });
+}
+
+function systemHealthSummaryValue(summary, key, id) {
+    const values = summary && summary[key];
+    return values && values[id] !== undefined ? values[id] : '';
+}
+
+function exportSystemHealthApiCsvFiles() {
+    const report = systemHealthState.currentReport;
+    if (!report || report.source_type !== 'api') return;
     const appliancesById = Object.fromEntries((report.appliances || []).map(appliance => [String(appliance.id), appliance]));
     downloadSystemHealthCsv('capture_bytes.csv', systemHealthMetricRowsCsv((report.metrics.bytes && report.metrics.bytes.rows) || [], appliancesById, 'bytes'));
     downloadSystemHealthCsv('capture_pkts.csv', systemHealthMetricRowsCsv((report.metrics.pkts && report.metrics.pkts.rows) || [], appliancesById, 'pkts'));
@@ -1656,7 +1811,7 @@ function exportSystemHealthCsvFiles() {
     downloadSystemHealthCsv('capture_trigger_cycles_avail_summary.csv', systemHealthSummaryCsv(report, 'trigger_cycles_avail', appliancesById));
     downloadSystemHealthCsv('capture_trigger_drops_summary.csv', systemHealthSummaryCsv(report, 'trigger_drops', appliancesById));
     downloadSystemHealthCsv('device_analysis_summary.csv', systemHealthDeviceAnalysisCsv(report, appliancesById));
-    setSystemHealthCsvStatus('Exported system health metric, trigger, and device analysis CSV files.');
+    setSystemHealthCsvStatus('Exported all available System Health API response data and per-metric summaries as CSV files.');
 }
 
 async function exportSystemHealthPdf() {
@@ -1892,10 +2047,6 @@ function setSystemHealthCsvStatus(message, isError = false) {
     el.style.color = isError ? '#dc2626' : 'var(--text-muted)';
 }
 
-function systemHealthCsvKey(row) {
-    return [row.appliance_id || '', row.appliance_name || '', row.hostname || ''].map(item => String(item).trim()).join('|');
-}
-
 function systemHealthNumber(value) {
     if (value === '' || value === null || value === undefined) return null;
     const parsed = Number(value);
@@ -1905,6 +2056,20 @@ function systemHealthNumber(value) {
 function systemHealthNumberOrString(value) {
     const parsed = systemHealthNumber(value);
     return parsed === null ? value : parsed;
+}
+
+function systemHealthBoolean(value, fallback = false) {
+    if (value === '' || value === null || value === undefined) return fallback;
+    if (typeof value === 'boolean') return value;
+    const normalized = String(value).trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+    return fallback;
+}
+
+function systemHealthOptionalBoolean(value) {
+    if (value === '' || value === null || value === undefined) return undefined;
+    return systemHealthBoolean(value);
 }
 
 function systemHealthSortIds(a, b) {
