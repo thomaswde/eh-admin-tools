@@ -58,6 +58,58 @@ function groupSavedConnections(connections) {
     ];
 }
 
+function savedConnectionTarget(connection) {
+    if (connection?.type === '360') {
+        return String(connection.tenant || connection.label || '').trim().toLowerCase();
+    }
+    if (connection?.type === 'enterprise') {
+        return String(connection.host || connection.label || '').trim().toLowerCase();
+    }
+    return '';
+}
+
+function activeConnectionTarget(config) {
+    if (config?.type === '360') {
+        return String(config.tenant || '').trim().toLowerCase();
+    }
+    if (config?.type === 'enterprise') {
+        return String(config.host || '').trim().toLowerCase();
+    }
+    return '';
+}
+
+function findActiveSavedConnectionId(connections, config) {
+    const target = activeConnectionTarget(config);
+    if (!target) return '';
+
+    const match = (connections || []).find(connection => (
+        connection?.type === config.type
+        && savedConnectionTarget(connection) === target
+    ));
+    return match?.id || '';
+}
+
+let savedConnectionCatalog = [];
+
+function syncSavedConnectionSelection(connections = savedConnectionCatalog) {
+    const select = document.getElementById('savedConnectionSelect');
+    const connectBtn = document.getElementById('connectSavedBtn');
+    if (!select) return;
+
+    const activeConfig = state.connected ? state.apiConfig : null;
+    const activeConnectionId = findActiveSavedConnectionId(connections, activeConfig);
+    if (activeConfig) {
+        // An active connection must never make an unrelated saved connection
+        // appear selected. Leave the prompt selected if it is not in the catalog.
+        select.value = activeConnectionId;
+    } else {
+        select.value = connections[0]?.id || '';
+    }
+
+    if (connectBtn) connectBtn.disabled = !select.value;
+    window.refreshCustomSelect?.(select);
+}
+
 async function loadSavedConnections() {
     const select = document.getElementById('savedConnectionSelect');
     const connectBtn = document.getElementById('connectSavedBtn');
@@ -71,6 +123,7 @@ async function loadSavedConnections() {
     try {
         const catalog = await ExtraHopAPI.listSavedConnections();
         const connections = Array.isArray(catalog.connections) ? catalog.connections : [];
+        savedConnectionCatalog = connections;
         select.replaceChildren();
 
         if (connections.length === 0) {
@@ -79,6 +132,12 @@ async function loadSavedConnections() {
             option.textContent = 'No saved connections';
             select.appendChild(option);
         } else {
+            const prompt = document.createElement('option');
+            prompt.value = '';
+            prompt.textContent = 'Choose a saved connection';
+            prompt.disabled = true;
+            select.appendChild(prompt);
+
             for (const group of groupSavedConnections(connections)) {
                 const parent = group.label
                     ? Object.assign(document.createElement('optgroup'), { label: group.label })
@@ -88,6 +147,7 @@ async function loadSavedConnections() {
                     option.value = connection.id;
                     option.textContent = connection.label;
                     option.dataset.deploymentType = connection.type;
+                    option.dataset.connectionTarget = savedConnectionTarget(connection);
                     parent.appendChild(option);
                 }
                 if (group.label) select.appendChild(parent);
@@ -95,7 +155,7 @@ async function loadSavedConnections() {
         }
 
         select.disabled = connections.length === 0;
-        connectBtn.disabled = connections.length === 0;
+        syncSavedConnectionSelection(connections);
 
         const sourceParts = [];
         if (catalog.env?.connectionCount) {
@@ -119,11 +179,15 @@ async function loadSavedConnections() {
             }
         }
     } catch (error) {
+        savedConnectionCatalog = [];
         select.replaceChildren();
         const option = document.createElement('option');
         option.value = '';
         option.textContent = 'Saved connections unavailable';
         select.appendChild(option);
+        select.disabled = true;
+        connectBtn.disabled = true;
+        window.refreshCustomSelect?.(select);
         status.textContent = error.message;
     }
 }

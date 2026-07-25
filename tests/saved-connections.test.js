@@ -57,6 +57,92 @@ test('single-deployment saved connections are sorted without a group heading', (
     );
 });
 
+test('active connection matching selects the loaded Enterprise connection, not the first option', () => {
+    const context = vm.createContext({ console });
+    vm.runInContext(source('js/auth/auth-manager.js'), context);
+
+    const selectedId = vm.runInContext(`findActiveSavedConnectionId(
+        [
+            {
+                id: 'cloud-first',
+                type: '360',
+                label: 'extrahop-se',
+                tenant: 'extrahop-se'
+            },
+            {
+                id: 'enterprise-active',
+                type: 'enterprise',
+                label: 'extrahop.thomassmith.co',
+                host: 'extrahop.thomassmith.co'
+            }
+        ],
+        {
+            type: 'enterprise',
+            host: 'extrahop.thomassmith.co'
+        }
+    )`, context);
+
+    assert.equal(selectedId, 'enterprise-active');
+});
+
+test('saved connection picker synchronizes to the active connection and clears unrelated defaults', () => {
+    const select = { value: 'cloud-first' };
+    const connectButton = { disabled: false };
+    let refreshes = 0;
+    const state = {
+        connected: true,
+        apiConfig: {
+            type: 'enterprise',
+            host: 'extrahop.thomassmith.co'
+        }
+    };
+    const context = vm.createContext({
+        console,
+        state,
+        document: {
+            getElementById(id) {
+                if (id === 'savedConnectionSelect') return select;
+                if (id === 'connectSavedBtn') return connectButton;
+                return null;
+            }
+        },
+        window: {
+            refreshCustomSelect() {
+                refreshes++;
+            }
+        }
+    });
+    vm.runInContext(source('js/auth/auth-manager.js'), context);
+
+    vm.runInContext(`
+        savedConnectionCatalog = [
+            {
+                id: 'cloud-first',
+                type: '360',
+                label: 'extrahop-se',
+                tenant: 'extrahop-se'
+            },
+            {
+                id: 'enterprise-active',
+                type: 'enterprise',
+                label: 'extrahop.thomassmith.co',
+                host: 'extrahop.thomassmith.co'
+            }
+        ];
+        syncSavedConnectionSelection();
+    `, context);
+
+    assert.equal(select.value, 'enterprise-active');
+    assert.equal(connectButton.disabled, false);
+
+    state.apiConfig.host = 'sensor.example.test';
+    vm.runInContext('syncSavedConnectionSelection()', context);
+
+    assert.equal(select.value, '');
+    assert.equal(connectButton.disabled, true);
+    assert.equal(refreshes, 2);
+});
+
 test('saved connection authentication sends only the opaque id', async () => {
     const calls = [];
     const context = vm.createContext({

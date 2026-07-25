@@ -47,6 +47,7 @@ async function restoreBackendSession() {
         sessionStorage.setItem('eh_config', JSON.stringify(config));
         window.apiClient = api;
 
+        syncSavedConnectionSelection();
         showConnectedState();
         await openConnectedAppliances();
         const saveWarning = sessionStorage.getItem('eh_connection_save_warning');
@@ -121,6 +122,9 @@ function setupGlobalEventListeners() {
     // Connect button
     document.getElementById('connectBtn').addEventListener('click', handleConnect);
     document.getElementById('connectSavedBtn').addEventListener('click', handleSavedConnect);
+    document.getElementById('savedConnectionSelect').addEventListener('change', event => {
+        document.getElementById('connectSavedBtn').disabled = !event.target.value;
+    });
     document.getElementById('addConnectionBtn').addEventListener('click', () => {
         showNewConnectionForm(true);
     });
