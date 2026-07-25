@@ -283,6 +283,16 @@ class SystemHealthPdfProjectionTests(unittest.TestCase):
         self.assertEqual(row["standard_capacity"], 3800)
         self.assertEqual(main.system_health_pdf_cycle_label(report), "1sec")
 
+    def test_pdf_counts_slow_write_packet_drops_as_capture_loss(self):
+        summary = main.system_health_pdf_summary([], {}, [{
+            "packet_drops": 0,
+            "slow_write_drops": 4,
+            "interface_drops": 0,
+            "secret_drops": 0,
+        }])
+
+        self.assertIn("<span>PCAP Loss</span><b>1</b>", summary)
+
 
 if __name__ == "__main__":
     unittest.main()

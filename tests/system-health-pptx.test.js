@@ -357,4 +357,250 @@ test('PowerPoint adds one consolidated Packetstore health slide instead of per-m
     assert.equal(packetstoreSlides.length, 1);
     assert.equal(packetstoreSlides[0].tables.length, 1);
     assert.equal(packetstoreSlides[0].tables[0].rows.length, 2);
+    assert.equal(packetstoreSlides[0].tables[0].options.valign, 'middle');
+});
+
+/* --------------------------------------------------------- packetstores */
+
+function packetstoreRow(overrides = {}) {
+    return {
+        id: 'trace', name: 'Packetstore 1', appliance_role: 'packetstore',
+        lookbackLatestSec: 172800, lookbackMinSec: 86400,
+        packetsTotal: 1000, packetDropsTotal: 0, packetDropRatio: 0,
+        slowWriteDropsTotal: 0, interfaceDropsTotal: 0,
+        secretsTotal: 100, secretDropsTotal: 0, secretDropRatio: 0,
+        inputLoadPeak: 20, compressionLoadPeak: 12, diskWriteLoadPeak: 15,
+        ...overrides
+    };
+}
+
+test('capture loss reaches the verdict and the actions slide even when every sensor is healthy', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Healthy sensor' })],
+        packetstore_rows: [
+            packetstoreRow({ id: 'lossy', name: 'Lossy store', packetDropsTotal: 10, packetDropRatio: 0.01 }),
+            packetstoreRow({ id: 'clean', name: 'Clean store' })
+        ]
+    });
+
+    assert.equal(model.overview.packetstores_with_loss, 1);
+    // The sensor half of the verdict is unchanged; the packetstore clause is
+    // appended so the deck never reads as an all-clear while evidence is lost.
+    assert.match(model.verdict, /All 1 sensors are reporting and within capacity thresholds/);
+    assert.match(model.verdict, /1 packetstore of 2 dropped capture data/);
+    assert.match(model.recommendations.join(' '), /Investigate capture loss on 1 of 2 packetstores/);
+});
+
+test('packetstore processing pressure is reported only when no capture was lost', () => {
+    const loaded = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Healthy sensor' })],
+        packetstore_rows: [packetstoreRow({ id: 'hot', name: 'Hot store', diskWriteLoadPeak: 88 })]
+    });
+    assert.equal(loaded.overview.packetstores_loaded, 1);
+    assert.match(loaded.verdict, /peaked at or above 80% processing load without losing capture data/);
+    assert.match(loaded.recommendations.join(' '), /Confirm headroom on 1 packetstore peaking at or above 80%/);
+
+    const loadedPptx = pptxApi.createPresentation(loaded, FakePptx);
+    const loadedActions = loadedPptx._slides.find(slide => slide.texts.some(item => item.text === 'Recommended next steps'));
+    assert.equal(loadedActions.shapes.find(shape => shape.type === 'ellipse').options.fill.color, 'F05918');
+
+    // Loss outranks load: a store doing both gets the loss language only, so the
+    // reader is never given two competing calls to action for one appliance.
+    const both = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Healthy sensor' })],
+        packetstore_rows: [packetstoreRow({
+            id: 'hot', name: 'Hot store', diskWriteLoadPeak: 88, packetDropsTotal: 5, packetDropRatio: 0.005
+        })]
+    });
+    assert.doesNotMatch(both.recommendations.join(' '), /Confirm headroom/);
+    assert.match(both.recommendations.join(' '), /Investigate capture loss/);
+});
+
+test('a clean packetstore fleet is stated rather than left silent', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Healthy sensor' })],
+        packetstore_rows: [packetstoreRow()]
+    });
+    assert.match(model.verdict, /All 1 packetstore captured without loss/);
+});
+
+test('all-in-one appliances are counted as both sensor and packetstore without double-counting models', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [
+            sensorRow({ id: 'aio', name: 'All in one', license_platform: 'EDA 6320' }),
+            sensorRow({ id: 'plain', name: 'Packet sensor', license_platform: 'EDA 8320' })
+        ],
+        packetstore_rows: [
+            packetstoreRow({ id: 'aio', name: 'All in one', appliance_role: 'all_in_one', license_platform: 'EDA 6320' }),
+            packetstoreRow({ id: 'trace', name: 'Dedicated store', license_platform: 'ETA 8250' })
+        ]
+    });
+
+    assert.equal(model.overview.sensors, 2);
+    assert.equal(model.overview.packetstores, 2);
+    assert.equal(model.overview.packetstores_all_in_one, 1);
+    assert.equal(model.overview.packetstores_dedicated, 1);
+    // Fleet composition counts three physical appliances, not four: the
+    // all-in-one is already present as a sensor.
+    const counts = Object.fromEntries(model.overview.model_counts);
+    assert.deepEqual(counts, { 'EDA 6320': 1, 'EDA 8320': 1, 'ETA 8250': 1 });
+
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet health at a glance'));
+    const overviewText = overviewSlide.texts.map(item => item.text).join(' | ');
+    assert.match(overviewText, /Packetstores losing data/);
+    assert.match(overviewText, /1 dedicated · 1 all-in-one/);
+    assert.match(overviewText, /2 sensors · 2 packetstores/);
+});
+
+test('the three packetstore charts are drawn as native shapes and label their own scale', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        packetstore_rows: [
+            packetstoreRow({ id: 'a', name: 'Store A', packetDropsTotal: 10, packetDropRatio: 0.01 }),
+            packetstoreRow({ id: 'b', name: 'Store B', appliance_role: 'all_in_one' })
+        ]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const titleOf = title => pptx._slides.find(slide => slide.texts.some(item => item.text === title));
+
+    ['Packetstore retention', 'Capture and secret fidelity', 'Packetstore processing load']
+        .forEach(title => assert.ok(titleOf(title), `missing chart slide: ${title}`));
+
+    // Charts stay vector: bars are shapes, never images.
+    const retention = titleOf('Packetstore retention');
+    assert.ok(retention.shapes.filter(shape => shape.type === 'rect').length >= 2);
+    assert.equal((retention.images || []).length, 0);
+    // Retention is reported, not scored, so the slide says so out loud.
+    assert.match(retention.texts.map(item => item.text).join(' '), /no customer retention target is collected/);
+
+    // Load is the only packetstore chart with a capacity, so it is the only one
+    // that draws the 80% guide.
+    const load = titleOf('Packetstore processing load');
+    assert.ok(load.texts.some(item => item.text === '80%'));
+    assert.ok(!retention.texts.some(item => item.text === '80%'));
+
+    // Both roles are labeled on the chart itself, matching the health table.
+    const loadText = load.texts.map(item => item.text).join(' | ');
+    assert.match(loadText, /All in One/);
+    assert.match(loadText, /Packetstore/);
+});
+
+test('small drop rates never round to zero, and the highlight follows the actual loss', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        packetstore_rows: [
+            // Loses 0.017% of packets: rounding this to 0% beside a loss warning
+            // would read as a contradiction.
+            packetstoreRow({ id: 'tiny', name: 'Tiny loss', packetDropsTotal: 1400000, packetDropRatio: 0.00017 }),
+            // Loses only interface frames, so the ratio line is honestly 0%.
+            packetstoreRow({ id: 'frames', name: 'Frame loss', interfaceDropsTotal: 3100 })
+        ]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Capture and secret fidelity'));
+    const find = pattern => slide.texts.find(item => pattern.test(item.text));
+
+    assert.match(find(/^packets/).text, /packets 0\.02%/);
+    assert.equal(find(/packets 0\.02%/).options.color, 'EC0089');
+
+    // The frame-loss store keeps a plain 0% ratio line and moves the highlight
+    // to the counter line that carries the loss.
+    const ratioLine = slide.texts.filter(item => /^packets 0% /.test(item.text))[0];
+    assert.ok(!ratioLine.options.bold);
+    const noteLine = slide.texts.find(item => /interface 3,100/.test(item.text));
+    assert.equal(noteLine.options.color, 'EC0089');
+
+    const healthTable = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore health'));
+    const fidelityCells = healthTable.tables[0].rows.slice(1).map(row => row[2].text);
+    assert.ok(fidelityCells.some(text => /Packets 0\.02%/.test(text)));
+
+    const actions = pptx._slides.find(s => s.texts.some(item => item.text === 'Recommended next steps'));
+    assert.equal(actions.shapes.find(shape => shape.type === 'ellipse').options.fill.color, 'EC0089');
+});
+
+test('counter-only loss remains visible when fidelity denominators are unavailable', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        packetstore_rows: [packetstoreRow({
+            id: 'counter-only', name: 'Counter only loss',
+            packetDropRatio: null, secretDropRatio: null,
+            packetsTotal: null, secretsTotal: null,
+            interfaceDropsTotal: 42
+        })]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Capture and secret fidelity'));
+
+    assert.ok(slide, 'counter-only loss should create a fidelity chart');
+    assert.match(slide.texts.map(item => item.text).join(' | '), /interface 42/);
+    assert.match(slide.texts.map(item => item.text).join(' | '), /packets — · secrets —/);
+});
+
+test('measured zero packetstore values do not draw non-zero colored bars', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        packetstore_rows: [packetstoreRow({
+            lookbackLatestSec: 0, lookbackMinSec: 0,
+            inputLoadPeak: 0, compressionLoadPeak: 0, diskWriteLoadPeak: 0
+        })]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const chartTitles = ['Packetstore retention', 'Capture and secret fidelity', 'Packetstore processing load'];
+
+    chartTitles.forEach(title => {
+        const slide = pptx._slides.find(s => s.texts.some(item => item.text === title));
+        const coloredBars = slide.shapes.filter(shape => shape.type === 'rect'
+            && ['00AAEF', 'F05918', 'EC0089'].includes(shape.options.fill && shape.options.fill.color));
+        assert.equal(coloredBars.length, 0, `${title} drew a colored bar for a measured zero`);
+    });
+});
+
+test('sensor-only fleets keep the original four-up overview and gain no packetstore slides', () => {
+    const model = pptxApi.buildDeckModel({ meta, rows: [sensorRow({ id: 'sensor', name: 'Sensor' })] });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const allText = presentationText(pptx);
+
+    assert.equal(model.overview.packetstores, 0);
+    assert.doesNotMatch(allText, /Packetstore|packetstore/);
+    assert.match(model.verdict, /^All 1 sensors are reporting and within capacity thresholds\.$/);
+});
+
+test('the cover carries the gradient alone, with no ring texture drawn over it', () => {
+    let ellipseCalls = 0;
+    const gradientContext = {
+        fillStyle: '',
+        createLinearGradient() { return { addColorStop() {} }; },
+        fillRect() {},
+        beginPath() {},
+        ellipse() { ellipseCalls += 1; },
+        stroke() {}
+    };
+    const gradientWindow = {};
+    vm.runInContext(source, vm.createContext({
+        window: gradientWindow,
+        console,
+        document: {
+            createElement: () => ({
+                getContext: () => gradientContext,
+                toDataURL: () => 'data:image/png;base64,gradient'
+            })
+        }
+    }));
+    const gradientApi = gradientWindow.SystemHealthPptx;
+    const model = gradientApi.buildDeckModel({ meta, rows: [sensorRow({ id: 'sensor', name: 'Sensor' })] });
+    const pptx = gradientApi.createPresentation(model, FakePptx);
+    const cover = pptx._slides[0];
+    assert.equal(ellipseCalls, 0);
+    assert.equal(cover.shapes.filter(shape => shape.type === 'ellipse').length, 0);
+    assert.equal(cover.shapes.filter(shape => shape.type === 'roundRect').length, 1);
 });

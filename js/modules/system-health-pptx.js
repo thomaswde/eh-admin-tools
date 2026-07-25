@@ -29,6 +29,12 @@ const APPENDIX_ROWS_PER_SLIDE = 11;
 // caption states how many were held back and the appendix still lists them all.
 const CHART_ROWS_PER_SLIDE = 10;
 const CHART_PAGES_PER_METRIC = 3;
+// Packetstore rows carry up to three stacked bars, so they need a taller row
+// and fewer of them per slide than the single-bar capacity charts.
+const PACKETSTORE_CHART_ROWS_PER_SLIDE = 8;
+// Drawn as the guide line on every capacity chart and reused as the single
+// definition of "under pressure" so the deck never carries two conventions.
+const PROCESSING_LOAD_GUIDE = 0.8;
 let pptxGenPromise = null;
 
 function cleanText(value, maxLength = 240) {
@@ -281,11 +287,20 @@ function recommendationsFromFindings(findings, overview = {}) {
     if (overview.absent) {
         recommendations.push(`Restore connectivity for the ${formatInteger(overview.absent)} sensors that returned no data, then rerun the report to close the collection gap.`);
     }
+    // Capture loss outranks capacity pressure: a dropped packet cannot be
+    // recovered later, whereas a loaded sensor can still be rebalanced.
+    if (overview.packetstores_with_loss) {
+        recommendations.push(`Investigate capture loss on ${formatInteger(overview.packetstores_with_loss)} of ${formatInteger(overview.packetstores)} packetstores; compare offered load against rated capture throughput and check disk write performance before treating PCAP from this window as complete.`);
+    }
     if (has(/trigger drops/i)) {
         recommendations.push('Investigate sensors with trigger drops first; validate trigger load and execution behavior during the reported window.');
     }
     if (has(/packet rate|throughput|trigger load/i)) {
         recommendations.push('Review sustained capacity pressure against appliance sizing and expected traffic growth.');
+    }
+    if (!overview.packetstores_with_loss && overview.packetstores_loaded) {
+        const noun = overview.packetstores_loaded === 1 ? 'packetstore' : 'packetstores';
+        recommendations.push(`Confirm headroom on ${formatInteger(overview.packetstores_loaded)} ${noun} peaking at or above ${formatPercent(PROCESSING_LOAD_GUIDE)} processing load before adding capture volume or extending retention.`);
     }
     if (has(/advanced analysis|standard analysis|Discovery/i)) {
         recommendations.push('Rebalance analysis assignments and confirm licensed capacity before moving additional devices into higher analysis tiers.');
@@ -300,6 +315,41 @@ function recommendationsFromFindings(findings, overview = {}) {
         recommendations.push('Continue monitoring the same report window and aggregation cycle to identify meaningful trend changes.');
     }
     return recommendations.slice(0, 5);
+}
+
+/* ------------------------------------------------------------ packetstore */
+
+// An all-in-one is a packet sensor with the packetstore feature licensed, so it
+// is counted as both. Only `appliance_role === 'packetstore'` is dedicated.
+function isDedicatedPacketstore(row) {
+    return String(row && row.appliance_role || 'packetstore') === 'packetstore';
+}
+
+function packetstoreRoleLabel(row) {
+    return isDedicatedPacketstore(row) ? 'Packetstore' : 'All in One';
+}
+
+// Loss is a fact, not a threshold: any dropped packet, secret, or frame counts.
+// Retention deliberately does not appear here — without a customer retention
+// target, a short lookback is an observation and not a finding.
+function hasCaptureLoss(row) {
+    return (finiteNumber(row.packetDropsTotal) || 0) > 0
+        || (finiteNumber(row.interfaceDropsTotal) || 0) > 0
+        || (finiteNumber(row.secretDropsTotal) || 0) > 0
+        || (finiteNumber(row.slowWriteDropsTotal) || 0) > 0;
+}
+
+// 80% reuses the guide already drawn on every capacity chart rather than
+// introducing a second convention for "under pressure".
+function peakProcessingLoad(row) {
+    const loads = [row.inputLoadPeak, row.compressionLoadPeak, row.diskWriteLoadPeak]
+        .map(finiteNumber).filter(value => value !== null);
+    return loads.length ? Math.max(...loads) / 100 : null;
+}
+
+function hasProcessingPressure(row) {
+    const load = peakProcessingLoad(row);
+    return load !== null && load >= PROCESSING_LOAD_GUIDE;
 }
 
 function buildDeckModel(input) {
@@ -319,16 +369,22 @@ function buildDeckModel(input) {
             || b.worst_ratio - a.worst_ratio
             || a.name.localeCompare(b.name));
 
+    // Fleet composition counts every appliance once. An all-in-one already
+    // appears in `rows` as a sensor, so only dedicated packetstores are added.
     const modelCounts = {};
-    rows.forEach(row => {
+    const countModel = row => {
         const model = cleanText(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', 80);
         modelCounts[model] = (modelCounts[model] || 0) + 1;
-    });
+    };
+    rows.forEach(countModel);
+    packetstoreRows.filter(isDedicatedPacketstore).forEach(countModel);
+
     const totalDrops = rows.reduce((sum, row) => sum + Math.max(0, finiteNumber(row.triggerDropsTotal) || 0), 0);
     const offline = rows.filter(row => row.offline).length;
     const noAccess = rows.filter(row => !row.offline && row.data_access === false).length;
     const reporting = rows.length - absent.length;
     const atCapacity = findings.filter(item => item.at_capacity).length;
+    const allInOne = packetstoreRows.filter(row => !isDedicatedPacketstore(row)).length;
     const overview = {
         sensors: rows.length,
         reporting,
@@ -340,9 +396,10 @@ function buildDeckModel(input) {
         at_capacity: atCapacity,
         trigger_drops: totalDrops,
         packetstores: packetstoreRows.length,
-        packetstores_with_loss: packetstoreRows.filter(row => (finiteNumber(row.packetDropsTotal) || 0) > 0
-            || (finiteNumber(row.interfaceDropsTotal) || 0) > 0
-            || (finiteNumber(row.secretDropsTotal) || 0) > 0).length,
+        packetstores_all_in_one: allInOne,
+        packetstores_dedicated: packetstoreRows.length - allInOne,
+        packetstores_with_loss: packetstoreRows.filter(hasCaptureLoss).length,
+        packetstores_loaded: packetstoreRows.filter(hasProcessingPressure).length,
         model_counts: Object.entries(modelCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     };
     return {
@@ -387,9 +444,9 @@ function addPacketstoreSlides(model, assets) {
                 return number === null ? 'unavailable' : formatPercent(number / 100);
             };
             tableRows.push([
-                tableCell(`${cleanText(row.name || row.id, 42)}\n${row.appliance_role === 'all_in_one' ? 'All in One' : 'Packetstore'}`),
+                tableCell(`${cleanText(row.name || row.id, 42)}\n${packetstoreRoleLabel(row)}`),
                 tableCell(latest === null || minimum === null ? 'Unavailable' : `${(latest / 86400).toFixed(1)}d latest\n${(minimum / 86400).toFixed(1)}d minimum`),
-                tableCell(`Packets ${packetRatio === null ? 'unavailable' : formatPercent(packetRatio)} (${formatInteger(row.packetDropsTotal || 0)} dropped)\nSecrets ${secretRatio === null ? 'unavailable' : formatPercent(secretRatio)} (${formatInteger(row.secretDropsTotal || 0)} dropped)\nSlow-write ${formatInteger(row.slowWriteDropsTotal || 0)} · interface ${formatInteger(row.interfaceDropsTotal || 0)}`),
+                tableCell(`Packets ${packetRatio === null ? 'unavailable' : formatLossPercent(packetRatio)} (${formatInteger(row.packetDropsTotal || 0)} dropped)\nSecrets ${secretRatio === null ? 'unavailable' : formatLossPercent(secretRatio)} (${formatInteger(row.secretDropsTotal || 0)} dropped)\nSlow-write ${formatInteger(row.slowWriteDropsTotal || 0)} · interface ${formatInteger(row.interfaceDropsTotal || 0)}`),
                 tableCell(`Input ${loadLabel(row.inputLoadPeak)}\nCompress ${loadLabel(row.compressionLoadPeak)}\nWrite ${loadLabel(row.diskWriteLoadPeak)}`)
             ]);
         });
@@ -397,7 +454,7 @@ function addPacketstoreSlides(model, assets) {
             x: MARGIN, y: slide.contentTop + 0.08, w: 12.0, h: Math.min(5.45, 0.52 + rows.length * 0.62),
             colW: [2.35, 2.25, 4.25, 3.15], border: { color: pptColor(model.palette.grid), width: 0.7 },
             fill: pptColor(model.palette.bg), color: pptColor(model.palette.text), fontFace: FONT,
-            fontSize: 9.5, margin: 0.08, valign: 'mid', breakLine: false
+            fontSize: 9.5, margin: 0.08, valign: 'middle', breakLine: false
         });
         addNotes(slide, model, 'Packetstore cpc metrics. Counter values are report-window totals; lookback and processing loads are time-series summaries.');
     });
@@ -406,7 +463,15 @@ function addPacketstoreSlides(model, assets) {
 // One deterministic sentence naming the dominant condition. A reader who stops
 // after the second slide should still leave with the right conclusion.
 function verdictFor(overview) {
-    if (!overview.sensors) return 'No sensors were returned for this report window.';
+    const packetstores = packetstoreVerdictClause(overview);
+    if (!overview.sensors) {
+        const none = 'No sensors were returned for this report window.';
+        return packetstores ? `${none} ${packetstores}` : none;
+    }
+    return [sensorVerdict(overview), packetstores].filter(Boolean).join(' ');
+}
+
+function sensorVerdict(overview) {
     const absentShare = overview.absent / overview.sensors;
     if (absentShare >= 0.5) {
         return `${formatInteger(overview.absent)} of ${formatInteger(overview.sensors)} sensors returned no data. `
@@ -426,6 +491,22 @@ function verdictFor(overview) {
             + `${formatInteger(overview.absent)} returned no data.`;
     }
     return `All ${formatInteger(overview.sensors)} sensors are reporting and within capacity thresholds.`;
+}
+
+// Capture loss is evidence lost for good, so it is stated in the headline even
+// when every sensor is healthy — otherwise the verdict reads as an all-clear.
+function packetstoreVerdictClause(overview) {
+    if (!overview.packetstores) return '';
+    const stores = count => `${formatInteger(count)} ${count === 1 ? 'packetstore' : 'packetstores'}`;
+    if (overview.packetstores_with_loss) {
+        return `${stores(overview.packetstores_with_loss)} of ${formatInteger(overview.packetstores)} `
+            + 'dropped capture data in the same window.';
+    }
+    if (overview.packetstores_loaded) {
+        return `${stores(overview.packetstores_loaded)} peaked at or above `
+            + `${formatPercent(PROCESSING_LOAD_GUIDE)} processing load without losing capture data.`;
+    }
+    return `All ${stores(overview.packetstores)} captured without loss.`;
 }
 
 function severityRank(value) {
@@ -459,6 +540,18 @@ function formatInteger(value) {
 function formatPercent(value) {
     const ratio = finiteNumber(value);
     return ratio === null ? '—' : `${Math.round(ratio * 100)}%`;
+}
+
+// Drop rates are routinely a small fraction of a percent. Rounding those to
+// "0%" next to a loss warning would read as a contradiction, so any non-zero
+// loss keeps enough precision to stay non-zero.
+function formatLossPercent(value) {
+    const ratio = finiteNumber(value);
+    if (ratio === null) return '—';
+    if (ratio === 0) return '0%';
+    if (ratio < 0.0001) return '<0.01%';
+    if (ratio < 0.01) return `${(ratio * 100).toFixed(2)}%`;
+    return formatPercent(ratio);
 }
 
 function formatRate(value) {
@@ -548,19 +641,6 @@ function gradientBackground(width = 2000, height = 1125) {
     gradient.addColorStop(1, BRAND_PLUM);
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
-    // Concentric rings echo the lozenge at scale. Kept near-invisible: the
-    // gradient is the identifying mark, this is only texture.
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    for (let index = 0; index < 16; index += 1) {
-        ctx.globalAlpha = Math.max(0, 0.10 - index * 0.006);
-        ctx.beginPath();
-        ctx.ellipse(width * 0.80, height * 0.42,
-            width * 0.055 + index * width * 0.028,
-            (width * 0.055 + index * width * 0.028) * 0.78, 0, 0, Math.PI * 2);
-        ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
     try {
         return canvas.toDataURL('image/png');
     } catch (error) {
@@ -683,8 +763,12 @@ function addCover(model, assets) {
 function addOverview(model, assets) {
     const palette = model.palette;
     const overview = model.overview;
-    const subtitle = `${formatInteger(overview.sensors)} sensors · ${model.options.window_label} · `
-        + `Peak ${model.meta.cycle_label || 'reported-cycle'} averages`;
+    const subtitle = [
+        `${formatInteger(overview.sensors)} sensors`,
+        overview.packetstores ? `${formatInteger(overview.packetstores)} packetstores` : '',
+        model.options.window_label,
+        `Peak ${model.meta.cycle_label || 'reported-cycle'} averages`
+    ].filter(Boolean).join(' · ');
     const slide = addContentSlide(model, 'Fleet health at a glance', subtitle, assets);
 
     slide.addText(model.verdict, {
@@ -730,28 +814,46 @@ function addOverview(model, assets) {
         line: { color: pptColor(palette.grid), width: 0.75 }
     });
 
+    // The packetstore tile only appears when packetstores were collected, so a
+    // sensor-only fleet keeps the original four-up layout untouched.
     const stats = [
         [formatInteger(overview.sensors), 'Sensors in fleet', 'returned by the appliance API', palette.text],
         [formatInteger(overview.reporting), 'Reporting data', `${formatPercent(overview.sensors ? overview.reporting / overview.sensors : 0)} of the fleet`, palette.text],
         [formatInteger(overview.at_capacity), 'At or over capacity', 'across all measured limits', overview.at_capacity ? palette.high : palette.text],
         [formatCompact(overview.trigger_drops), 'Trigger drops', 'total across the window', overview.trigger_drops ? palette.high : palette.text]
     ];
+    if (overview.packetstores) {
+        // The note names the split because an all-in-one is counted in both the
+        // sensor tile and this one; a reader must not see that as double-count.
+        const composition = [
+            overview.packetstores_dedicated ? `${formatInteger(overview.packetstores_dedicated)} dedicated` : '',
+            overview.packetstores_all_in_one ? `${formatInteger(overview.packetstores_all_in_one)} all-in-one` : ''
+        ].filter(Boolean).join(' · ');
+        stats.push([
+            formatInteger(overview.packetstores_with_loss),
+            'Packetstores losing data',
+            `of ${formatInteger(overview.packetstores)} stores · ${composition}`,
+            overview.packetstores_with_loss ? palette.high : palette.text
+        ]);
+    }
+    const statPitch = (SLIDE_WIDTH - MARGIN * 2) / stats.length;
     stats.forEach(([value, label, note, color], index) => {
-        const statX = MARGIN + index * 3.06;
+        const statX = MARGIN + index * statPitch;
+        const statWidth = statPitch - 0.26;
         slide.addText(value, {
-            x: statX, y: 3.52, w: 2.8, h: 0.62, fontFace: FONT, fontSize: 38,
+            x: statX, y: 3.52, w: statWidth, h: 0.62, fontFace: FONT, fontSize: 38,
             bold: true, color: pptColor(color), margin: 0, fit: 'shrink'
         });
         slide.addText(label, {
-            x: statX, y: 4.22, w: 2.8, h: 0.22, fontFace: FONT, fontSize: 11.5,
-            bold: true, color: pptColor(palette.text), margin: 0
+            x: statX, y: 4.22, w: statWidth, h: 0.22, fontFace: FONT, fontSize: 11.5,
+            bold: true, color: pptColor(palette.text), margin: 0, fit: 'shrink'
         });
         slide.addText(note, {
-            x: statX, y: 4.48, w: 2.8, h: 0.2, fontFace: FONT, fontSize: 9.5,
-            color: pptColor(palette.muted), margin: 0
+            x: statX, y: 4.48, w: statWidth, h: 0.32, fontFace: FONT, fontSize: 9.5,
+            color: pptColor(palette.muted), margin: 0, fit: 'shrink'
         });
         slide.addShape(model.pptx.ShapeType.line, {
-            x: statX, y: 4.82, w: 0.62, h: 0,
+            x: statX, y: 4.86, w: 0.62, h: 0,
             line: { color: pptColor(color), width: 2 }
         });
     });
@@ -1115,6 +1217,233 @@ function clipName(value, limit = 30) {
     return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
 }
 
+/* --------------------------------------------------- packetstore charts */
+
+// The three packetstore charts share one renderer because they differ only in
+// how many bars a row carries and what the bar is measured against. Retention
+// is scaled to the longest lookback on the page, fidelity to the worst observed
+// drop rate, and load to a fixed 100% so it matches the capacity charts.
+function packetstoreChartSpecs(model) {
+    const cycle = model.meta.cycle_label || 'reported-cycle';
+    return [
+        {
+            key: 'retention',
+            title: 'Packetstore retention',
+            kicker: 'RETENTION',
+            subtitle: 'Latest estimated PCAP lookback · minimum observed in the window marked',
+            axis: 'LONGEST LOOKBACK ON PAGE',
+            // No customer retention target is collected, so a short lookback is
+            // reported as an observation and never colored as a finding.
+            series: [{ value: row => finiteNumber(row.lookbackLatestSec), color: palette => palette.low }],
+            marker: row => finiteNumber(row.lookbackMinSec),
+            scaleMax: entries => Math.max(...entries.map(entry => entry.values[0] || 0), 1),
+            label: row => {
+                const latest = finiteNumber(row.lookbackLatestSec);
+                const minimum = finiteNumber(row.lookbackMinSec);
+                if (latest === null) return 'unavailable';
+                return `${formatDays(latest)} latest${minimum === null ? '' : ` · ${formatDays(minimum)} min`}`;
+            },
+            sort: row => -(finiteNumber(row.lookbackLatestSec) || 0)
+        },
+        {
+            key: 'fidelity',
+            title: 'Capture and secret fidelity',
+            kicker: 'DATA LOSS',
+            subtitle: 'Share of offered packets and secrets that were dropped · totals for the window',
+            axis: 'WORST DROP RATE ON PAGE',
+            series: [
+                { value: row => finiteNumber(row.packetDropRatio), color: palette => palette.high },
+                { value: row => finiteNumber(row.secretDropRatio), color: palette => palette.mid }
+            ],
+            // A counter can prove loss even when the offered-total denominator
+            // is unavailable. Keep that row in the chart and show its counters
+            // instead of dropping the appliance along with its missing rate.
+            include: (row, values) => hasCaptureLoss(row) || values.some(value => value !== null),
+            scaleMax: entries => Math.max(
+                ...entries.flatMap(entry => entry.values.filter(value => value !== null && value > 0)),
+                Number.EPSILON
+            ),
+            label: row => `packets ${formatLossPercent(row.packetDropRatio)} · secrets ${formatLossPercent(row.secretDropRatio)}`,
+            note: row => `slow-write ${formatInteger(row.slowWriteDropsTotal || 0)} · interface ${formatInteger(row.interfaceDropsTotal || 0)}`,
+            // Alerting is split so the highlight always lands on the line that
+            // actually carries the loss — a store dropping only interface frames
+            // must not show bold red next to a 0% packet rate.
+            alert: row => (finiteNumber(row.packetDropRatio) || 0) > 0 || (finiteNumber(row.secretDropRatio) || 0) > 0,
+            alertNote: row => (finiteNumber(row.slowWriteDropsTotal) || 0) > 0
+                || (finiteNumber(row.interfaceDropsTotal) || 0) > 0,
+            // Counter-only loss sorts ahead of clean zero-rate rows, even when
+            // a missing denominator prevents calculating a comparable rate.
+            sort: row => -(hasCaptureLoss(row) ? 1 : 0)
+                - Math.max(finiteNumber(row.packetDropRatio) || 0, finiteNumber(row.secretDropRatio) || 0)
+        },
+        {
+            key: 'load',
+            title: 'Packetstore processing load',
+            kicker: 'HEADROOM',
+            subtitle: `Peak sampled ${cycle} input, header-compression, and disk-write CPU load · the three are separate and are not summed`,
+            axis: 'FULL LOAD',
+            guide: PROCESSING_LOAD_GUIDE,
+            series: [
+                { value: row => ratioOfPercent(row.inputLoadPeak), color: utilizationColor },
+                { value: row => ratioOfPercent(row.compressionLoadPeak), color: utilizationColor },
+                { value: row => ratioOfPercent(row.diskWriteLoadPeak), color: utilizationColor }
+            ],
+            scaleMax: () => 1,
+            label: row => `input ${formatPercent(ratioOfPercent(row.inputLoadPeak))} · compress ${formatPercent(ratioOfPercent(row.compressionLoadPeak))} · write ${formatPercent(ratioOfPercent(row.diskWriteLoadPeak))}`,
+            alert: hasProcessingPressure,
+            sort: row => -(peakProcessingLoad(row) || 0)
+        }
+    ];
+}
+
+function ratioOfPercent(value) {
+    const number = finiteNumber(value);
+    return number === null ? null : number / 100;
+}
+
+function utilizationColor(palette, ratio) {
+    return ratio >= 1 ? palette.high : ratio >= PROCESSING_LOAD_GUIDE ? palette.mid : palette.low;
+}
+
+function formatDays(seconds) {
+    const number = finiteNumber(seconds);
+    return number === null ? '—' : `${(number / 86400).toFixed(1)}d`;
+}
+
+function addPacketstoreChartSlides(model, assets) {
+    if (!model.packetstore_rows.length) return;
+    packetstoreChartSpecs(model).forEach(spec => {
+        const measured = model.packetstore_rows
+            .map(row => ({ row, values: spec.series.map(series => series.value(row)) }))
+            .filter(entry => spec.include
+                ? spec.include(entry.row, entry.values)
+                : entry.values.some(value => value !== null))
+            .sort((a, b) => spec.sort(a.row) - spec.sort(b.row)
+                || String(a.row.name || '').localeCompare(String(b.row.name || '')));
+        if (!measured.length) return;
+        const shown = measured.slice(0, PACKETSTORE_CHART_ROWS_PER_SLIDE * CHART_PAGES_PER_METRIC);
+        const pages = chunk(shown, PACKETSTORE_CHART_ROWS_PER_SLIDE);
+        pages.forEach((entries, index) => {
+            const suffix = pages.length > 1 ? ` · ${index + 1} of ${pages.length}` : '';
+            addPacketstoreChartSlide(model, assets, spec, entries, `${spec.title}${suffix}`, {
+                withheld: index === pages.length - 1 ? measured.length - shown.length : 0
+            });
+        });
+    });
+}
+
+function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
+    const palette = model.palette;
+    const slide = addContentSlide(model, title, spec.subtitle, assets, spec.kicker, palette.muted);
+    const plotLeft = 3.35;
+    const plotRight = 9.30;
+    const span = plotRight - plotLeft;
+    const top = 1.92;
+    const rowHeight = 0.56;
+    const bottom = top + rowHeight * entries.length;
+    const scaleMax = spec.scaleMax(entries) || 1;
+
+    if (spec.guide) {
+        const guideX = plotLeft + span * spec.guide;
+        slide.addShape(model.pptx.ShapeType.line, {
+            x: guideX, y: top - 0.06, w: 0, h: bottom + 0.02 - (top - 0.06),
+            line: { color: pptColor(palette.mid), width: 0.75, dashType: 'dash' }
+        });
+        slide.addText(formatPercent(spec.guide), {
+            x: guideX - 0.40, y: top - 0.28, w: 0.8, h: 0.18, fontFace: FONT, fontSize: 7.5,
+            bold: true, color: pptColor(palette.mid), margin: 0, align: 'center', charSpacing: 1
+        });
+    }
+    slide.addText(spec.axis, {
+        x: plotRight - 2.4, y: top - 0.28, w: 2.4, h: 0.18, fontFace: FONT, fontSize: 7.5,
+        bold: true, color: pptColor(palette.muted), margin: 0, align: 'right', charSpacing: 1
+    });
+
+    // Bars are stacked vertically inside the row and centered as a block, so a
+    // one-bar chart and a three-bar chart keep the same row rhythm.
+    const count = spec.series.length;
+    const barHeight = count === 1 ? 0.24 : count === 2 ? 0.16 : 0.11;
+    const barGap = 0.04;
+    const blockHeight = count * barHeight + (count - 1) * barGap;
+    let y = top;
+    entries.forEach(entry => {
+        const row = entry.row;
+        slide.addText(clipName(`${row.name || row.hostname || row.id}`), {
+            x: MARGIN, y: y + (rowHeight - 0.26) / 2, w: 2.45, h: 0.26, fontFace: FONT, fontSize: 10,
+            color: pptColor(palette.subtle), margin: 0, align: 'right', breakLine: false
+        });
+        slide.addText(packetstoreRoleLabel(row), {
+            x: MARGIN, y: y + (rowHeight - 0.26) / 2 + 0.18, w: 2.45, h: 0.16, fontFace: FONT, fontSize: 7.5,
+            color: pptColor(palette.muted), margin: 0, align: 'right', charSpacing: 0.8
+        });
+        let barY = y + (rowHeight - blockHeight) / 2;
+        entry.values.forEach((value, index) => {
+            slide.addShape(model.pptx.ShapeType.rect, {
+                x: plotLeft, y: barY, w: span, h: barHeight,
+                fill: { color: pptColor(palette.track) }, line: { type: 'none' }
+            });
+            // Zero is a measured value, but it must remain an empty track. The
+            // minimum width exists only to keep a genuinely non-zero value
+            // visible at presentation scale.
+            if (value !== null && value > 0) {
+                const ratio = Math.min(value / scaleMax, 1);
+                slide.addShape(model.pptx.ShapeType.rect, {
+                    x: plotLeft, y: barY, w: Math.max(span * ratio, 0.035), h: barHeight,
+                    fill: { color: pptColor(spec.series[index].color(palette, value)) },
+                    line: { type: 'none' }
+                });
+            }
+            barY += barHeight + barGap;
+        });
+        // Retention's minimum tick: how far the store trimmed back during the
+        // window, drawn against the same scale as the latest lookback.
+        const marker = spec.marker ? spec.marker(row) : null;
+        if (marker !== null && marker !== undefined) {
+            const markerX = plotLeft + span * Math.min(marker / scaleMax, 1);
+            slide.addShape(model.pptx.ShapeType.rect, {
+                x: markerX - 0.015, y: y + (rowHeight - blockHeight) / 2 - 0.04, w: 0.03, h: blockHeight + 0.08,
+                // Retention has no configured target and is not scored, so its
+                // observed-minimum tick stays neutral rather than implying an
+                // alert solely because the lookback changed.
+                fill: { color: pptColor(palette.muted) }, line: { type: 'none' }
+            });
+        }
+        const alert = spec.alert ? spec.alert(row) : false;
+        const note = spec.note ? spec.note(row) : '';
+        slide.addText(spec.label(row), {
+            x: plotRight + 0.22, y: y + (rowHeight - (note ? 0.44 : 0.26)) / 2, w: 3.15, h: 0.24,
+            fontFace: FONT, fontSize: 9.5, bold: alert,
+            color: pptColor(alert ? palette.high : palette.text), margin: 0, breakLine: false, fit: 'shrink'
+        });
+        if (note) {
+            const noteAlert = spec.alertNote ? spec.alertNote(row) : false;
+            slide.addText(note, {
+                x: plotRight + 0.22, y: y + (rowHeight - 0.44) / 2 + 0.22, w: 3.15, h: 0.20,
+                fontFace: FONT, fontSize: 8.5, bold: noteAlert,
+                color: pptColor(noteAlert ? palette.high : palette.muted),
+                margin: 0, breakLine: false, fit: 'shrink'
+            });
+        }
+        y += rowHeight;
+    });
+
+    slide.addShape(model.pptx.ShapeType.line, {
+        x: MARGIN, y: y + 0.20, w: SLIDE_WIDTH - MARGIN * 2, h: 0,
+        line: { color: pptColor(palette.grid), width: 0.75 }
+    });
+    const caption = spec.key === 'load'
+        ? 'Bars are scaled to full load; the three loads are measured separately.'
+        : `Bars are scaled to the widest value on this page, not to a rated capacity.${
+            spec.key === 'retention' ? ' Retention is reported, not scored: no customer retention target is collected.' : ''}`;
+    slide.addText([caption, page.withheld > 0
+        ? `${formatInteger(page.withheld)} lower-ranked packetstores continue in the Packetstore health table`
+        : ''].filter(Boolean).join(' · '), {
+        x: MARGIN, y: y + 0.34, w: SLIDE_WIDTH - MARGIN * 2, h: 0.22, fontFace: FONT, fontSize: 9.5,
+        color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
+    });
+    addNotes(slide, model, 'Packetstore cpc metrics. Counters are report-window totals; lookback and processing loads are time-series summaries.');
+}
+
 /* ---------------------------------------------------------------- actions */
 
 function addRecommendationSlide(model, assets) {
@@ -1143,8 +1472,8 @@ function addRecommendationSlide(model, assets) {
 
 function recommendationColor(recommendation, palette) {
     const text = String(recommendation || '');
-    if (/restore(?: appliance)? connectivity|data access|trigger drops/i.test(text)) return palette.high;
-    if (/capacity pressure|analysis assignments|licensed capacity|license|synchronization/i.test(text)) {
+    if (/restore(?: appliance)? connectivity|data access|trigger drops|capture loss/i.test(text)) return palette.high;
+    if (/capacity pressure|confirm headroom|analysis assignments|licensed capacity|license|synchronization/i.test(text)) {
         return palette.mid;
     }
     return palette.low;
@@ -1241,6 +1570,7 @@ function createPresentation(deckModel, PptxGenJS, assets = {}) {
     addRecommendationSlide(model, assets);
     addAttentionSlides(model, assets);
     addPacketstoreSlides(model, assets);
+    addPacketstoreChartSlides(model, assets);
     addChartSlides(model, assets);
     addAppendixSlides(model, assets);
     return pptx;

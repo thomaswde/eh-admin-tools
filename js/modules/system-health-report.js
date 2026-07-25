@@ -879,6 +879,13 @@ function systemHealthPacketstoreRows(report) {
     });
 }
 
+function systemHealthPacketstoreHasLoss(row) {
+    return (Number(row && row.packetDropsTotal) || 0) > 0
+        || (Number(row && row.slowWriteDropsTotal) || 0) > 0
+        || (Number(row && row.interfaceDropsTotal) || 0) > 0
+        || (Number(row && row.secretDropsTotal) || 0) > 0;
+}
+
 function metricSystemHealthPeak(report, metricName, id) {
     const metric = report.metrics ? report.metrics[metricName] : null;
     const value = metric && metric.summary && metric.summary.peak_values && metric.summary.peak_values[String(id)];
@@ -962,7 +969,7 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
     const triggerWatch = rows.filter(row => row.triggerUtilization !== null && row.triggerUtilization >= 0.8).length;
     const triggerDropSensors = rows.filter(row => row.triggerDropsTotal > 0).length;
     const discoverySensors = rows.filter(row => (row.analysis.discovery || 0) > 0).length;
-    const packetstoreLoss = packetstoreRows.filter(row => (row.packetDropsTotal || 0) > 0 || (row.interfaceDropsTotal || 0) > 0 || (row.secretDropsTotal || 0) > 0).length;
+    const packetstoreLoss = packetstoreRows.filter(systemHealthPacketstoreHasLoss).length;
     const cards = [
         ['Sensors', formatSystemHealthNumber(rows.length), 'Discover sensors returned'],
         ['Offline', formatSystemHealthNumber(offlineSensors), dataUnavailableSensors ? `${dataUnavailableSensors} also lack data access` : 'Appliance status is not online'],
@@ -972,7 +979,7 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
         ['Trigger Watch', formatSystemHealthNumber(triggerWatch), 'At 80%+ trigger cycle capacity'],
         ['Trigger Drops', formatSystemHealthNumber(triggerDropSensors), 'Sensors with dropped trigger executions'],
         ['PCAP Stores', formatSystemHealthNumber(packetstoreRows.length), 'AIO and dedicated Packetstore appliances'],
-        ['PCAP Loss', formatSystemHealthNumber(packetstoreLoss), 'Stores with packet, interface, or secret drops'],
+        ['PCAP Loss', formatSystemHealthNumber(packetstoreLoss), 'Stores with packet, slow-write, interface, or secret drops'],
         ['Discovery Overflow', formatSystemHealthNumber(discoverySensors), 'Sensors with Discovery devices']
     ];
 
@@ -1186,7 +1193,7 @@ function renderSystemHealthPacketstoreTable(rows) {
     const body = document.getElementById('systemHealthPacketstoreTableBody');
     if (!body) return;
     body.innerHTML = rows.map(row => {
-        const dropped = (row.packetDropsTotal || 0) > 0 || (row.interfaceDropsTotal || 0) > 0 || (row.secretDropsTotal || 0) > 0;
+        const dropped = systemHealthPacketstoreHasLoss(row);
         const hot = Math.max(row.inputLoadPeak || 0, row.compressionLoadPeak || 0, row.diskWriteLoadPeak || 0) >= 80;
         return `<tr class="${dropped || hot ? 'system-health-overflow-row' : ''}">
             <td>${escapeSystemHealthHtml(row.name || row.id)}</td>

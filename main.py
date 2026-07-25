@@ -845,7 +845,7 @@ def system_health_pdf_summary(rows: list[dict[str, Any]], report: dict[str, Any]
         ("Throughput Watch", f"{sum(1 for r in rows if ratio(r['throughput_gbps'], r['throughput_capacity']) >= 0.8):,}", "At 80%+ throughput"),
         ("Trigger Drops", f"{sum(1 for r in rows if r['trigger_drops'] > 0):,}", "Sensors with drops"),
         ("PCAP Stores", f"{len(packetstore_rows):,}", "AIO and Packetstore appliances"),
-        ("PCAP Loss", f"{sum(1 for r in packetstore_rows if (r.get('packet_drops') or 0) > 0 or (r.get('interface_drops') or 0) > 0 or (r.get('secret_drops') or 0) > 0):,}", "Stores with observed loss"),
+        ("PCAP Loss", f"{sum(1 for r in packetstore_rows if (r.get('packet_drops') or 0) > 0 or (r.get('slow_write_drops') or 0) > 0 or (r.get('interface_drops') or 0) > 0 or (r.get('secret_drops') or 0) > 0):,}", "Stores with observed loss"),
     ]
     return "".join(f"<div class='card'><span>{html.escape(label)}</span><b>{html.escape(value)}</b><small class='muted'>{html.escape(note)}</small></div>" for label, value, note in cards)
 

@@ -23,6 +23,7 @@ const csvApi = vm.runInContext(`({
     systemHealthUnifiedSummaryCsv,
     systemHealthRows,
     systemHealthPacketstoreRows,
+    systemHealthPacketstoreHasLoss,
     systemHealthSensorDetailCsv,
     systemHealthAnalysisModelPages,
     systemHealthCollectorNotes,
@@ -286,6 +287,21 @@ test('unified CSV round-trips dedicated Packetstore summaries without adding it 
     assert.equal(packetstores[0].packetDropRatio, 0.01);
     assert.equal(packetstores[0].secretDropRatio, 0.02);
     assert.equal(packetstores[0].diskWriteLoadPeak, 81);
+});
+
+test('slow-write packet drops count as Packetstore capture loss', () => {
+    assert.equal(csvApi.systemHealthPacketstoreHasLoss({
+        packetDropsTotal: 0,
+        slowWriteDropsTotal: 4,
+        interfaceDropsTotal: 0,
+        secretDropsTotal: 0
+    }), true);
+    assert.equal(csvApi.systemHealthPacketstoreHasLoss({
+        packetDropsTotal: 0,
+        slowWriteDropsTotal: 0,
+        interfaceDropsTotal: 0,
+        secretDropsTotal: 0
+    }), false);
 });
 
 test('load rejects legacy or incomplete CSVs instead of drawing misleading charts', () => {
