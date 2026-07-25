@@ -78,16 +78,11 @@ async function handleConnect() {
         window.apiClient = api;
         clearCredentialInputs();
 
-        showStatus('✓ Connected successfully', false);
-        document.getElementById('moduleSelection').style.display = 'block';
-        showConnectedState();
-        await openConnectedAppliances();
-        
-        connectBtn.textContent = 'Connected';
-        setTimeout(() => {
-            connectBtn.textContent = 'Reconnect';
-            connectBtn.disabled = false;
-        }, 2000);
+        // A successful manual connection may target a different ExtraHop
+        // environment. Reload before rendering so no module can reuse data,
+        // reports, charts, or in-flight work from the previous environment.
+        clearEnvironmentBoundContent();
+        return;
 
     } catch (error) {
         showStatus('✖ ' + error.message, true);

@@ -14,5 +14,13 @@ const state = {
     allUsers: []
 };
 
+function clearEnvironmentBoundContent() {
+    // Dynamically loaded modules keep appliance data in private in-memory state.
+    // Reloading is the only complete reset boundary, and the backend session
+    // cookie survives so initializeApp() can restore the new connection.
+    window.location.reload();
+}
+
 // Make state globally available
 window.state = state;
+window.clearEnvironmentBoundContent = clearEnvironmentBoundContent;

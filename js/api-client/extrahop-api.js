@@ -96,7 +96,12 @@ class ExtraHopAPI {
 
     static async backendFetch(url, options = {}) {
         try {
-            return await fetch(url, options);
+            return await fetch(url, {
+                ...options,
+                // Every ExtraHop environment is accessed through the same local
+                // proxy URLs, so cached GET responses must never cross sessions.
+                cache: 'no-store'
+            });
         } catch (cause) {
             const error = new Error(
                 'The local app service could not be reached. Keep the launcher terminal open and use the URL printed by start.sh; do not open index.html directly.'
