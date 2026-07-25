@@ -773,6 +773,7 @@
                             <button type="button" id="systemHealthExportCsvButton" class="btn" disabled>Export CSV</button>
                             <button type="button" id="systemHealthExportApiCsvButton" class="btn" disabled>Export All API Response Data as CSVs</button>
                             <button type="button" id="systemHealthExportPdfButton" class="btn" disabled>Export PDF</button>
+                            <button type="button" id="systemHealthExportPptxButton" class="btn" disabled>Export PowerPoint</button>
                             <input id="systemHealthCsvInput" type="file" accept=".csv,text/csv" class="hidden">
                         </div>
                         <p id="systemHealthCsvStatus" class="field-hint" style="margin-top: 10px;">Load or export one unified per-sensor summary CSV. The API-data export preserves the detailed multi-file export.</p>
@@ -1186,6 +1187,51 @@
 </div>
 
 <!-- =============================== MODALS =============================== -->
+
+<!-- System Health PowerPoint export -->
+<div id="systemHealthPptxModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="systemHealthPptxModalTitle">
+    <form id="systemHealthPptxForm" class="modal-content modal-wide">
+        <h2 id="systemHealthPptxModalTitle" class="modal-title">Export an editable System Health deck</h2>
+        <p class="modal-desc">The current chart theme will be used throughout the presentation. Every field below is optional; empty fields use report-derived defaults or are omitted.</p>
+
+        <div class="modal-body">
+            <div class="grid-2">
+                <div class="field">
+                    <label for="systemHealthPptxTitle">Presentation title</label>
+                    <input id="systemHealthPptxTitle" type="text" maxlength="100" placeholder="System Health Review">
+                    <span class="field-hint">Falls back to “System Health Review.”</span>
+                </div>
+                <div class="field">
+                    <label for="systemHealthPptxCustomer">Customer or account</label>
+                    <input id="systemHealthPptxCustomer" type="text" maxlength="120" placeholder="Uses the connected target when available">
+                    <span class="field-hint">Falls back to the current tenant or host.</span>
+                </div>
+                <div class="field">
+                    <label for="systemHealthPptxPreparedBy">Prepared by</label>
+                    <input id="systemHealthPptxPreparedBy" type="text" maxlength="120" placeholder="Optional presenter or team">
+                </div>
+                <div class="field">
+                    <label for="systemHealthPptxWindow">Reporting window label</label>
+                    <input id="systemHealthPptxWindow" type="text" maxlength="120" placeholder="Uses the report lookback">
+                    <span class="field-hint">The underlying report timestamps and cycle remain unchanged.</span>
+                </div>
+            </div>
+            <div class="field">
+                <label for="systemHealthPptxContext">Review context</label>
+                <textarea id="systemHealthPptxContext" rows="3" maxlength="320" placeholder="Optional purpose, audience, or discussion focus"></textarea>
+                <span class="field-hint">Appears on the title slide and remains editable in PowerPoint or Google Slides.</span>
+            </div>
+            <div class="notice">
+                Charts are embedded as high-resolution PNGs for visual portability. Titles, findings, recommendations, and appendix tables remain editable.
+            </div>
+        </div>
+
+        <div class="modal-foot">
+            <button type="button" id="systemHealthPptxCancel" class="btn">Cancel</button>
+            <button type="submit" id="systemHealthPptxConfirm" class="btn-primary">Export PowerPoint</button>
+        </div>
+    </form>
+</div>
 
 <!-- Connection error -->
 <div id="errorModal" class="modal">

@@ -96,8 +96,10 @@ The UI follows the operating system theme by default. The control in the top-rig
 between Light, Auto, and Dark, and the choice persists in `localStorage`.
 
 Charts in the System Health report are deliberately independent of the app theme. Their palette
-is set in the report's own Chart style panel so exported PNGs and PDFs look the same regardless
-of how the app is being viewed.
+is set in the report's own Chart style panel so exported PNGs, PDFs, and PowerPoint decks use the
+same resolved colors regardless of how the app is being viewed. PowerPoint export is generated
+in the browser: charts are portable high-resolution PNGs, while slide text and appendix tables
+remain editable.
 
 ## Styling
 

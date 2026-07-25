@@ -15,7 +15,7 @@ class ModuleLoader {
             'nodemap': 'nodemap.js'
         };
         this.moduleDependencies = {
-            'system-health': ['chart-theme.js', 'system-health-collection.js']
+            'system-health': ['chart-theme.js', 'system-health-collection.js', 'system-health-pptx.js']
         };
     }
 

@@ -48,16 +48,17 @@ test('concurrent module loads share one dependency and module script sequence', 
     ]);
 
     assert.deepEqual(results, [true, true]);
-    assert.equal(scripts.length, 3);
+    assert.equal(scripts.length, 4);
     assert.deepEqual(
         scripts.map(script => script.src.replace(/\?v=\d+$/, '')),
         [
             'js/modules/chart-theme.js',
             'js/modules/system-health-collection.js',
+            'js/modules/system-health-pptx.js',
             'js/modules/system-health-report.js'
         ]
     );
 
     assert.equal(await loader.loadModule('system-health'), true);
-    assert.equal(scripts.length, 3);
+    assert.equal(scripts.length, 4);
 });

@@ -34,10 +34,10 @@ APP_TREES = {
     "backend": {".py"},
     "css": {".css", ".woff2"},
     "js": {".js"},
-    "assets": {".svg"},
+    "assets": {".svg", ".png"},
 }
 
-LICENSE_TREE = ("licenses", {"", ".md"})
+LICENSE_TREE = ("licenses", {"", ".md", ".txt"})
 
 
 def sha256(path: Path) -> str:
@@ -100,12 +100,15 @@ def validate_package(package_root: Path) -> None:
         "app/backend/extrahop_client.py",
         "app/css/styles.css",
         "app/assets/eh-logo-black.svg",
+        "app/assets/eh-logo-color.png",
         "app/assets/eh-logo-white.svg",
+        "app/assets/eh-logo-white.png",
         "app/js/theme-init.js",
         "app/js/modules/chart-theme.js",
         "app/js/modules/system-health-collection.js",
         "app/js/vendor/chart.umd.min.js",
         "app/js/vendor/d3.min.js",
+        "app/js/vendor/pptxgen.bundle.js",
         "app/catalog.eh.json",
         "SHA256SUMS",
     ]

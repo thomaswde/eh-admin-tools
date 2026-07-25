@@ -1,6 +1,7 @@
 // System Health Report Module
 
 const SYSTEM_HEALTH_ROWS_PER_PAGE = 22;
+const SYSTEM_HEALTH_PPTX_ROWS_PER_CHART = 14;
 const SYSTEM_HEALTH_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_HEALTH_DEVICE_LIMIT = 5000;
 const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '1';
@@ -1316,7 +1317,8 @@ function setupSystemHealthCanvas(canvas, desiredHeight) {
     if (!canvas || !parent) return null;
     canvas.style.height = `${desiredHeight}px`;
     const width = Math.max(320, Math.round(parent.getBoundingClientRect().width || parent.clientWidth || 960));
-    const dpr = window.devicePixelRatio || 1;
+    const exportScale = Math.max(1, Number(canvas.dataset.systemHealthExportScale || 1));
+    const dpr = (window.devicePixelRatio || 1) * exportScale;
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(desiredHeight * dpr);
     canvas.style.width = `${width}px`;
@@ -1669,6 +1671,9 @@ function setupSystemHealthCsvControls() {
     const tableExportButton = document.getElementById('systemHealthExportTableCsvButton');
     const apiExportButton = document.getElementById('systemHealthExportApiCsvButton');
     const pdfButton = document.getElementById('systemHealthExportPdfButton');
+    const pptxButton = document.getElementById('systemHealthExportPptxButton');
+    const pptxForm = document.getElementById('systemHealthPptxForm');
+    const pptxCancel = document.getElementById('systemHealthPptxCancel');
     const input = document.getElementById('systemHealthCsvInput');
     if (loadButton && input) loadButton.addEventListener('click', () => input.click());
     if (input) input.addEventListener('change', loadSystemHealthCsvFiles);
@@ -1676,6 +1681,9 @@ function setupSystemHealthCsvControls() {
     if (tableExportButton) tableExportButton.addEventListener('click', exportSystemHealthSensorDetailCsv);
     if (apiExportButton) apiExportButton.addEventListener('click', exportSystemHealthApiCsvFiles);
     if (pdfButton) pdfButton.addEventListener('click', exportSystemHealthPdf);
+    if (pptxButton) pptxButton.addEventListener('click', openSystemHealthPptxDialog);
+    if (pptxForm) pptxForm.addEventListener('submit', exportSystemHealthPptx);
+    if (pptxCancel) pptxCancel.addEventListener('click', () => hideModal('systemHealthPptxModal'));
     updateSystemHealthCsvButtons();
 }
 
@@ -1684,6 +1692,7 @@ function updateSystemHealthCsvButtons() {
     const tableExportButton = document.getElementById('systemHealthExportTableCsvButton');
     const apiExportButton = document.getElementById('systemHealthExportApiCsvButton');
     const pdfButton = document.getElementById('systemHealthExportPdfButton');
+    const pptxButton = document.getElementById('systemHealthExportPptxButton');
     if (exportButton) exportButton.disabled = !systemHealthState.currentReport;
     if (tableExportButton) tableExportButton.disabled = !systemHealthState.currentReport;
     if (apiExportButton) {
@@ -1694,6 +1703,7 @@ function updateSystemHealthCsvButtons() {
             : '';
     }
     if (pdfButton) pdfButton.disabled = !systemHealthState.currentReport;
+    if (pptxButton) pptxButton.disabled = !systemHealthState.currentReport;
 }
 
 async function loadSystemHealthCsvFiles(event) {
@@ -2036,6 +2046,225 @@ function exportSystemHealthApiCsvFiles() {
     downloadSystemHealthCsv('capture_trigger_drops_summary.csv', systemHealthSummaryCsv(report, 'trigger_drops', appliancesById));
     downloadSystemHealthCsv('device_analysis_summary.csv', systemHealthDeviceAnalysisCsv(report, appliancesById));
     setSystemHealthCsvStatus('Exported all available System Health API response data and per-metric summaries as CSV files.');
+}
+
+function openSystemHealthPptxDialog() {
+    if (!systemHealthState.currentReport) return;
+    showModal('systemHealthPptxModal');
+    setTimeout(() => document.getElementById('systemHealthPptxTitle')?.focus(), 0);
+}
+
+function systemHealthPptxOptionsFromForm() {
+    return {
+        title: document.getElementById('systemHealthPptxTitle')?.value || '',
+        customer: document.getElementById('systemHealthPptxCustomer')?.value || '',
+        prepared_by: document.getElementById('systemHealthPptxPreparedBy')?.value || '',
+        window_label: document.getElementById('systemHealthPptxWindow')?.value || '',
+        context: document.getElementById('systemHealthPptxContext')?.value || ''
+    };
+}
+
+function systemHealthPptxTargetLabel(report) {
+    const target = report && report.target || {};
+    if (target.type === 'csv') return '';
+    if (target.tenant) return String(target.tenant);
+    if (target.host) return String(target.host);
+    if (target.name && target.name !== 'unified system health summary CSV') return String(target.name);
+    return '';
+}
+
+function systemHealthPptxMeta(report) {
+    return {
+        generated_at: report.generated_at || '',
+        lookback_days: report.window && report.window.lookback_days,
+        from_ms: report.window && report.window.from_ms,
+        until_ms: report.window && report.window.until_ms,
+        cycle_label: systemHealthReportCycleLabel(report),
+        target_label: systemHealthPptxTargetLabel(report),
+        source_type: report.source_type || ''
+    };
+}
+
+async function exportSystemHealthPptx(event) {
+    if (event) event.preventDefault();
+    const report = systemHealthState.currentReport;
+    if (!report) return;
+    if (!window.SystemHealthPptx || typeof window.SystemHealthPptx.exportDeck !== 'function') {
+        setSystemHealthCsvStatus('PowerPoint export module did not load.', true);
+        return;
+    }
+
+    const confirmButton = document.getElementById('systemHealthPptxConfirm');
+    const exportButton = document.getElementById('systemHealthExportPptxButton');
+    const originalConfirmText = confirmButton ? confirmButton.textContent : '';
+    if (confirmButton) {
+        confirmButton.disabled = true;
+        confirmButton.textContent = 'Building presentation…';
+    }
+    if (exportButton) exportButton.disabled = true;
+    hideModal('systemHealthPptxModal');
+    setSystemHealthCsvStatus('Rendering themed chart images for PowerPoint…');
+
+    try {
+        const rows = systemHealthRows(report);
+        const charts = captureSystemHealthPptxCharts(report, rows);
+        setSystemHealthCsvStatus('Building editable PowerPoint slides…');
+        const result = await window.SystemHealthPptx.exportDeck({
+            meta: systemHealthPptxMeta(report),
+            options: systemHealthPptxOptionsFromForm(),
+            rows,
+            charts,
+            palette: systemHealthStyleColors(),
+            collector_notes: systemHealthCollectorNotes(report)
+        });
+        setSystemHealthCsvStatus(`Exported ${result.filename}. Charts use the active theme; text and tables remain editable.`);
+    } catch (error) {
+        console.error('System Health PowerPoint export failed:', error);
+        setSystemHealthCsvStatus(error.message || 'PowerPoint export failed.', true);
+    } finally {
+        if (confirmButton) {
+            confirmButton.disabled = false;
+            confirmButton.textContent = originalConfirmText || 'Export PowerPoint';
+        }
+        if (exportButton) exportButton.disabled = !systemHealthState.currentReport;
+    }
+}
+
+function captureSystemHealthPptxCharts(report, rows) {
+    const container = document.createElement('div');
+    container.setAttribute('aria-hidden', 'true');
+    Object.assign(container.style, {
+        position: 'fixed',
+        left: '-20000px',
+        top: '0',
+        width: '1120px',
+        opacity: '0',
+        pointerEvents: 'none'
+    });
+    document.body.appendChild(container);
+    try {
+        const cycle = systemHealthReportCycleLabel(report);
+        const specs = [
+            {
+                key: 'packet',
+                title: 'Packet rate vs model capacity',
+                subtitle: `Peak ${cycle} average packet rate by sensor`,
+                valueKey: 'packetPeak',
+                capacityKey: 'packetCapacity',
+                label: 'Packet rate',
+                formatter: formatSystemHealthRate
+            },
+            {
+                key: 'throughput',
+                title: 'Throughput vs model capacity',
+                subtitle: `Peak ${cycle} average throughput by sensor`,
+                valueKey: 'throughputGbps',
+                capacityKey: 'throughputCapacity',
+                label: 'Throughput',
+                formatter: formatSystemHealthGbps
+            },
+            {
+                key: 'triggers',
+                title: 'Trigger cycles vs available capacity',
+                subtitle: `Maximum aligned ${cycle} trigger utilization; drops are totals for the report window`,
+                valueKey: 'triggerCyclesPeak',
+                capacityKey: 'triggerCyclesAvail',
+                label: 'Trigger cycles',
+                formatter: formatSystemHealthCycles,
+                alert: row => Number(row.triggerDropsTotal || 0) > 0,
+                indicator: row => Number(row.triggerDropsTotal || 0) > 0 ? 'drops detected' : ''
+            }
+        ];
+
+        const chartPages = [];
+        specs.forEach(spec => {
+            const modelPages = systemHealthMetricModelPages(rows, spec);
+            const pageDescriptors = systemHealthPptxPageDescriptors(modelPages);
+            pageDescriptors.forEach((descriptor, index) => {
+                const canvas = systemHealthPptxCanvas(container);
+                const meta = { ...descriptor.modelPage, rows: descriptor.rows };
+                drawSystemHealthUtilizationCanvas(canvas, descriptor.rows, spec, meta);
+                chartPages.push({
+                    key: spec.key,
+                    title: spec.title,
+                    subtitle: `${spec.subtitle} · ${descriptor.modelPage.model}`,
+                    caption: systemHealthPptxMetricCaption(descriptor.modelPage, spec),
+                    model: descriptor.modelPage.model,
+                    page_number: index + 1,
+                    page_count: pageDescriptors.length,
+                    image_data: canvas.toDataURL('image/png'),
+                    pixel_width: canvas.width,
+                    pixel_height: canvas.height
+                });
+                canvas.remove();
+            });
+        });
+
+        const analysisPages = systemHealthPptxPageDescriptors(systemHealthAnalysisModelPages(rows));
+        analysisPages.forEach((descriptor, index) => {
+            const canvas = systemHealthPptxCanvas(container);
+            const meta = { ...descriptor.modelPage, rows: descriptor.rows };
+            drawSystemHealthAnalysisCanvas(canvas, descriptor.rows, meta);
+            chartPages.push({
+                key: 'analysis',
+                title: 'Analysis tier pressure',
+                subtitle: `Advanced and Standard utilization by sensor; Discovery remains a distinct condition · ${descriptor.modelPage.model}`,
+                caption: systemHealthPptxAnalysisCaption(descriptor.modelPage),
+                model: descriptor.modelPage.model,
+                page_number: index + 1,
+                page_count: analysisPages.length,
+                image_data: canvas.toDataURL('image/png'),
+                pixel_width: canvas.width,
+                pixel_height: canvas.height
+            });
+            canvas.remove();
+        });
+        return chartPages;
+    } finally {
+        container.remove();
+    }
+}
+
+function systemHealthPptxCanvas(container) {
+    const canvas = document.createElement('canvas');
+    canvas.dataset.systemHealthExportScale = '2';
+    container.appendChild(canvas);
+    return canvas;
+}
+
+function systemHealthPptxPageDescriptors(modelPages) {
+    const pages = modelPages.length ? modelPages : [{ model: 'No data', rows: [] }];
+    return pages.flatMap(modelPage => {
+        const chunks = [];
+        const sourceRows = modelPage.rows || [];
+        for (let index = 0; index < sourceRows.length; index += SYSTEM_HEALTH_PPTX_ROWS_PER_CHART) {
+            chunks.push(sourceRows.slice(index, index + SYSTEM_HEALTH_PPTX_ROWS_PER_CHART));
+        }
+        if (!chunks.length) chunks.push([]);
+        return chunks.map(rows => ({ modelPage, rows }));
+    });
+}
+
+function systemHealthPptxMetricCaption(page, spec) {
+    const parts = [
+        `${(page.rows || []).length} ${(page.rows || []).length === 1 ? 'sensor' : 'sensors'}`,
+        page.capacity ? `${spec.label} capacity ${spec.formatter(page.capacity)}` : 'No catalog capacity match',
+        'Sorted by percent of model capacity'
+    ];
+    if (page.alertRows) parts.push(`${page.alertRows} with trigger drops`);
+    return parts.join(' · ');
+}
+
+function systemHealthPptxAnalysisCaption(page) {
+    const rows = page.rows || [];
+    const atAdvanced = rows.filter(row => row.advancedRatio >= 1).length;
+    const atStandard = rows.filter(row => row.standardRatio >= 1).length;
+    const discovery = rows.filter(row => Number(row.analysis && row.analysis.discovery || 0) > 0).length;
+    const parts = [`${rows.length} ${rows.length === 1 ? 'sensor' : 'sensors'}`, 'Sorted by total devices'];
+    if (atAdvanced) parts.push(`${atAdvanced} at Advanced capacity`);
+    if (atStandard) parts.push(`${atStandard} at Standard capacity`);
+    if (discovery) parts.push(`${discovery} with Discovery devices`);
+    return parts.join(' · ');
 }
 
 async function exportSystemHealthPdf() {
