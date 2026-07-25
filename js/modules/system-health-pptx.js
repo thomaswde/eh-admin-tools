@@ -1,9 +1,14 @@
 // System Health PowerPoint Export
 //
-// This module deliberately knows nothing about ExtraHop API response shapes or
-// chart rendering. The System Health report passes it a safe, normalized deck
-// model containing report metadata, display rows, resolved colors, and PNG
-// charts. PptxGenJS is loaded only when the user confirms an export.
+// This module deliberately knows nothing about ExtraHop API response shapes.
+// The System Health report passes it a safe, normalized deck model containing
+// report metadata, display rows, and resolved colors; every chart is drawn here
+// from those rows as native PowerPoint shapes, so the deck stays vector and
+// editable. PptxGenJS is loaded only when the user confirms an export.
+//
+// Deck shape is fixed, not proportional to fleet size. The body carries the
+// narrative at a constant length; sensors that returned no data collapse into a
+// counted roll-up and keep their per-sensor row in the appendix.
 
 (() => {
 
@@ -12,12 +17,18 @@ if (window.SystemHealthPptx) return;
 const PPTXGEN_URL = 'js/vendor/pptxgen.bundle.js?v=4.0.1';
 const SLIDE_WIDTH = 13.333;
 const SLIDE_HEIGHT = 7.5;
-const MARGIN = 0.62;
+const MARGIN = 0.7;
 const FONT = 'Arial';
 const BRAND_SAPPHIRE = '#261f63';
+const BRAND_PLUM = '#7f2854';
+const BRAND_LIME = '#daed43';
 const DEFAULT_TITLE = 'System Health Review';
-const ATTENTION_ROWS_PER_SLIDE = 10;
+const ATTENTION_ROWS_PER_SLIDE = 7;
 const APPENDIX_ROWS_PER_SLIDE = 11;
+// Charts show ranked sensors only. Anything past this is signal-free tail; the
+// caption states how many were held back and the appendix still lists them all.
+const CHART_ROWS_PER_SLIDE = 10;
+const CHART_PAGES_PER_METRIC = 3;
 let pptxGenPromise = null;
 
 function cleanText(value, maxLength = 240) {
@@ -72,11 +83,29 @@ function normalizedPalette(raw = {}) {
         palette[key] = validHex(raw[key]) ? String(raw[key]).toLowerCase() : fallback[key];
     });
     palette.transparent = !!raw.transparent;
+    // "Absent" marks a sensor that returned no data. It is deliberately not one
+    // of the severity ramp colors: missing data is not an alarm, and painting it
+    // like one is what made a mostly-offline fleet unreadable. Mixed toward the
+    // muted text color so it clears the track in both light and dark themes.
+    palette.absent = mixHex(palette.bg, palette.muted, 0.62);
     return palette;
 }
 
 function validHex(value) {
     return /^#[0-9a-f]{6}$/i.test(String(value || ''));
+}
+
+function parseHex(value) {
+    const raw = validHex(value) ? String(value).slice(1) : 'ffffff';
+    return [0, 2, 4].map(index => parseInt(raw.slice(index, index + 2), 16));
+}
+
+function mixHex(fromHex, toHex, weight) {
+    const from = parseHex(fromHex);
+    const to = parseHex(toHex);
+    const channel = index => Math.round(from[index] + (to[index] - from[index]) * weight)
+        .toString(16).padStart(2, '0');
+    return `#${channel(0)}${channel(1)}${channel(2)}`;
 }
 
 function sensorStatus(row) {
@@ -87,61 +116,113 @@ function sensorStatus(row) {
     return row.offline ? 'offline' : 'complete';
 }
 
+// A sensor that is offline, or online but refusing data access, has nothing
+// measurable to report. Those roll up to a single counted band rather than
+// repeating the same seven-clause sentence once per row.
+function isAbsent(row) {
+    return !!row.offline || row.data_access === false;
+}
+
+// Conditions are emitted in priority order. The first one becomes the row's
+// headline; the rest become supporting evidence on the same line. This is what
+// replaces the old semicolon-joined dump, where the one fact that mattered was
+// buried among six restatements of "offline".
 function findingForRow(row) {
-    const critical = [];
-    const warning = [];
-    const add = (list, text) => {
-        if (text && !list.includes(text)) list.push(text);
+    const conditions = [];
+    const add = (severity, label, detail) => {
+        if (!label || conditions.some(item => item.label === label)) return;
+        conditions.push({ severity, label, detail: cleanText(detail, 160) });
     };
 
-    if (row.offline) add(critical, 'Appliance is offline');
-    if (row.data_access === false) add(critical, 'Data access is unavailable');
+    if (row.data_access === false) add('CRITICAL', 'Data access unavailable', '');
+    if (row.offline) add('CRITICAL', 'Offline', '');
 
     const packetRatio = safeRatio(row.packetPeak, row.packetCapacity);
     const throughputRatio = safeRatio(row.throughputGbps, row.throughputCapacity);
     const triggerRatio = finiteNumber(row.triggerUtilization);
     const advancedRatio = safeRatio(row.analysis && row.analysis.advanced, row.advancedCapacity);
     const standardRatio = safeRatio(row.analysis && row.analysis.standard, row.standardCapacity);
-    const utilizationFindings = [
-        ['Packet rate', packetRatio],
-        ['Throughput', throughputRatio],
-        ['Trigger load', triggerRatio],
-        ['Advanced analysis', advancedRatio],
-        ['Standard analysis', standardRatio]
-    ];
-    utilizationFindings.forEach(([label, ratio]) => {
+    const analysis = row.analysis || {};
+
+    [
+        ['Advanced analysis', advancedRatio, tierValue(analysis.advanced, row.advancedCapacity) + ' devices'],
+        ['Standard analysis', standardRatio, tierValue(analysis.standard, row.standardCapacity) + ' devices']
+    ].forEach(([label, ratio, detail]) => {
         if (ratio === null) return;
-        if (ratio >= 1) add(critical, `${label} at ${Math.round(ratio * 100)}% of capacity`);
-        else if (ratio >= 0.8) add(warning, `${label} at ${Math.round(ratio * 100)}% of capacity`);
+        if (ratio >= 1) add('CRITICAL', `${label} full`, detail);
+        else if (ratio >= 0.8) add('WARNING', `${label} near capacity`, detail);
     });
 
     const drops = finiteNumber(row.triggerDropsTotal);
-    if (drops !== null && drops > 0) add(critical, `${formatInteger(drops)} trigger drops`);
-    const discovery = finiteNumber(row.analysis && row.analysis.discovery);
-    if (discovery !== null && discovery > 0) add(warning, `${formatInteger(discovery)} devices in Discovery`);
+    if (drops !== null && drops > 0) {
+        const load = triggerRatio === null
+            ? ''
+            : `trigger load peaked at ${formatPercent(triggerRatio)} of available cycles`;
+        add('CRITICAL', 'Trigger drops', [`${formatInteger(drops)} drops`, load].filter(Boolean).join(' · '));
+    }
+
+    [
+        ['Packet rate', packetRatio, formatRate(row.packetPeak), formatRate(row.packetCapacity)],
+        ['Throughput', throughputRatio, formatGbps(row.throughputGbps), formatGbps(row.throughputCapacity)],
+        ['Trigger load', triggerRatio, formatCompact(row.triggerCyclesPeak), formatCompact(row.triggerCyclesAvail)]
+    ].forEach(([label, ratio, used, capacity]) => {
+        if (ratio === null) return;
+        const detail = `${used} of ${capacity} · ${formatPercent(ratio)} of capacity`;
+        if (ratio >= 1) add('CRITICAL', `${label} at capacity`, detail);
+        else if (ratio >= 0.8) add('WARNING', `${label} elevated`, detail);
+    });
+
+    const discovery = finiteNumber(analysis.discovery);
+    if (discovery !== null && discovery > 0) {
+        add('WARNING', 'Devices in Discovery', `${formatInteger(discovery)} awaiting an analysis tier`);
+    }
 
     (row.health_conditions || []).forEach(condition => {
         if (condition && condition.type === 'offline' && row.offline) return;
         if (condition && condition.type === 'data_access' && row.data_access === false) return;
         const message = cleanText(condition && condition.message, 160);
         if (!message) return;
-        add(condition.status === 'failed' ? critical : warning, sentenceCase(message));
+        add(condition.status === 'failed' ? 'CRITICAL' : 'WARNING',
+            conditionLabel(condition), sentenceCase(message));
     });
 
+    // Collection gaps are reported as a single condition naming the affected
+    // statistics, not one condition per statistic.
     const collection = row.collectionStatus || {};
     const collectionLabels = {
-        pkts: 'Packet rate', bytes: 'Throughput', trigger_utilization: 'Trigger utilization',
-        trigger_drops: 'Trigger drops', device_analysis: 'Device analysis'
+        pkts: 'packet rate', bytes: 'throughput', trigger_utilization: 'trigger utilization',
+        trigger_drops: 'trigger drops', device_analysis: 'device analysis'
     };
-    Object.entries(collectionLabels).forEach(([key, label]) => {
-        const status = collection[key];
-        if (status && !['complete', 'zero_valued'].includes(status)) {
-            add(warning, `${label} data ${String(status).replace(/_/g, ' ')}`);
-        }
-    });
+    const gaps = Object.entries(collectionLabels)
+        .filter(([key]) => {
+            const status = collection[key];
+            return status && !['complete', 'zero_valued'].includes(status);
+        })
+        .map(([, label]) => label);
+    if (gaps.length) {
+        add('WARNING', 'Incomplete collection', `No data returned for ${joinList(gaps)}`);
+    }
 
-    const severity = critical.length ? 'CRITICAL' : warning.length ? 'WARNING' : 'OK';
-    const findings = critical.concat(warning);
+    const severity = conditions.some(item => item.severity === 'CRITICAL') ? 'CRITICAL'
+        : conditions.length ? 'WARNING' : 'OK';
+    const ordered = conditions.slice().sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+    const primary = ordered[0] || null;
+    // Evidence quantifies the headline and then *names* the other conditions
+    // rather than restating each one in full. Concatenating every detail is how
+    // the previous export produced a seven-clause sentence per row.
+    const others = ordered.slice(1);
+    const evidence = primary
+        ? [
+            primary.detail,
+            others.length
+                ? `also ${others.slice(0, 2).map(item => item.label.toLowerCase()).join(', ')}`
+                    + (others.length > 2 ? ` +${others.length - 2} more` : '')
+                : ''
+        ].filter(Boolean).join(' · ')
+        : '';
+    const findings = ordered.map(item => [item.label, item.detail].filter(Boolean).join(': '));
+    const atCapacity = [packetRatio, throughputRatio, triggerRatio, advancedRatio, standardRatio]
+        .some(ratio => ratio !== null && ratio >= 1);
     const worstRatio = Math.max(
         ...[packetRatio, throughputRatio, triggerRatio, advancedRatio, standardRatio]
             .filter(value => value !== null),
@@ -152,16 +233,34 @@ function findingForRow(row) {
         name: cleanText(row.name || row.hostname || row.id || 'Unknown sensor', 120),
         model: cleanText(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', 80),
         severity,
+        condition: primary ? primary.label : '',
+        evidence,
         findings,
         finding_text: findings.join('; '),
         worst_ratio: worstRatio,
+        at_capacity: atCapacity,
+        absent: isAbsent(row),
         row
     };
 }
 
-function recommendationsFromFindings(findings) {
+function conditionLabel(condition) {
+    const type = cleanText(condition && condition.type, 40).replace(/_/g, ' ');
+    return type ? sentenceCase(type) : 'Health condition';
+}
+
+function joinList(items) {
+    if (items.length <= 1) return items.join('');
+    if (items.length === 2) return `${items[0]} and ${items[1]}`;
+    return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+function recommendationsFromFindings(findings, overview = {}) {
     const recommendations = [];
     const has = pattern => findings.some(item => pattern.test(item.finding_text));
+    if (overview.absent) {
+        recommendations.push(`Restore connectivity for the ${formatInteger(overview.absent)} sensors that returned no data, then rerun the report to close the collection gap.`);
+    }
     if (has(/trigger drops/i)) {
         recommendations.push('Investigate sensors with trigger drops first; validate trigger load and execution behavior during the reported window.');
     }
@@ -171,7 +270,7 @@ function recommendationsFromFindings(findings) {
     if (has(/advanced analysis|standard analysis|Discovery/i)) {
         recommendations.push('Rebalance analysis assignments and confirm licensed capacity before moving additional devices into higher analysis tiers.');
     }
-    if (has(/offline|data access|data .*empty|data .*failed|data .*timed out/i)) {
+    if (!overview.absent && has(/incomplete collection|data access/i)) {
         recommendations.push('Restore appliance connectivity and data access, then rerun the report to close collection gaps.');
     }
     if (has(/license|synchronization/i)) {
@@ -187,22 +286,36 @@ function buildDeckModel(input) {
     const meta = { ...(input && input.meta || {}) };
     const options = resolveOptions(meta, input && input.options || {});
     const rows = Array.isArray(input && input.rows) ? input.rows.map(row => ({ ...row })) : [];
-    const findings = rows.map(findingForRow)
-        .filter(item => item.severity !== 'OK')
+    const allFindings = rows.map(findingForRow);
+
+    // Absent sensors leave the body narrative and become a counted band. They
+    // keep their full per-sensor row in the appendix, so nothing is dropped.
+    const absent = allFindings.filter(item => item.absent);
+    const findings = allFindings
+        .filter(item => !item.absent && item.severity !== 'OK')
         .sort((a, b) => severityRank(b.severity) - severityRank(a.severity)
             || b.worst_ratio - a.worst_ratio
             || a.name.localeCompare(b.name));
+
     const modelCounts = {};
     rows.forEach(row => {
         const model = cleanText(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', 80);
         modelCounts[model] = (modelCounts[model] || 0) + 1;
     });
     const totalDrops = rows.reduce((sum, row) => sum + Math.max(0, finiteNumber(row.triggerDropsTotal) || 0), 0);
+    const offline = rows.filter(row => row.offline).length;
+    const noAccess = rows.filter(row => !row.offline && row.data_access === false).length;
+    const reporting = rows.length - absent.length;
+    const atCapacity = findings.filter(item => item.at_capacity).length;
     const overview = {
         sensors: rows.length,
-        active: rows.filter(row => finiteNumber(row.packetPeak) !== null && Number(row.packetPeak) > 0).length,
-        offline: rows.filter(row => row.offline).length,
+        reporting,
+        healthy: Math.max(0, reporting - findings.length),
+        offline,
+        no_access: noAccess,
+        absent: absent.length,
         attention: findings.length,
+        at_capacity: atCapacity,
         trigger_drops: totalDrops,
         model_counts: Object.entries(modelCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     };
@@ -212,14 +325,40 @@ function buildDeckModel(input) {
         palette: normalizedPalette(input && input.palette),
         rows,
         findings,
+        absent,
         overview,
-        recommendations: recommendationsFromFindings(findings),
-        charts: Array.isArray(input && input.charts) ? input.charts : [],
+        verdict: verdictFor(overview),
+        recommendations: recommendationsFromFindings(findings, overview),
         collector_notes: Array.isArray(input && input.collector_notes)
             ? input.collector_notes.map(note => cleanText(note, 300)).filter(Boolean)
             : [],
         filename: deckFilename(meta, options)
     };
+}
+
+// One deterministic sentence naming the dominant condition. A reader who stops
+// after the second slide should still leave with the right conclusion.
+function verdictFor(overview) {
+    if (!overview.sensors) return 'No sensors were returned for this report window.';
+    const absentShare = overview.absent / overview.sensors;
+    if (absentShare >= 0.5) {
+        return `${formatInteger(overview.absent)} of ${formatInteger(overview.sensors)} sensors returned no data. `
+            + 'Capacity is not the constraint — reachability is.';
+    }
+    if (overview.at_capacity) {
+        return `${formatInteger(overview.at_capacity)} `
+            + `${overview.at_capacity === 1 ? 'sensor is' : 'sensors are'} at or over a capacity limit `
+            + 'and should be addressed before further devices are assigned.';
+    }
+    if (overview.attention) {
+        return `${formatInteger(overview.attention)} of ${formatInteger(overview.reporting)} reporting sensors `
+            + 'crossed a report threshold; none are at a hard capacity limit.';
+    }
+    if (overview.absent) {
+        return `All ${formatInteger(overview.reporting)} reporting sensors are within capacity. `
+            + `${formatInteger(overview.absent)} returned no data.`;
+    }
+    return `All ${formatInteger(overview.sensors)} sensors are reporting and within capacity thresholds.`;
 }
 
 function severityRank(value) {
@@ -326,185 +465,664 @@ function addLogo(slide, model, assets, x, y, width) {
     }
 }
 
+/* ---------------------------------------------------------------- chrome */
+
+// PptxGenJS has no gradient fill, so the brand Sapphire->Plum hero is painted
+// once to a canvas and reused as the cover background.
+function gradientBackground(width = 2000, height = 1125) {
+    if (typeof document === 'undefined' || !document.createElement) return '';
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext && canvas.getContext('2d');
+    if (!ctx) return '';
+    const gradient = ctx.createLinearGradient(0, 0, width, height);
+    gradient.addColorStop(0, BRAND_SAPPHIRE);
+    gradient.addColorStop(1, BRAND_PLUM);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+    // Concentric rings echo the lozenge at scale. Kept near-invisible: the
+    // gradient is the identifying mark, this is only texture.
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    for (let index = 0; index < 16; index += 1) {
+        ctx.globalAlpha = Math.max(0, 0.10 - index * 0.006);
+        ctx.beginPath();
+        ctx.ellipse(width * 0.80, height * 0.42,
+            width * 0.055 + index * width * 0.028,
+            (width * 0.055 + index * width * 0.028) * 0.78, 0, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    try {
+        return canvas.toDataURL('image/png');
+    } catch (error) {
+        return '';
+    }
+}
+
 function addFooter(slide, model, slideNumber) {
     const palette = model.palette;
     slide.addShape(model.pptx.ShapeType.line, {
-        x: MARGIN, y: 7.14, w: SLIDE_WIDTH - MARGIN * 2, h: 0,
+        x: MARGIN, y: 7.02, w: SLIDE_WIDTH - MARGIN * 2, h: 0,
         line: { color: pptColor(palette.grid), width: 0.7 }
     });
-    slide.addText(model.options.title, {
-        x: MARGIN, y: 7.19, w: 5.5, h: 0.16, fontFace: FONT, fontSize: 8,
+    slide.addText(`ExtraHop  ·  ${model.options.title}`, {
+        x: MARGIN, y: 7.11, w: 6.0, h: 0.18, fontFace: FONT, fontSize: 8,
         color: pptColor(palette.muted), margin: 0
     });
     slide.addText(String(slideNumber), {
-        x: 12.15, y: 7.19, w: 0.55, h: 0.16, fontFace: FONT, fontSize: 8,
+        x: 10.2, y: 7.11, w: 1.05, h: 0.18, fontFace: FONT, fontSize: 8,
         color: pptColor(palette.muted), margin: 0, align: 'right'
     });
 }
 
-function addContentSlide(model, title, subtitle, assets) {
+// Header carries text only; the logo sits bottom-right so the title has the
+// full measure. This mirrors the official ExtraHop body-slide layout.
+function addContentSlide(model, title, subtitle, assets, kicker = '', kickerColor = '') {
     const pptx = model.pptx;
     const palette = model.palette;
     const slide = pptx.addSlide();
     slide.background = { color: pptColor(palette.bg, 'FFFFFF') };
+    let y = 0.52;
+    if (kicker) {
+        slide.addText(String(kicker).toUpperCase(), {
+            x: MARGIN, y, w: 8.0, h: 0.2, fontFace: FONT, fontSize: 9,
+            bold: true, color: pptColor(kickerColor || palette.muted),
+            margin: 0, charSpacing: 1.6
+        });
+        y += 0.30;
+    }
     slide.addText(title, {
-        x: MARGIN, y: 0.34, w: 10.8, h: 0.46, fontFace: FONT, fontSize: 27,
+        x: MARGIN, y, w: 11.4, h: 0.46, fontFace: FONT, fontSize: 26,
         bold: true, color: pptColor(palette.text), margin: 0, breakLine: false,
         fit: 'shrink'
     });
     if (subtitle) {
         slide.addText(subtitle, {
-            x: MARGIN, y: 0.9, w: 11.3, h: 0.28, fontFace: FONT, fontSize: 12,
+            x: MARGIN, y: y + 0.50, w: 11.4, h: 0.26, fontFace: FONT, fontSize: 11.5,
             color: pptColor(palette.muted), margin: 0, fit: 'shrink'
         });
     }
-    addLogo(slide, model, assets, 11.45, 0.42, 1.25);
+    addLogo(slide, model, assets, 11.63, 7.06, 1.0);
     model.slideNumber += 1;
     addFooter(slide, model, model.slideNumber);
+    slide.contentTop = subtitle ? y + 0.92 : y + 0.72;
     return slide;
 }
 
+/* ---------------------------------------------------------------- cover */
+
 function addCover(model, assets) {
     const pptx = model.pptx;
-    const palette = model.palette;
     const slide = pptx.addSlide();
-    slide.background = { color: pptColor(palette.bg, 'FFFFFF') };
-    slide.addShape(pptx.ShapeType.rect, {
-        x: 0, y: 0, w: 0.18, h: SLIDE_HEIGHT,
-        line: { color: pptColor(palette.low), transparency: 100 },
-        fill: { color: pptColor(palette.low) }
+    const gradient = model.gradient;
+    if (gradient) {
+        slide.addImage({ data: gradient, x: 0, y: 0, w: SLIDE_WIDTH, h: SLIDE_HEIGHT });
+    } else {
+        slide.background = { color: pptColor(BRAND_SAPPHIRE) };
+    }
+    if (assets.whiteLogo) {
+        slide.addImage({ data: assets.whiteLogo, x: 0.86, y: 0.66, w: 1.95, h: 1.95 / 10.17 });
+    }
+
+    // Lozenge bleeding off the left edge — the brand's shape signature.
+    slide.addShape(pptx.ShapeType.roundRect, {
+        x: -1.30, y: 2.44, w: 9.15, h: 2.06, rectRadius: 1.03,
+        fill: { type: 'none' }, line: { color: 'FFFFFF', width: 0.9 }
     });
-    slide.addShape(pptx.ShapeType.rect, {
-        x: 0.18, y: 0, w: 0.18, h: SLIDE_HEIGHT,
-        line: { color: pptColor(palette.mid), transparency: 100 },
-        fill: { color: pptColor(palette.mid) }
-    });
-    slide.addShape(pptx.ShapeType.rect, {
-        x: 0.36, y: 0, w: 0.18, h: SLIDE_HEIGHT,
-        line: { color: pptColor(palette.high), transparency: 100 },
-        fill: { color: pptColor(palette.high) }
-    });
-    addLogo(slide, model, assets, 0.9, 0.64, 2.05);
     slide.addText(model.options.title, {
-        x: 0.9, y: 2.35, w: 10.9, h: 0.95, fontFace: FONT, fontSize: 44,
-        bold: true, color: pptColor(palette.text), margin: 0, fit: 'shrink'
+        x: 0.86, y: 2.78, w: 7.4, h: 0.62, fontFace: FONT, fontSize: 38,
+        bold: true, color: 'FFFFFF', margin: 0, fit: 'shrink'
     });
-    const subtitle = [model.options.customer, model.options.window_label].filter(Boolean).join('  |  ');
-    if (subtitle) {
-        slide.addText(subtitle, {
-            x: 0.92, y: 3.48, w: 10.8, h: 0.44, fontFace: FONT, fontSize: 19,
-            color: pptColor(palette.subtle), margin: 0, fit: 'shrink'
+    if (model.options.customer) {
+        slide.addText(model.options.customer, {
+            x: 0.88, y: 3.56, w: 7.0, h: 0.34, fontFace: FONT, fontSize: 17,
+            bold: true, color: pptColor(BRAND_LIME), margin: 0, fit: 'shrink'
         });
     }
     if (model.options.context) {
         slide.addText(model.options.context, {
-            x: 0.92, y: 4.26, w: 9.9, h: 0.9, fontFace: FONT, fontSize: 15,
-            color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
+            x: 0.88, y: 4.80, w: 8.2, h: 0.7, fontFace: FONT, fontSize: 12.5,
+            color: 'FFFFFF', transparency: 25, margin: 0, breakLine: false, fit: 'shrink'
         });
     }
-    if (model.options.prepared_by) {
-        slide.addText(`Prepared by ${model.options.prepared_by}`, {
-            x: 0.92, y: 6.46, w: 6.5, h: 0.3, fontFace: FONT, fontSize: 12,
-            color: pptColor(palette.muted), margin: 0
+
+    slide.addShape(pptx.ShapeType.line, {
+        x: 0.88, y: 6.10, w: 4.2, h: 0, line: { color: 'FFFFFF', width: 0.75 }
+    });
+    const meta = [
+        ['REPORT WINDOW', model.options.window_label],
+        ['PREPARED BY', model.options.prepared_by],
+        ['GENERATED', formatShortDate(model.meta.generated_at)]
+    ].filter(([, value]) => value);
+    meta.forEach(([label, value], index) => {
+        const x = 0.88 + index * 2.55;
+        slide.addText(label, {
+            x, y: 6.28, w: 2.4, h: 0.18, fontFace: FONT, fontSize: 8,
+            bold: true, color: 'FFFFFF', margin: 0, charSpacing: 1.4
         });
-    }
+        slide.addText(value, {
+            x, y: 6.52, w: 2.4, h: 0.22, fontFace: FONT, fontSize: 12,
+            color: 'FFFFFF', margin: 0, fit: 'shrink'
+        });
+    });
     model.slideNumber += 1;
     addNotes(slide, model, 'ExtraHop System Health report metadata supplied by the exporting user and application.');
 }
 
+/* ---------------------------------------------------------------- overview */
+
 function addOverview(model, assets) {
-    const subtitle = `Report window: ${model.options.window_label} · Peak ${model.meta.cycle_label || 'reported-cycle'} averages`;
-    const slide = addContentSlide(model, 'Fleet health at a glance', subtitle, assets);
     const palette = model.palette;
-    const stats = [
-        ['Sensors', model.overview.sensors, 'returned'],
-        ['Active', model.overview.active, 'seeing packets'],
-        ['Offline', model.overview.offline, 'appliances'],
-        ['Attention', model.overview.attention, 'sensors'],
-        ['Trigger drops', formatCompact(model.overview.trigger_drops), 'total in window']
-    ];
-    const statWidth = 2.35;
-    stats.forEach(([label, value, note], index) => {
-        const x = MARGIN + index * 2.47;
-        const color = (label === 'Attention' && model.overview.attention) || (label === 'Trigger drops' && model.overview.trigger_drops)
-            ? palette.high : palette.text;
-        slide.addText(String(value), {
-            x, y: 1.62, w: statWidth, h: 0.68, fontFace: FONT, fontSize: 38,
-            bold: true, color: pptColor(color), margin: 0, fit: 'shrink'
+    const overview = model.overview;
+    const subtitle = `${formatInteger(overview.sensors)} sensors · ${model.options.window_label} · `
+        + `Peak ${model.meta.cycle_label || 'reported-cycle'} averages`;
+    const slide = addContentSlide(model, 'Fleet health at a glance', subtitle, assets);
+
+    slide.addText(model.verdict, {
+        x: MARGIN, y: 1.52, w: SLIDE_WIDTH - MARGIN * 2, h: 0.32, fontFace: FONT,
+        fontSize: 15.5, bold: true, color: pptColor(palette.text), margin: 0,
+        breakLine: false, fit: 'shrink'
+    });
+
+    // Stacked fleet bar. Absent sensors are neutral, not red: an absence of
+    // data is a collection gap, not a capacity alarm.
+    const segments = [
+        ['Healthy', overview.healthy, palette.low],
+        ['Needs attention', overview.attention, palette.high],
+        ['No data returned', overview.absent, palette.absent]
+    ].filter(([, count]) => count > 0);
+    const total = segments.reduce((sum, [, count]) => sum + count, 0) || 1;
+    const barWidth = SLIDE_WIDTH - MARGIN * 2;
+    let x = MARGIN;
+    segments.forEach(([, count, color]) => {
+        const width = Math.max(barWidth * count / total, 0.22);
+        slide.addShape(model.pptx.ShapeType.rect, {
+            x, y: 2.12, w: Math.max(width - 0.035, 0.05), h: 0.34,
+            fill: { color: pptColor(color) }, line: { type: 'none' }
         });
-        slide.addText(label, {
-            x, y: 2.36, w: statWidth, h: 0.24, fontFace: FONT, fontSize: 12,
-            bold: true, color: pptColor(palette.subtle), margin: 0
+        x += width;
+    });
+    // Legend is evenly spaced rather than aligned to segment widths, so a
+    // two-sensor segment still gets a readable label.
+    segments.forEach(([label, count, color], index) => {
+        const legendX = MARGIN + index * 2.75;
+        slide.addShape(model.pptx.ShapeType.rect, {
+            x: legendX, y: 2.615, w: 0.1, h: 0.1,
+            fill: { color: pptColor(color) }, line: { type: 'none' }
         });
-        slide.addText(note, {
-            x, y: 2.66, w: statWidth, h: 0.22, fontFace: FONT, fontSize: 10,
-            color: pptColor(palette.muted), margin: 0
-        });
-        slide.addShape(model.pptx.ShapeType.line, {
-            x, y: 3.02, w: statWidth - 0.15, h: 0,
-            line: { color: pptColor(index < 3 ? palette.low : palette.high), width: 2 }
+        slide.addText(`${formatInteger(count)}  ${label}`, {
+            x: legendX + 0.20, y: 2.565, w: 2.4, h: 0.2, fontFace: FONT,
+            fontSize: 10.5, color: pptColor(palette.subtle), margin: 0
         });
     });
 
-    const modelText = model.overview.model_counts.length
-        ? model.overview.model_counts.map(([name, count]) => `${name} ×${count}`).join('   ·   ')
-        : 'No sensor models reported';
-    slide.addText('Fleet composition', {
-        x: MARGIN, y: 3.55, w: 3.0, h: 0.3, fontFace: FONT, fontSize: 16,
-        bold: true, color: pptColor(palette.text), margin: 0
+    slide.addShape(model.pptx.ShapeType.line, {
+        x: MARGIN, y: 3.22, w: barWidth, h: 0,
+        line: { color: pptColor(palette.grid), width: 0.75 }
     });
-    slide.addText(modelText, {
-        x: MARGIN, y: 3.98, w: 12.0, h: 0.65, fontFace: FONT, fontSize: 13,
-        color: pptColor(palette.subtle), margin: 0, fit: 'shrink'
+
+    const stats = [
+        [formatInteger(overview.sensors), 'Sensors in fleet', 'returned by the appliance API', palette.text],
+        [formatInteger(overview.reporting), 'Reporting data', `${formatPercent(overview.sensors ? overview.reporting / overview.sensors : 0)} of the fleet`, palette.text],
+        [formatInteger(overview.at_capacity), 'At or over capacity', 'across all measured limits', overview.at_capacity ? palette.high : palette.text],
+        [formatCompact(overview.trigger_drops), 'Trigger drops', 'total across the window', overview.trigger_drops ? palette.high : palette.text]
+    ];
+    stats.forEach(([value, label, note, color], index) => {
+        const statX = MARGIN + index * 3.06;
+        slide.addText(value, {
+            x: statX, y: 3.52, w: 2.8, h: 0.62, fontFace: FONT, fontSize: 38,
+            bold: true, color: pptColor(color), margin: 0, fit: 'shrink'
+        });
+        slide.addText(label, {
+            x: statX, y: 4.22, w: 2.8, h: 0.22, fontFace: FONT, fontSize: 11.5,
+            bold: true, color: pptColor(palette.text), margin: 0
+        });
+        slide.addText(note, {
+            x: statX, y: 4.48, w: 2.8, h: 0.2, fontFace: FONT, fontSize: 9.5,
+            color: pptColor(palette.muted), margin: 0
+        });
+        slide.addShape(model.pptx.ShapeType.line, {
+            x: statX, y: 4.82, w: 0.62, h: 0,
+            line: { color: pptColor(color), width: 2 }
+        });
     });
-    const notes = model.collector_notes.slice(0, 3);
-    slide.addText(notes.length ? 'Collection context' : 'Review context', {
-        x: MARGIN, y: 5.0, w: 3.0, h: 0.3, fontFace: FONT, fontSize: 16,
-        bold: true, color: pptColor(palette.text), margin: 0
+
+    slide.addShape(model.pptx.ShapeType.line, {
+        x: MARGIN, y: 5.28, w: barWidth, h: 0,
+        line: { color: pptColor(palette.grid), width: 0.75 }
     });
-    slide.addText(notes.length ? notes.map(note => `• ${note}`).join('\n') : 'All reported statistics retain their collection status; unavailable data is not treated as zero.', {
-        x: MARGIN, y: 5.42, w: 11.9, h: 1.12, fontFace: FONT, fontSize: 12,
-        color: pptColor(palette.subtle), margin: 0, breakLine: false, fit: 'shrink',
-        valign: 'top'
+    slide.addText('FLEET COMPOSITION', {
+        x: MARGIN, y: 5.52, w: 3.0, h: 0.2, fontFace: FONT, fontSize: 9,
+        bold: true, color: pptColor(palette.muted), margin: 0, charSpacing: 1.5
+    });
+    let chipX = MARGIN;
+    overview.model_counts.slice(0, 6).forEach(([name, count]) => {
+        const width = 0.115 * name.length + 0.62;
+        if (chipX + width > SLIDE_WIDTH - MARGIN) return;
+        slide.addShape(model.pptx.ShapeType.roundRect, {
+            x: chipX, y: 5.82, w: width, h: 0.34, rectRadius: 0.17,
+            fill: { color: pptColor(palette.altRow) },
+            line: { color: pptColor(palette.grid), width: 0.75 }
+        });
+        slide.addText(name, {
+            x: chipX + 0.22, y: 5.90, w: width - 0.44, h: 0.2, fontFace: FONT,
+            fontSize: 10, color: pptColor(palette.subtle), margin: 0
+        });
+        slide.addText(`×${count}`, {
+            x: chipX + width - 0.55, y: 5.90, w: 0.34, h: 0.2, fontFace: FONT,
+            fontSize: 10, bold: true, color: pptColor(palette.text), margin: 0,
+            align: 'right'
+        });
+        chipX += width + 0.14;
+    });
+
+    slide.addText('Counts reflect sensors that returned data. Unavailable statistics are held as missing '
+        + 'rather than zero; per-sensor collection status is in the appendix.', {
+        x: MARGIN, y: 6.44, w: barWidth, h: 0.22, fontFace: FONT, fontSize: 10,
+        color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
     });
     addNotes(slide, model, 'Headline counts calculated from the normalized System Health sensor rows.');
 }
 
+/* ---------------------------------------------------------------- findings */
+
 function addAttentionSlides(model, assets) {
     const pages = chunk(model.findings, ATTENTION_ROWS_PER_SLIDE);
+    const palette = model.palette;
     pages.forEach((items, pageIndex) => {
         const suffix = pages.length > 1 ? ` · ${pageIndex + 1} of ${pages.length}` : '';
-        const slide = addContentSlide(model, `Sensors that need attention${suffix}`, 'Prioritized from health state, missing data, utilization, trigger drops, and analysis pressure', assets);
+        const criticals = model.findings.filter(item => item.severity === 'CRITICAL').length;
+        const kicker = model.findings.length
+            ? `${model.findings.length} ${model.findings.length === 1 ? 'sensor' : 'sensors'} · ${criticals} critical`
+            : '';
+        const slide = addContentSlide(model, `Sensors that need attention${suffix}`,
+            'Ranked by severity · grouped by condition', assets,
+            kicker, criticals ? palette.high : palette.mid);
+
+        const columns = [
+            ['SENSOR', MARGIN + 0.20, 2.55],
+            ['MODEL', 3.62, 1.75],
+            ['CONDITION', 5.48, 2.35],
+            ['EVIDENCE', 7.95, 4.65]
+        ];
+        const headerY = 1.72;
+        columns.forEach(([label, x, w]) => {
+            slide.addText(label, {
+                x, y: headerY, w, h: 0.2, fontFace: FONT, fontSize: 8.5,
+                bold: true, color: pptColor(palette.muted), margin: 0, charSpacing: 1.4
+            });
+        });
+        slide.addShape(model.pptx.ShapeType.line, {
+            x: MARGIN, y: headerY + 0.24, w: SLIDE_WIDTH - MARGIN * 2, h: 0,
+            line: { color: pptColor(palette.grid), width: 0.75 }
+        });
+
+        let y = headerY + 0.36;
+        const rowHeight = 0.58;
         if (!items.length) {
-            slide.addText('No sensors crossed the report thresholds in this window.', {
-                x: MARGIN, y: 2.55, w: 11.9, h: 0.65, fontFace: FONT, fontSize: 22,
-                color: pptColor(model.palette.subtle), margin: 0, align: 'center'
+            slide.addText('No reporting sensor crossed the report thresholds in this window.', {
+                x: MARGIN, y: y + 0.4, w: SLIDE_WIDTH - MARGIN * 2, h: 0.4, fontFace: FONT,
+                fontSize: 14, color: pptColor(palette.subtle), margin: 0
             });
+            y += 1.0;
         } else {
-            const header = ['Sensor', 'Model', 'Severity', 'Finding'];
-            const rows = [header.map(text => tableCell(text, {
-                bold: true, color: model.palette.bg, fill: model.palette.text, fontSize: 11
-            }))];
-            items.forEach((item, index) => {
-                const severityColor = item.severity === 'CRITICAL' ? model.palette.high : model.palette.mid;
-                rows.push([
-                    tableCell(item.name, { bold: true, fill: index % 2 ? model.palette.altRow : model.palette.bg }),
-                    tableCell(item.model, { fill: index % 2 ? model.palette.altRow : model.palette.bg }),
-                    tableCell(item.severity, { bold: true, color: severityColor, fill: index % 2 ? model.palette.altRow : model.palette.bg }),
-                    tableCell(item.finding_text, { fill: index % 2 ? model.palette.altRow : model.palette.bg })
-                ]);
+            let band = 0;
+            ['CRITICAL', 'WARNING'].forEach(severity => {
+                const group = items.filter(item => item.severity === severity);
+                if (!group.length) return;
+                const severityColor = severity === 'CRITICAL' ? palette.high : palette.mid;
+                slide.addText(severity, {
+                    x: MARGIN + 0.20, y: y + 0.02, w: 2.0, h: 0.2, fontFace: FONT,
+                    fontSize: 8, bold: true, color: pptColor(severityColor),
+                    margin: 0, charSpacing: 1.4
+                });
+                y += 0.26;
+                group.forEach(item => {
+                    if (band % 2 === 0) {
+                        slide.addShape(model.pptx.ShapeType.rect, {
+                            x: MARGIN, y, w: SLIDE_WIDTH - MARGIN * 2, h: rowHeight,
+                            fill: { color: pptColor(palette.altRow) }, line: { type: 'none' }
+                        });
+                    }
+                    // Severity lives in a 4pt edge bar. As a column it was a
+                    // full-width field whose value never varied.
+                    slide.addShape(model.pptx.ShapeType.rect, {
+                        x: MARGIN, y, w: 0.055, h: rowHeight,
+                        fill: { color: pptColor(severityColor) }, line: { type: 'none' }
+                    });
+                    const cell = (text, x, w, options = {}) => slide.addText(text, {
+                        x, y, w, h: rowHeight, fontFace: FONT, fontSize: options.fontSize || 10.5,
+                        bold: !!options.bold, color: pptColor(options.color || palette.subtle),
+                        margin: 0, valign: 'middle', breakLine: false, fit: 'shrink'
+                    });
+                    cell(clipName(item.name, 28), MARGIN + 0.20, 2.55, { bold: true, color: palette.text, fontSize: 11.5 });
+                    cell(item.model, 3.62, 1.75, { color: palette.muted });
+                    cell(item.condition, 5.48, 2.35, { bold: true, color: severityColor, fontSize: 11 });
+                    cell(item.evidence, 7.95, 4.70);
+                    y += rowHeight;
+                    band += 1;
+                });
+                y += 0.16;
             });
-            slide.addTable(rows, {
-                x: MARGIN, y: 1.44, w: 12.05, h: 5.4,
-                colW: [2.35, 1.65, 1.05, 7.0],
-                rowH: 0.46, fontFace: FONT, fontSize: 10.5,
-                color: pptColor(model.palette.text), margin: 0.07,
-                border: { type: 'solid', color: pptColor(model.palette.grid), width: 0.6 },
-                valign: 'middle', breakLine: false
-            });
+        }
+
+        // The roll-up rides the last findings slide so the reader sees the whole
+        // fleet accounted for in one view.
+        if (pageIndex === pages.length - 1 && model.overview.absent) {
+            addAbsentRollup(model, slide, Math.min(y + 0.10, 5.94));
         }
         addNotes(slide, model, 'Findings calculated from the normalized System Health sensor rows using the report thresholds: elevated at 80%, at capacity at 100%.');
     });
+}
+
+function addAbsentRollup(model, slide, y) {
+    const palette = model.palette;
+    const overview = model.overview;
+    const parts = [];
+    if (overview.offline) parts.push(`${formatInteger(overview.offline)} unreachable`);
+    if (overview.no_access) parts.push(`${formatInteger(overview.no_access)} requires additional configuration`);
+    slide.addShape(model.pptx.ShapeType.roundRect, {
+        x: MARGIN, y, w: SLIDE_WIDTH - MARGIN * 2, h: 0.84, rectRadius: 0.13,
+        fill: { color: pptColor(palette.altRow) },
+        line: { color: pptColor(palette.grid), width: 0.75 }
+    });
+    slide.addShape(model.pptx.ShapeType.rect, {
+        x: MARGIN, y, w: 0.055, h: 0.84,
+        fill: { color: pptColor(palette.absent) }, line: { type: 'none' }
+    });
+    slide.addText(`${formatInteger(overview.absent)} sensors returned no data`, {
+        x: MARGIN + 0.34, y: y + 0.15, w: 8.6, h: 0.26, fontFace: FONT, fontSize: 13,
+        bold: true, color: pptColor(palette.text), margin: 0
+    });
+    slide.addText(`${joinList(parts)}. No utilization conclusions are drawn for these sensors.`, {
+        x: MARGIN + 0.34, y: y + 0.45, w: 8.8, h: 0.24, fontFace: FONT, fontSize: 10.5,
+        color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
+    });
+    slide.addText('Full list in appendix', {
+        x: 10.0, y: y + 0.29, w: 2.63, h: 0.24, fontFace: FONT, fontSize: 10.5,
+        color: pptColor(palette.muted), margin: 0, align: 'right'
+    });
+}
+
+/* ---------------------------------------------------------------- charts */
+
+// Chart specs are declared against the normalized rows, so the deck no longer
+// depends on canvas screenshots captured by the report module.
+function chartSpecs(model) {
+    const cycle = model.meta.cycle_label || 'reported-cycle';
+    return [
+        {
+            key: 'packet',
+            title: 'Packet rate headroom',
+            subtitle: `Peak ${cycle} average against model capacity`,
+            value: row => finiteNumber(row.packetPeak),
+            capacity: row => finiteNumber(row.packetCapacity),
+            format: formatRate
+        },
+        {
+            key: 'throughput',
+            title: 'Throughput headroom',
+            subtitle: `Peak ${cycle} average against model capacity`,
+            value: row => finiteNumber(row.throughputGbps),
+            capacity: row => finiteNumber(row.throughputCapacity),
+            format: formatGbps
+        },
+        {
+            key: 'triggers',
+            title: 'Trigger cycle utilization',
+            subtitle: `Maximum aligned ${cycle} utilization · drops are totals for the window`,
+            value: row => finiteNumber(row.triggerCyclesPeak),
+            capacity: row => finiteNumber(row.triggerCyclesAvail),
+            format: value => formatCompact(value),
+            note: row => Number(row.triggerDropsTotal || 0) > 0
+                ? `${formatCompact(row.triggerDropsTotal)} drops` : ''
+        },
+        {
+            key: 'advanced',
+            title: 'Advanced analysis pressure',
+            subtitle: 'Devices in Advanced Analysis against licensed capacity',
+            value: row => finiteNumber(row.analysis && row.analysis.advanced),
+            capacity: row => finiteNumber(row.advancedCapacity),
+            format: value => `${formatInteger(value)} devices`,
+            note: row => {
+                const discovery = finiteNumber(row.analysis && row.analysis.discovery);
+                return discovery ? `${formatInteger(discovery)} in Discovery` : '';
+            }
+        },
+        {
+            key: 'standard',
+            title: 'Standard analysis pressure',
+            subtitle: 'Devices in Standard Analysis against licensed capacity',
+            value: row => finiteNumber(row.analysis && row.analysis.standard),
+            capacity: row => finiteNumber(row.standardCapacity),
+            format: value => `${formatInteger(value)} devices`,
+            note: row => {
+                const discovery = finiteNumber(row.analysis && row.analysis.discovery);
+                return discovery ? `${formatInteger(discovery)} in Discovery` : '';
+            }
+        }
+    ];
+}
+
+// Rank the whole fleet by utilization. Limiting pages after grouping by model
+// allowed a populous model to consume the page budget and hide higher-risk
+// sensors from smaller groups. Each ratio still uses that sensor's own model or
+// licensed capacity, and the appendix preserves the model detail.
+function chartPagesForSpec(model, spec) {
+    const measured = model.rows
+        .filter(row => !isAbsent(row))
+        .map(row => ({
+            row,
+            model: cleanText(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', 80),
+            value: spec.value(row),
+            capacity: spec.capacity(row),
+            ratio: safeRatio(spec.value(row), spec.capacity(row))
+        }))
+        .filter(entry => entry.value !== null && entry.ratio !== null)
+        .sort((a, b) => b.ratio - a.ratio
+            || String(a.row.name || '').localeCompare(String(b.row.name || '')));
+    if (!measured.length) return [];
+
+    const shown = measured.slice(0, CHART_ROWS_PER_SLIDE * CHART_PAGES_PER_METRIC);
+    return chunk(shown, CHART_ROWS_PER_SLIDE).map(entries => {
+        const models = [...new Set(entries.map(entry => entry.model))];
+        const capacities = [...new Set(entries.map(entry => entry.capacity).filter(value => value > 0))];
+        return {
+            model: models.length === 1 ? models[0] : 'Mixed models',
+            capacity: capacities.length === 1 ? capacities[0] : null,
+            capacity_varies: capacities.length > 1,
+            entries,
+            measured: measured.length,
+            withheld: measured.length - shown.length,
+            total: model.rows.length
+        };
+    });
+}
+
+function addChartSlides(model, assets) {
+    chartSpecs(model).forEach(spec => {
+        const pages = chartPagesForSpec(model, spec);
+        pages.forEach((page, index) => {
+            const suffix = pages.length > 1 ? ` · ${index + 1} of ${pages.length}` : '';
+            const capacityLabel = page.capacity ? ` · rated ${spec.format(page.capacity)}`
+                : page.capacity_varies ? ' · capacity varies by sensor' : '';
+            addChartSlide(model, assets, spec, page,
+                `${spec.title}${suffix}`,
+                `${spec.subtitle} · ${page.model}${capacityLabel}`);
+        });
+    });
+}
+
+function addChartSlide(model, assets, spec, page, title, subtitle) {
+    const palette = model.palette;
+    const slide = addContentSlide(model, title, subtitle, assets, 'Capacity', palette.muted);
+    const plotLeft = 3.35;
+    const plotRight = 10.35;
+    const span = plotRight - plotLeft;
+    const top = 1.90;
+    const rowHeight = 0.44;
+    const entries = page.entries;
+    const bottom = top + rowHeight * entries.length;
+
+    // The track ends at 100% of capacity, so only the 80% guide needs drawing.
+    const guideX = plotLeft + span * 0.8;
+    slide.addShape(model.pptx.ShapeType.line, {
+        x: guideX, y: top - 0.06, w: 0, h: bottom + 0.02 - (top - 0.06),
+        line: { color: pptColor(palette.mid), width: 0.75, dashType: 'dash' }
+    });
+    slide.addText('80%', {
+        x: guideX - 0.40, y: top - 0.28, w: 0.8, h: 0.18, fontFace: FONT, fontSize: 7.5,
+        bold: true, color: pptColor(palette.mid), margin: 0, align: 'center', charSpacing: 1
+    });
+    slide.addText('MODEL CAPACITY', {
+        x: plotRight - 1.8, y: top - 0.28, w: 1.8, h: 0.18, fontFace: FONT, fontSize: 7.5,
+        bold: true, color: pptColor(palette.muted), margin: 0, align: 'right', charSpacing: 1
+    });
+
+    let y = top;
+    entries.forEach(entry => {
+        const ratio = entry.ratio;
+        const barColor = ratio >= 1 ? palette.high : ratio >= 0.8 ? palette.mid : palette.low;
+        slide.addText(clipName(entry.row.name || entry.row.hostname || entry.row.id), {
+            x: MARGIN, y: y + 0.055, w: 2.45, h: 0.26, fontFace: FONT, fontSize: 10,
+            color: pptColor(palette.subtle), margin: 0, align: 'right', breakLine: false
+        });
+        slide.addShape(model.pptx.ShapeType.rect, {
+            x: plotLeft, y: y + 0.065, w: span, h: 0.24,
+            fill: { color: pptColor(palette.track) }, line: { type: 'none' }
+        });
+        slide.addShape(model.pptx.ShapeType.rect, {
+            x: plotLeft, y: y + 0.065, w: Math.max(span * Math.min(ratio, 1), 0.035), h: 0.24,
+            fill: { color: pptColor(barColor) }, line: { type: 'none' }
+        });
+        slide.addText(ratio >= 0.01 ? formatPercent(ratio) : '<1%', {
+            x: plotRight + 0.20, y: y + 0.055, w: 0.66, h: 0.26, fontFace: FONT, fontSize: 10,
+            bold: true, color: pptColor(palette.text), margin: 0, align: 'right'
+        });
+        const note = spec.note ? spec.note(entry.row) : '';
+        slide.addText(note || spec.format(entry.value), {
+            x: plotRight + 0.96, y: y + 0.055, w: 1.55, h: 0.26, fontFace: FONT, fontSize: 10,
+            color: pptColor(note ? palette.high : palette.muted), margin: 0, align: 'right',
+            breakLine: false, fit: 'shrink'
+        });
+        y += rowHeight;
+    });
+
+    slide.addShape(model.pptx.ShapeType.line, {
+        x: MARGIN, y: y + 0.22, w: SLIDE_WIDTH - MARGIN * 2, h: 0,
+        line: { color: pptColor(palette.grid), width: 0.75 }
+    });
+    const excluded = page.total - page.measured;
+    const caption = [
+        `${formatInteger(page.measured)} of ${formatInteger(page.total)} sensors supplied a usable value and capacity`,
+        excluded > 0 ? `${formatInteger(excluded)} are excluded rather than shown as zero` : '',
+        page.withheld > 0 ? `${formatInteger(page.withheld)} lower-ranked sensors continue in the appendix` : ''
+    ].filter(Boolean).join(' · ');
+    slide.addText(caption, {
+        x: MARGIN, y: y + 0.36, w: 8.8, h: 0.22, fontFace: FONT, fontSize: 10,
+        color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
+    });
+    slide.addText('Sorted by percent of model capacity', {
+        x: 9.2, y: y + 0.36, w: 3.45, h: 0.22, fontFace: FONT, fontSize: 10,
+        color: pptColor(palette.muted), margin: 0, align: 'right'
+    });
+    addNotes(slide, model, `Drawn from the normalized System Health rows for ${page.model}; sensors without a measured value for this statistic are excluded.`);
+}
+
+function clipName(value, limit = 30) {
+    const text = cleanText(value, 120) || 'Unknown sensor';
+    return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+}
+
+/* ---------------------------------------------------------------- actions */
+
+function addRecommendationSlide(model, assets) {
+    const palette = model.palette;
+    const slide = addContentSlide(model, 'Recommended next steps',
+        'Actions derived from the conditions observed in this report', assets);
+    model.recommendations.forEach((recommendation, index) => {
+        const y = 1.72 + index * 1.02;
+        const color = index === 0 ? palette.high : palette.low;
+        slide.addShape(model.pptx.ShapeType.ellipse, {
+            x: MARGIN, y, w: 0.44, h: 0.44,
+            fill: { color: pptColor(color) }, line: { type: 'none' }
+        });
+        slide.addText(String(index + 1), {
+            x: MARGIN, y: y + 0.09, w: 0.44, h: 0.22, fontFace: FONT, fontSize: 12,
+            bold: true, color: 'FFFFFF', align: 'center', margin: 0
+        });
+        slide.addText(recommendation, {
+            x: MARGIN + 0.72, y: y - 0.02, w: 11.2, h: 0.6, fontFace: FONT, fontSize: 14.5,
+            color: pptColor(palette.text), margin: 0, breakLine: false, fit: 'shrink',
+            valign: 'top'
+        });
+    });
+    addNotes(slide, model, 'Recommended actions are deterministic suggestions derived from the findings in this report and should be validated against deployment context.');
+}
+
+/* ---------------------------------------------------------------- appendix */
+
+function addAppendixSlides(model, assets) {
+    const palette = model.palette;
+    const ordered = [...model.rows].sort((a, b) => {
+        if (isAbsent(a) !== isAbsent(b)) return isAbsent(a) ? 1 : -1;
+        const risk = row => Math.max(
+            safeRatio(row.packetPeak, row.packetCapacity) || 0,
+            safeRatio(row.throughputGbps, row.throughputCapacity) || 0,
+            finiteNumber(row.triggerUtilization) || 0
+        );
+        return risk(b) - risk(a) || String(a.name || '').localeCompare(String(b.name || ''));
+    });
+    chunk(ordered, APPENDIX_ROWS_PER_SLIDE).forEach((items, pageIndex, pages) => {
+        const suffix = pages.length > 1 ? ` · ${pageIndex + 1} of ${pages.length}` : '';
+        const slide = addContentSlide(model, `Appendix · Sensor detail${suffix}`,
+            'Every sensor in the fleet, including those excluded from the charts', assets);
+        const headers = ['Sensor', 'Model', 'Status', 'Packet peak', 'Throughput peak',
+            'Trigger', 'Drops', 'Advanced', 'Standard', 'Discovery'];
+        const rows = [headers.map(text => tableCell(text, {
+            bold: true, color: palette.muted, fill: palette.bg, fontSize: 8.5
+        }))];
+        items.forEach((row, index) => {
+            const fill = index % 2 ? palette.altRow : palette.bg;
+            const analysis = row.analysis || {};
+            const absent = isAbsent(row);
+            const ink = absent ? palette.muted : palette.subtle;
+            rows.push([
+                tableCell(clipName(row.name || row.hostname || row.id, 26), { bold: true, fill, color: absent ? palette.muted : palette.text }),
+                tableCell(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', { fill, color: ink }),
+                tableCell(String(sensorStatus(row)).replace(/_/g, ' '), { fill, color: ink }),
+                tableCell(formatRate(row.packetPeak), { fill, color: ink }),
+                tableCell(formatGbps(row.throughputGbps), { fill, color: ink }),
+                tableCell(formatPercent(row.triggerUtilization), { fill, color: ink }),
+                tableCell(formatInteger(row.triggerDropsTotal), { fill, color: ink }),
+                tableCell(tierValue(analysis.advanced, row.advancedCapacity), { fill, color: ink }),
+                tableCell(tierValue(analysis.standard, row.standardCapacity), { fill, color: ink }),
+                tableCell(formatInteger(analysis.discovery), { fill, color: ink })
+            ]);
+        });
+        slide.addTable(rows, {
+            x: MARGIN, y: 1.62, w: SLIDE_WIDTH - MARGIN * 2, h: 5.1,
+            colW: [1.85, 1.25, 1.12, 1.16, 1.24, 0.72, 0.68, 1.02, 1.02, 0.87],
+            rowH: 0.42, fontFace: FONT, fontSize: 8.5,
+            color: pptColor(palette.subtle), margin: 0.05,
+            border: [
+                { type: 'none' }, { type: 'none' },
+                { type: 'solid', color: pptColor(palette.grid), pt: 0.5 },
+                { type: 'none' }
+            ],
+            valign: 'middle', breakLine: false
+        });
+        addNotes(slide, model, 'Editable appendix values projected from the normalized System Health rows; missing values are shown as em dashes and never as zero.');
+    });
+}
+
+function tierValue(value, capacity) {
+    const used = finiteNumber(value);
+    const cap = finiteNumber(capacity);
+    if (used === null) return '—';
+    return cap && cap > 0 ? `${formatInteger(used)} / ${formatInteger(cap)}` : formatInteger(used);
 }
 
 function tableCell(text, options = {}) {
@@ -516,112 +1134,7 @@ function tableCell(text, options = {}) {
     return { text: cleanText(text, 480), options: cellOptions };
 }
 
-function addChartSlides(model, assets) {
-    model.charts.forEach(chart => {
-        const suffix = chart.page_count > 1 ? ` · ${chart.page_number} of ${chart.page_count}` : '';
-        const slide = addContentSlide(model, `${cleanText(chart.title, 120)}${suffix}`, cleanText(chart.subtitle, 220), assets);
-        const frame = fitContain(
-            finiteNumber(chart.pixel_width) || 1120,
-            finiteNumber(chart.pixel_height) || 560,
-            MARGIN, 1.35, 12.08, 5.56
-        );
-        if (chart.image_data) {
-            slide.addImage({ data: chart.image_data, ...frame });
-        } else {
-            slide.addText('Chart image was unavailable during export.', {
-                x: MARGIN, y: 3.1, w: 12.0, h: 0.5, fontFace: FONT, fontSize: 18,
-                color: pptColor(model.palette.muted), align: 'center', margin: 0
-            });
-        }
-        if (chart.caption) {
-            slide.addText(cleanText(chart.caption, 260), {
-                x: MARGIN, y: 6.87, w: 11.5, h: 0.18, fontFace: FONT, fontSize: 9,
-                color: pptColor(model.palette.muted), margin: 0, fit: 'shrink'
-            });
-        }
-        addNotes(slide, model, `PNG chart rendered from the normalized System Health rows for ${chart.model || 'the reported fleet'} using the active chart theme.`);
-    });
-}
-
-function fitContain(sourceWidth, sourceHeight, x, y, width, height) {
-    const sourceRatio = sourceWidth / sourceHeight;
-    const frameRatio = width / height;
-    if (sourceRatio > frameRatio) {
-        const fittedHeight = width / sourceRatio;
-        return { x, y: y + (height - fittedHeight) / 2, w: width, h: fittedHeight };
-    }
-    const fittedWidth = height * sourceRatio;
-    return { x: x + (width - fittedWidth) / 2, y, w: fittedWidth, h: height };
-}
-
-function addRecommendationSlide(model, assets) {
-    const slide = addContentSlide(model, 'Recommended next steps', 'Actions derived from the conditions observed in this report', assets);
-    model.recommendations.forEach((recommendation, index) => {
-        const y = 1.55 + index * 1.08;
-        slide.addShape(model.pptx.ShapeType.ellipse, {
-            x: 0.78, y, w: 0.48, h: 0.48,
-            line: { color: pptColor(model.palette.low), transparency: 100 },
-            fill: { color: pptColor(index === 0 ? model.palette.high : model.palette.low) }
-        });
-        slide.addText(String(index + 1), {
-            x: 0.78, y: y + 0.07, w: 0.48, h: 0.2, fontFace: FONT, fontSize: 12,
-            bold: true, color: 'FFFFFF', align: 'center', margin: 0
-        });
-        slide.addText(recommendation, {
-            x: 1.55, y: y - 0.02, w: 10.9, h: 0.62, fontFace: FONT, fontSize: 16,
-            color: pptColor(model.palette.text), margin: 0, breakLine: false, fit: 'shrink'
-        });
-    });
-    addNotes(slide, model, 'Recommended actions are deterministic suggestions derived from the findings in this report and should be validated against deployment context.');
-}
-
-function addAppendixSlides(model, assets) {
-    const ordered = [...model.rows].sort((a, b) => {
-        const aRisk = Math.max(safeRatio(a.packetPeak, a.packetCapacity) || 0, safeRatio(a.throughputGbps, a.throughputCapacity) || 0, finiteNumber(a.triggerUtilization) || 0);
-        const bRisk = Math.max(safeRatio(b.packetPeak, b.packetCapacity) || 0, safeRatio(b.throughputGbps, b.throughputCapacity) || 0, finiteNumber(b.triggerUtilization) || 0);
-        return bRisk - aRisk || String(a.name || '').localeCompare(String(b.name || ''));
-    });
-    chunk(ordered, APPENDIX_ROWS_PER_SLIDE).forEach((items, pageIndex, pages) => {
-        const suffix = pages.length > 1 ? ` · ${pageIndex + 1} of ${pages.length}` : '';
-        const slide = addContentSlide(model, `Appendix · Sensor detail${suffix}`, 'Editable values from the same normalized rows used to render the charts', assets);
-        const headers = ['Sensor', 'Model', 'Status', 'Packet peak', 'Throughput peak', 'Trigger', 'Drops', 'Advanced', 'Standard', 'Discovery'];
-        const rows = [headers.map(text => tableCell(text, {
-            bold: true, color: model.palette.bg, fill: model.palette.text, fontSize: 9.5
-        }))];
-        items.forEach((row, index) => {
-            const fill = index % 2 ? model.palette.altRow : model.palette.bg;
-            const analysis = row.analysis || {};
-            rows.push([
-                tableCell(row.name || row.hostname || row.id, { bold: true, fill }),
-                tableCell(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', { fill }),
-                tableCell(String(sensorStatus(row)).replace(/_/g, ' '), { fill }),
-                tableCell(formatRate(row.packetPeak), { fill }),
-                tableCell(formatGbps(row.throughputGbps), { fill }),
-                tableCell(formatPercent(row.triggerUtilization), { fill }),
-                tableCell(formatInteger(row.triggerDropsTotal), { fill }),
-                tableCell(tierValue(analysis.advanced, row.advancedCapacity), { fill }),
-                tableCell(tierValue(analysis.standard, row.standardCapacity), { fill }),
-                tableCell(formatInteger(analysis.discovery), { fill })
-            ]);
-        });
-        slide.addTable(rows, {
-            x: 0.42, y: 1.38, w: 12.5, h: 5.46,
-            colW: [1.75, 1.18, 1.15, 1.2, 1.25, 0.74, 0.62, 1.0, 1.0, 0.82],
-            rowH: 0.43, fontFace: FONT, fontSize: 8.5,
-            color: pptColor(model.palette.text), margin: 0.045,
-            border: { type: 'solid', color: pptColor(model.palette.grid), width: 0.5 },
-            valign: 'middle', breakLine: false
-        });
-        addNotes(slide, model, 'Editable appendix values projected from the normalized System Health rows; missing values are shown as em dashes.');
-    });
-}
-
-function tierValue(value, capacity) {
-    const used = finiteNumber(value);
-    const cap = finiteNumber(capacity);
-    if (used === null) return '—';
-    return cap && cap > 0 ? `${formatInteger(used)} / ${formatInteger(cap)}` : formatInteger(used);
-}
+/* ---------------------------------------------------------------- assembly */
 
 function createPresentation(deckModel, PptxGenJS, assets = {}) {
     const pptx = new PptxGenJS();
@@ -631,21 +1144,18 @@ function createPresentation(deckModel, PptxGenJS, assets = {}) {
     pptx.subject = 'System Health Review';
     pptx.title = deckModel.options.title;
     pptx.lang = 'en-US';
-    pptx.theme = {
-        headFontFace: FONT,
-        bodyFontFace: FONT,
-        lang: 'en-US'
-    };
-    const model = { ...deckModel, pptx, slideNumber: 0 };
+    pptx.theme = { headFontFace: FONT, bodyFontFace: FONT, lang: 'en-US' };
+    const model = { ...deckModel, pptx, slideNumber: 0, gradient: gradientBackground() };
     addCover(model, assets);
     addOverview(model, assets);
+    // Actions come before the evidence that supports them. In the previous
+    // layout they landed on slide 46, after the reader had already left.
+    addRecommendationSlide(model, assets);
     addAttentionSlides(model, assets);
     addChartSlides(model, assets);
-    addRecommendationSlide(model, assets);
     addAppendixSlides(model, assets);
     return pptx;
 }
-
 function ensurePptxGen() {
     if (typeof window.PptxGenJS === 'function') return Promise.resolve(window.PptxGenJS);
     if (pptxGenPromise) return pptxGenPromise;

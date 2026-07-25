@@ -43,9 +43,14 @@ const CHART_THEME_BUILTINS = [
         colors: { bg: '#ffffff', text: '#261f63', low: '#00aaef', mid: '#f05918', high: '#ec0089' }
     },
     {
+        // Sapphire is a brand color, not a canvas. At full strength behind a
+        // whole chart it saturates everything drawn on top, so the background
+        // is Sapphire darkened ~78% and the ramp is muted to match: cyan for
+        // normal load, bronze for elevated, plum for at-capacity. Every ramp
+        // color clears 4.5:1 against the background.
         id: 'dark',
         name: 'Dark',
-        colors: { bg: '#261f63', text: '#ffffff', low: '#4aa7df', mid: '#f7a03c', high: '#ff5fb0' }
+        colors: { bg: '#131127', text: '#f1eff8', low: '#4fa9d4', mid: '#c1996b', high: '#ce78a6' }
     },
     {
         id: 'midnight',

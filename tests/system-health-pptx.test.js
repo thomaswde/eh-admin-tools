@@ -108,9 +108,120 @@ test('deck model keeps legitimate zero values distinct from unavailable collecti
     assert.equal(model.rows.length, 2);
     assert.equal(model.findings.length, 1);
     assert.equal(model.findings[0].name, 'Missing packet data');
-    assert.match(model.findings[0].finding_text, /Packet rate data empty/);
+    assert.match(model.findings[0].finding_text, /No data returned for packet rate/);
     assert.equal(model.overview.trigger_drops, 0);
     assert.equal(model.filename, 'system-health-review-hoolicorp-2026-07-25.pptx');
+});
+
+// Fixture builder for the roll-up tests below.
+function sensorRow(overrides = {}) {
+    return {
+        license_platform: 'EDA 9300', online: true, offline: false, data_access: true,
+        packetPeak: 10, packetCapacity: 10000, throughputGbps: 0, throughputCapacity: 10,
+        triggerCyclesPeak: 0, triggerCyclesAvail: 100, triggerUtilization: 0,
+        triggerDropsTotal: 0, advancedCapacity: 1000, standardCapacity: 4000,
+        analysis: { advanced: 0, standard: 0, discovery: 0 }, health_conditions: [],
+        collectionStatus: {
+            pkts: 'complete', bytes: 'complete', trigger_utilization: 'complete',
+            trigger_drops: 'zero_valued', device_analysis: 'complete'
+        },
+        ...overrides
+    };
+}
+
+test('sensors that returned no data roll up instead of filling the findings table', () => {
+    const rows = [
+        sensorRow({ id: 'up', name: 'Reporting sensor' }),
+        sensorRow({ id: 'hot', name: 'Busy sensor', packetPeak: 10000 }),
+        ...Array.from({ length: 12 }, (_, index) => sensorRow({
+            id: `down-${index}`, name: `Offline sensor ${index}`, online: false, offline: true
+        })),
+        sensorRow({ id: 'blocked', name: 'No access sensor', data_access: false })
+    ];
+    const model = pptxApi.buildDeckModel({ meta, rows });
+
+    // Every sensor survives into the appendix rows; only the narrative shrinks.
+    assert.equal(model.rows.length, 15);
+    assert.equal(model.overview.sensors, 15);
+    assert.equal(model.overview.absent, 13);
+    assert.equal(model.overview.offline, 12);
+    assert.equal(model.overview.no_access, 1);
+    assert.equal(model.overview.reporting, 2);
+
+    // The 13 absent sensors contribute no findings rows at all.
+    assert.equal(model.findings.length, 1);
+    assert.equal(model.findings[0].name, 'Busy sensor');
+    assert.ok(model.findings.every(item => !item.absent));
+    assert.equal(model.absent.length, 13);
+});
+
+test('verdict names the dominant condition rather than the first one found', () => {
+    const mostlyDown = pptxApi.buildDeckModel({
+        meta,
+        rows: [
+            sensorRow({ id: 'up', name: 'Reporting sensor' }),
+            ...Array.from({ length: 9 }, (_, index) => sensorRow({
+                id: `down-${index}`, name: `Offline ${index}`, online: false, offline: true
+            }))
+        ]
+    });
+    assert.match(mostlyDown.verdict, /9 of 10 sensors returned no data/);
+    assert.match(mostlyDown.recommendations[0], /Restore connectivity for the 9 sensors/);
+
+    const allHealthy = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'a', name: 'A' }), sensorRow({ id: 'b', name: 'B' })]
+    });
+    assert.match(allHealthy.verdict, /All 2 sensors are reporting and within capacity/);
+});
+
+test('findings separate the headline condition from its supporting evidence', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({
+            id: 'drops', name: 'Dropping sensor',
+            triggerDropsTotal: 800133, triggerUtilization: 0.45,
+            triggerCyclesPeak: 45, triggerCyclesAvail: 100
+        })]
+    });
+    const finding = model.findings[0];
+
+    assert.equal(finding.condition, 'Trigger drops');
+    assert.match(finding.evidence, /800,133 drops/);
+    assert.match(finding.evidence, /45% of available cycles/);
+    // The headline must not be restated inside its own evidence.
+    assert.ok(!finding.evidence.startsWith('Trigger drops'));
+    assert.equal(model.overview.at_capacity, 0);
+    assert.match(model.verdict, /none are at a hard capacity limit/);
+});
+
+test('evidence names additional conditions instead of restating each in full', () => {
+    // A sensor tripping every threshold at once: the row this deck exists to
+    // present without turning into the seven-clause dump it replaced.
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({
+            id: 'everything', name: 'Overloaded sensor',
+            packetPeak: 9800, packetCapacity: 10000,
+            throughputGbps: 9.5, throughputCapacity: 10,
+            triggerCyclesPeak: 99, triggerCyclesAvail: 100, triggerUtilization: 0.99,
+            triggerDropsTotal: 361605,
+            analysis: { advanced: 250, standard: 500, discovery: 6 },
+            advancedCapacity: 250, standardCapacity: 500,
+            health_conditions: [{ type: 'license_status', status: 'warning', message: 'license status is unknown' }]
+        })]
+    });
+    const finding = model.findings[0];
+
+    assert.equal(finding.severity, 'CRITICAL');
+    // Many conditions were detected...
+    assert.ok(finding.findings.length >= 6, `expected several conditions, got ${finding.findings.length}`);
+    // ...but the row stays legible: one quantified headline plus named extras.
+    assert.ok(finding.evidence.length <= 130, `evidence too long: ${finding.evidence}`);
+    assert.match(finding.evidence, /also /);
+    assert.match(finding.evidence, /\+\d+ more/);
+    // Every condition remains available for the appendix and speaker notes.
+    assert.ok(finding.finding_text.length > finding.evidence.length);
 });
 
 test('deck findings use the System Health 80 and 100 percent thresholds', () => {

@@ -1,7 +1,6 @@
 // System Health Report Module
 
 const SYSTEM_HEALTH_ROWS_PER_PAGE = 22;
-const SYSTEM_HEALTH_PPTX_ROWS_PER_CHART = 14;
 const SYSTEM_HEALTH_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_HEALTH_DEVICE_LIMIT = 5000;
 const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '1';
@@ -2103,21 +2102,17 @@ async function exportSystemHealthPptx(event) {
     }
     if (exportButton) exportButton.disabled = true;
     hideModal('systemHealthPptxModal');
-    setSystemHealthCsvStatus('Rendering themed chart images for PowerPoint…');
+    setSystemHealthCsvStatus('Building editable PowerPoint slides…');
 
     try {
-        const rows = systemHealthRows(report);
-        const charts = captureSystemHealthPptxCharts(report, rows);
-        setSystemHealthCsvStatus('Building editable PowerPoint slides…');
         const result = await window.SystemHealthPptx.exportDeck({
             meta: systemHealthPptxMeta(report),
             options: systemHealthPptxOptionsFromForm(),
-            rows,
-            charts,
+            rows: systemHealthRows(report),
             palette: systemHealthStyleColors(),
             collector_notes: systemHealthCollectorNotes(report)
         });
-        setSystemHealthCsvStatus(`Exported ${result.filename}. Charts use the active theme; text and tables remain editable.`);
+        setSystemHealthCsvStatus(`Exported ${result.filename}. Charts are drawn as native shapes, so every slide stays editable.`);
     } catch (error) {
         console.error('System Health PowerPoint export failed:', error);
         setSystemHealthCsvStatus(error.message || 'PowerPoint export failed.', true);
@@ -2128,143 +2123,6 @@ async function exportSystemHealthPptx(event) {
         }
         if (exportButton) exportButton.disabled = !systemHealthState.currentReport;
     }
-}
-
-function captureSystemHealthPptxCharts(report, rows) {
-    const container = document.createElement('div');
-    container.setAttribute('aria-hidden', 'true');
-    Object.assign(container.style, {
-        position: 'fixed',
-        left: '-20000px',
-        top: '0',
-        width: '1120px',
-        opacity: '0',
-        pointerEvents: 'none'
-    });
-    document.body.appendChild(container);
-    try {
-        const cycle = systemHealthReportCycleLabel(report);
-        const specs = [
-            {
-                key: 'packet',
-                title: 'Packet rate vs model capacity',
-                subtitle: `Peak ${cycle} average packet rate by sensor`,
-                valueKey: 'packetPeak',
-                capacityKey: 'packetCapacity',
-                label: 'Packet rate',
-                formatter: formatSystemHealthRate
-            },
-            {
-                key: 'throughput',
-                title: 'Throughput vs model capacity',
-                subtitle: `Peak ${cycle} average throughput by sensor`,
-                valueKey: 'throughputGbps',
-                capacityKey: 'throughputCapacity',
-                label: 'Throughput',
-                formatter: formatSystemHealthGbps
-            },
-            {
-                key: 'triggers',
-                title: 'Trigger cycles vs available capacity',
-                subtitle: `Maximum aligned ${cycle} trigger utilization; drops are totals for the report window`,
-                valueKey: 'triggerCyclesPeak',
-                capacityKey: 'triggerCyclesAvail',
-                label: 'Trigger cycles',
-                formatter: formatSystemHealthCycles,
-                alert: row => Number(row.triggerDropsTotal || 0) > 0,
-                indicator: row => Number(row.triggerDropsTotal || 0) > 0 ? 'drops detected' : ''
-            }
-        ];
-
-        const chartPages = [];
-        specs.forEach(spec => {
-            const modelPages = systemHealthMetricModelPages(rows, spec);
-            const pageDescriptors = systemHealthPptxPageDescriptors(modelPages);
-            pageDescriptors.forEach((descriptor, index) => {
-                const canvas = systemHealthPptxCanvas(container);
-                const meta = { ...descriptor.modelPage, rows: descriptor.rows };
-                drawSystemHealthUtilizationCanvas(canvas, descriptor.rows, spec, meta);
-                chartPages.push({
-                    key: spec.key,
-                    title: spec.title,
-                    subtitle: `${spec.subtitle} · ${descriptor.modelPage.model}`,
-                    caption: systemHealthPptxMetricCaption(descriptor.modelPage, spec),
-                    model: descriptor.modelPage.model,
-                    page_number: index + 1,
-                    page_count: pageDescriptors.length,
-                    image_data: canvas.toDataURL('image/png'),
-                    pixel_width: canvas.width,
-                    pixel_height: canvas.height
-                });
-                canvas.remove();
-            });
-        });
-
-        const analysisPages = systemHealthPptxPageDescriptors(systemHealthAnalysisModelPages(rows));
-        analysisPages.forEach((descriptor, index) => {
-            const canvas = systemHealthPptxCanvas(container);
-            const meta = { ...descriptor.modelPage, rows: descriptor.rows };
-            drawSystemHealthAnalysisCanvas(canvas, descriptor.rows, meta);
-            chartPages.push({
-                key: 'analysis',
-                title: 'Analysis tier pressure',
-                subtitle: `Advanced and Standard utilization by sensor; Discovery remains a distinct condition · ${descriptor.modelPage.model}`,
-                caption: systemHealthPptxAnalysisCaption(descriptor.modelPage),
-                model: descriptor.modelPage.model,
-                page_number: index + 1,
-                page_count: analysisPages.length,
-                image_data: canvas.toDataURL('image/png'),
-                pixel_width: canvas.width,
-                pixel_height: canvas.height
-            });
-            canvas.remove();
-        });
-        return chartPages;
-    } finally {
-        container.remove();
-    }
-}
-
-function systemHealthPptxCanvas(container) {
-    const canvas = document.createElement('canvas');
-    canvas.dataset.systemHealthExportScale = '2';
-    container.appendChild(canvas);
-    return canvas;
-}
-
-function systemHealthPptxPageDescriptors(modelPages) {
-    const pages = modelPages.length ? modelPages : [{ model: 'No data', rows: [] }];
-    return pages.flatMap(modelPage => {
-        const chunks = [];
-        const sourceRows = modelPage.rows || [];
-        for (let index = 0; index < sourceRows.length; index += SYSTEM_HEALTH_PPTX_ROWS_PER_CHART) {
-            chunks.push(sourceRows.slice(index, index + SYSTEM_HEALTH_PPTX_ROWS_PER_CHART));
-        }
-        if (!chunks.length) chunks.push([]);
-        return chunks.map(rows => ({ modelPage, rows }));
-    });
-}
-
-function systemHealthPptxMetricCaption(page, spec) {
-    const parts = [
-        `${(page.rows || []).length} ${(page.rows || []).length === 1 ? 'sensor' : 'sensors'}`,
-        page.capacity ? `${spec.label} capacity ${spec.formatter(page.capacity)}` : 'No catalog capacity match',
-        'Sorted by percent of model capacity'
-    ];
-    if (page.alertRows) parts.push(`${page.alertRows} with trigger drops`);
-    return parts.join(' · ');
-}
-
-function systemHealthPptxAnalysisCaption(page) {
-    const rows = page.rows || [];
-    const atAdvanced = rows.filter(row => row.advancedRatio >= 1).length;
-    const atStandard = rows.filter(row => row.standardRatio >= 1).length;
-    const discovery = rows.filter(row => Number(row.analysis && row.analysis.discovery || 0) > 0).length;
-    const parts = [`${rows.length} ${rows.length === 1 ? 'sensor' : 'sensors'}`, 'Sorted by total devices'];
-    if (atAdvanced) parts.push(`${atAdvanced} at Advanced capacity`);
-    if (atStandard) parts.push(`${atStandard} at Standard capacity`);
-    if (discovery) parts.push(`${discovery} with Discovery devices`);
-    return parts.join(' · ');
 }
 
 async function exportSystemHealthPdf() {
