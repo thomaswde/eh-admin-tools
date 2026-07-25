@@ -47,7 +47,7 @@ function hideConnectedState() {
     const chip = document.getElementById('apiConfigToggle');
 
     document.getElementById('connectedState').classList.add('hidden');
-    document.getElementById('configForm').style.display = 'flex';
+    document.getElementById('configForm').style.display = 'none';
     document.getElementById('moduleSelection').style.display = 'none';
 
     chip.classList.remove('is-connected');

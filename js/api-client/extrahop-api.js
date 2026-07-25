@@ -4,20 +4,37 @@ class ExtraHopAPI {
     }
 
     async authenticate() {
-        const response = await ExtraHopAPI.backendFetch('/backend/session', {
+        const savedConnectionId = this.config?.connectionId;
+        const url = savedConnectionId
+            ? `/backend/connections/${encodeURIComponent(savedConnectionId)}/session`
+            : '/backend/session';
+        const options = {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
                 'Accept': 'application/json'
-            },
-            body: JSON.stringify(this.config)
-        });
+            }
+        };
+        if (!savedConnectionId) {
+            options.headers['Content-Type'] = 'application/json';
+            options.body = JSON.stringify(this.config);
+        }
+        const response = await ExtraHopAPI.backendFetch(url, options);
 
         const data = await this.parseResponse(response);
         if (data.config) {
             this.config = data.config;
         }
+        this.savedConnection = data.savedConnection;
+        this.connectionStorage = data.connectionStorage || null;
         return true;
+    }
+
+    static async listSavedConnections() {
+        const response = await ExtraHopAPI.backendFetch('/backend/connections', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+        });
+        return ExtraHopAPI.parseStaticResponse(response);
     }
 
     static async currentSession() {

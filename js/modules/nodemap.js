@@ -1,10 +1,19 @@
-// Nodemap Module - Appliance Network Topology Visualization
+// Connected Appliances — fleet list and appliance topology
+//
+// Two views over the same appliance list. The list is the default because the
+// topology is a star: every sensor hangs off one console, so the edges carry
+// one fact repeated once per node. The list sorts, groups, and surfaces the
+// facts that matter across a large fleet — status spread and firmware drift.
 
-// Nodemap state
 const nodemapState = {
     appliances: [],
     catalogData: [],
     searchTerm: '',
+    view: 'list',
+    groupBy: 'status',
+    sortKey: 'name',
+    sortDir: 'asc',
+    selectedId: null,
     filters: {
         discover: true,
         trace: true,
@@ -29,26 +38,47 @@ const platformColors = {
     'efc': '#7f2854'                   // Plum for Flow Collector
 };
 
-// Helper function to get catalog info
+const roleLabels = {
+    command: 'Console',
+    discover: 'Packet sensor',
+    trace: 'Packetstore',
+    efc: 'Flow collector',
+    other: 'Other'
+};
+
+// Problems sort and group ahead of healthy appliances.
+const statusRank = { error: 0, warning: 1, unknown: 2, online: 3 };
+
+const listColumns = [
+    { key: 'name', label: 'Name' },
+    { key: 'role', label: 'Role' },
+    { key: 'model', label: 'Model' },
+    { key: 'type', label: 'Type' },
+    { key: 'firmware', label: 'Firmware' },
+    { key: 'modules', label: 'Modules', sortable: false }
+];
+
+/* ------------------------------- Appliance facts ------------------------------- */
+
 function getCatalogInfo(licensePlatform) {
     if (!licensePlatform) return null;
-    
-    let modelName = licensePlatform.replace(/_TRACE$/, '');
+
+    const modelName = licensePlatform.replace(/_TRACE$/, '');
     return nodemapState.catalogData.find(item => item.name === modelName || item.name === licensePlatform);
 }
 
 // Determine platform type and characteristics
 function getNodeInfo(appliance) {
     const catalogInfo = getCatalogInfo(appliance.license_platform);
-    
+
     let platform = appliance.platform;
     let isVirtual = false;
     let hasIntegratedTrace = false;
-    
+
     if (catalogInfo) {
         platform = catalogInfo.platform;
         isVirtual = !catalogInfo.is_physical;
-        
+
         if (appliance.license_platform && appliance.license_platform.includes('_TRACE')) {
             hasIntegratedTrace = true;
         }
@@ -59,17 +89,11 @@ function getNodeInfo(appliance) {
             isVirtual = true;
         }
     }
-    
-    // Check if appliance is offline
+
     const statusMessage = (appliance.status_message || '').toString().toLowerCase();
     const isOffline = statusMessage && statusMessage !== 'online';
-    
-    return {
-        platform,
-        isVirtual,
-        hasIntegratedTrace,
-        isOffline
-    };
+
+    return { platform, isVirtual, hasIntegratedTrace, isOffline };
 }
 
 function getStatusInfo(appliance) {
@@ -99,31 +123,59 @@ function getStatusInfo(appliance) {
         badgeClass = 'badge badge-warning';
     }
 
-    const statusText = rawStatus || 'Unknown';
-
     return {
-        statusText,
+        statusText: rawStatus || 'Unknown',
         level,
         circleColor,
         badgeClass
     };
 }
 
-// Helper function to check if appliance matches search
+// Logical role, derived once so the filter, the list, and the graph agree.
+function getRole(appliance, info) {
+    const model = (appliance.license_platform || '').toString().toUpperCase();
+
+    if (info.platform === 'command') return 'command';
+    if (model.startsWith('EFC')) return 'efc';
+    if (model.startsWith('EDA')) return 'discover';
+    if ((info.platform === 'packetstore' || info.platform === 'trace') && !info.hasIntegratedTrace) return 'trace';
+    return 'other';
+}
+
+function getDisplayName(appliance) {
+    return appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`;
+}
+
+function toArray(value) {
+    if (Array.isArray(value)) return value;
+    return value ? [value] : [];
+}
+
+// One normalized record per appliance, so views never re-derive these facts.
+function describeAppliance(appliance) {
+    const info = getNodeInfo(appliance);
+    const status = getStatusInfo(appliance);
+    const role = getRole(appliance, info);
+
+    return {
+        appliance,
+        info,
+        status,
+        role,
+        name: getDisplayName(appliance),
+        model: appliance.license_platform || appliance.platform || 'Unknown',
+        firmware: appliance.firmware_version || 'Unknown',
+        typeLabel: info.isVirtual ? 'Virtual' : 'Physical',
+        modules: toArray(appliance.product_modules).map(m => (m == null ? '' : m.toString().toUpperCase()))
+    };
+}
+
+/* ------------------------------- Filter and search ------------------------------- */
+
 function matchesSearch(appliance) {
     if (!nodemapState.searchTerm) return true;
-    
+
     const term = nodemapState.searchTerm.toLowerCase();
-    const productModulesRaw = appliance.product_modules;
-    const licensedModulesRaw = appliance.licensed_modules;
-
-    const productModules = Array.isArray(productModulesRaw)
-        ? productModulesRaw
-        : (productModulesRaw ? [productModulesRaw] : []);
-
-    const licensedModules = Array.isArray(licensedModulesRaw)
-        ? licensedModulesRaw
-        : (licensedModulesRaw ? [licensedModulesRaw] : []);
     const searchableFields = [
         appliance.display_name,
         appliance.hostname,
@@ -134,29 +186,56 @@ function matchesSearch(appliance) {
         appliance.status_message,
         appliance.uuid,
         appliance.id?.toString(),
-        ...productModules,
-        ...licensedModules
+        ...toArray(appliance.product_modules),
+        ...toArray(appliance.licensed_modules)
     ];
-    
-    return searchableFields.some(field => 
+
+    return searchableFields.some(field =>
         field && field.toString().toLowerCase().includes(term)
     );
 }
 
-// Load appliances and render the graph
+function passesFilters(record) {
+    const { filters } = nodemapState;
+
+    // Console nodes are always shown
+    if (record.role !== 'command') {
+        if (record.role === 'discover' && !filters.discover) return false;
+        if (record.role === 'trace' && !filters.trace) return false;
+        if (record.role === 'efc' && !filters.efc) return false;
+        if (record.role === 'other' && !filters.other) return false;
+    }
+
+    if (record.info.isVirtual && !filters.virtual) return false;
+    if (!record.info.isVirtual && !filters.physical) return false;
+
+    // Connection status filters apply only to true online/error states
+    if (record.status.level === 'online' && !filters.online) return false;
+    if (record.status.level === 'error' && !filters.offline) return false;
+
+    return matchesSearch(record.appliance);
+}
+
+function getVisibleRecords() {
+    return nodemapState.appliances
+        .map(describeAppliance)
+        .filter(passesFilters);
+}
+
+/* ------------------------------- Loading ------------------------------- */
+
 async function loadAppliances() {
     if (!state.connected) {
         showNodemapWelcome();
         return;
     }
-    
+
     try {
         document.getElementById('nodemapWelcome').style.display = 'none';
-        
-        // Load appliances
+
         nodemapState.appliances = await window.apiClient.getAppliances();
-        
-        // Try to load catalog data for better platform detection
+
+        // Catalog data sharpens platform and physical/virtual detection
         try {
             const response = await fetch('/backend/system-health/catalog');
             if (response.ok) {
@@ -167,458 +246,494 @@ async function loadAppliances() {
             console.warn('Could not load catalog data, using basic platform detection');
             nodemapState.catalogData = [];
         }
-        
-        document.getElementById('graphContainer').style.display = 'block';
+
+        document.getElementById('graphContainer').style.display = 'flex';
         showNodemapControls();
-        renderGraph();
+        renderNodemap();
     } catch (error) {
         console.error('Error loading appliances:', error);
         showNodemapWelcome();
     }
 }
 
-// Show welcome screen
 function showNodemapWelcome() {
     document.getElementById('nodemapWelcome').style.display = 'flex';
     document.getElementById('graphContainer').style.display = 'none';
+    document.getElementById('nodemapSummary').style.display = 'none';
     hideNodemapControls();
 }
 
-// Render the graph
-function renderGraph() {
-    const svg = d3.select('#nodeGraph');
-    const container = document.getElementById('graphContainer');
-    
-    // Calculate width based on available space; height will be set based on
-    // the actual node layout so we don't leave a large empty bottom area.
-    const width = container.clientWidth - 48;
-    const defaultHeight = 400;
-    svg.attr('width', width);
-    svg.selectAll('*').remove();
+/* ------------------------------- View dispatch ------------------------------- */
 
-    if (nodemapState.appliances.length === 0) {
-        // Empty state: use a sensible default height
-        container.style.height = defaultHeight + 'px';
-        container.style.minHeight = defaultHeight + 'px';
-        svg.attr('height', defaultHeight);
+function renderNodemap() {
+    const records = getVisibleRecords();
+    const isList = nodemapState.view === 'list';
 
-        svg.append('text')
-            .attr('x', width / 2)
-            .attr('y', defaultHeight / 2)
-            .attr('text-anchor', 'middle')
-            .attr('fill', '#9ca3af')
-            .text('No appliances to display');
+    renderSummary(records);
+
+    document.getElementById('listMainArea').style.display = isList ? 'block' : 'none';
+    document.getElementById('graphMainArea').style.display = isList ? 'none' : 'block';
+    document.getElementById('nodemapGroupControl').style.display = isList ? 'flex' : 'none';
+
+    document.querySelectorAll('#nodemapViewToggle button').forEach(btn => {
+        const active = btn.dataset.view === nodemapState.view;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+
+    if (isList) {
+        renderList(records);
+    } else {
+        renderGraph(records);
+    }
+}
+
+/* ------------------------------- Summary strip ------------------------------- */
+
+function renderSummary(records) {
+    const summary = document.getElementById('nodemapSummary');
+    const online = records.filter(r => r.status.level === 'online').length;
+    const unreachable = records.filter(r => r.status.level === 'error').length;
+    const firmwareCount = new Set(records.map(r => r.firmware)).size;
+
+    // Status counts beyond these two are visible as their own list groups.
+    const cards = [
+        { label: 'Appliances', value: records.length },
+        { label: 'Online', value: online },
+        { label: 'Unreachable', value: unreachable, tone: unreachable > 0 ? 'danger' : '' },
+        { label: 'Firmware versions', value: firmwareCount, tone: firmwareCount > 1 ? 'warn' : '' }
+    ];
+
+    summary.innerHTML = cards.map(card => `
+        <div class="stat ${card.tone ? `stat-${card.tone}` : ''}">
+            <div class="stat-label">${escapeHtml(card.label)}</div>
+            <div class="stat-value">${card.value}</div>
+        </div>
+    `).join('');
+
+    summary.style.display = 'grid';
+}
+
+/* ------------------------------- List view ------------------------------- */
+
+function sortValue(record, key) {
+    switch (key) {
+        case 'role': return roleLabels[record.role] || record.role;
+        case 'model': return record.model;
+        case 'type': return record.typeLabel;
+        case 'firmware': return record.firmware;
+        default: return record.name;
+    }
+}
+
+function sortRecords(records) {
+    const { sortKey, sortDir } = nodemapState;
+    const direction = sortDir === 'desc' ? -1 : 1;
+
+    return [...records].sort((a, b) => {
+        const compared = sortValue(a, sortKey).localeCompare(
+            sortValue(b, sortKey), undefined, { numeric: true, sensitivity: 'base' }
+        );
+        // Name is the stable tiebreak so equal keys never shuffle between renders.
+        return compared !== 0 ? compared * direction : a.name.localeCompare(b.name);
+    });
+}
+
+function groupKeyFor(record) {
+    switch (nodemapState.groupBy) {
+        case 'status': return record.status.statusText;
+        case 'role': return roleLabels[record.role] || record.role;
+        case 'model': return record.model;
+        case 'firmware': return record.firmware;
+        default: return '';
+    }
+}
+
+// Groups keep their own order: worst status first when grouping by status,
+// otherwise alphabetical.
+function buildGroups(records) {
+    if (nodemapState.groupBy === 'none') {
+        return [{ key: '', records }];
+    }
+
+    const groups = new Map();
+    records.forEach(record => {
+        const key = groupKeyFor(record);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(record);
+    });
+
+    const entries = [...groups.entries()].map(([key, groupRecords]) => ({ key, records: groupRecords }));
+
+    if (nodemapState.groupBy === 'status') {
+        entries.sort((a, b) =>
+            statusRank[a.records[0].status.level] - statusRank[b.records[0].status.level] ||
+            a.key.localeCompare(b.key)
+        );
+    } else {
+        entries.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+    }
+
+    return entries;
+}
+
+function renderList(records) {
+    const body = document.getElementById('listMainArea');
+
+    if (records.length === 0) {
+        body.innerHTML = '<div class="empty-inline"><p>No appliances match the current filters.</p></div>';
         return;
     }
 
-    // Create zoom behavior - right-click + scroll to zoom
+    const sorted = sortRecords(records);
+    const groups = buildGroups(sorted);
+    const columnCount = listColumns.length;
+
+    const head = listColumns.map(column => {
+        if (column.sortable === false) {
+            return `<th>${escapeHtml(column.label)}</th>`;
+        }
+        const isSorted = nodemapState.sortKey === column.key;
+        const arrow = isSorted ? (nodemapState.sortDir === 'asc' ? '↑' : '↓') : '';
+        return `<th class="th-sort ${isSorted ? 'is-sorted' : ''}" data-sort="${column.key}"
+                    role="button" tabindex="0"
+                    aria-sort="${isSorted ? (nodemapState.sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}">
+                    ${escapeHtml(column.label)}<span class="th-arrow">${arrow}</span></th>`;
+    }).join('');
+
+    const rows = groups.map(group => {
+        const header = group.key
+            ? `<tr class="group-row group-${group.records[0].status.level}">
+                   <td colspan="${columnCount}">${escapeHtml(group.key)} · ${group.records.length}</td>
+               </tr>`
+            : '';
+
+        return header + group.records.map(record => `
+            <tr class="appliance-row ${record.appliance.id === nodemapState.selectedId ? 'is-selected' : ''}"
+                data-id="${record.appliance.id}" tabindex="0">
+                <td class="primary-cell">
+                    <span class="status-dot" style="background-color:${record.status.circleColor}"
+                          title="${escapeHtml(record.status.statusText)}"></span>
+                    <span class="row-name">${escapeHtml(record.name)}</span>
+                </td>
+                <td>${escapeHtml(roleLabels[record.role] || record.role)}</td>
+                <td class="mono xsmall">${escapeHtml(record.model)}</td>
+                <td>${escapeHtml(record.typeLabel)}</td>
+                <td class="mono xsmall">${escapeHtml(record.firmware)}</td>
+                <td class="row-modules">
+                    ${record.modules.map(m => `<span class="badge">${escapeHtml(m)}</span>`).join('')}
+                    ${record.info.hasIntegratedTrace ? '<span class="badge">PCAP</span>' : ''}
+                </td>
+            </tr>
+        `).join('');
+    }).join('');
+
+    body.innerHTML = `
+        <table class="appliance-table">
+            <thead><tr>${head}</tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+    `;
+
+    body.querySelectorAll('.th-sort').forEach(th => {
+        const activate = () => {
+            const key = th.dataset.sort;
+            if (nodemapState.sortKey === key) {
+                nodemapState.sortDir = nodemapState.sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                nodemapState.sortKey = key;
+                nodemapState.sortDir = 'asc';
+            }
+            renderNodemap();
+        };
+        th.addEventListener('click', activate);
+        th.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                activate();
+            }
+        });
+    });
+
+    body.querySelectorAll('.appliance-row').forEach(row => {
+        const open = () => {
+            const record = records.find(r => r.appliance.id?.toString() === row.dataset.id);
+            if (record) selectAppliance(record);
+        };
+        row.addEventListener('click', open);
+        row.addEventListener('keydown', event => {
+            if (event.key === 'Enter') open();
+        });
+    });
+}
+
+/* ------------------------------- Topology view ------------------------------- */
+
+// Tiers sort by status then name so a scan down a column is meaningful, and
+// rows left-align into a real grid instead of centering each row separately.
+function sortTier(records) {
+    return [...records].sort((a, b) =>
+        statusRank[a.status.level] - statusRank[b.status.level] ||
+        a.name.localeCompare(b.name)
+    );
+}
+
+function renderGraph(records) {
+    const svg = d3.select('#nodeGraph');
+    const graphArea = document.getElementById('graphMainArea');
+
+    // Width comes from the scroll area, not the page, so opening the details
+    // panel narrows the drawing. Height follows the layout and the scroll area
+    // clips it, so the page itself never grows.
+    const width = Math.max(480, graphArea.clientWidth - 48);
+    svg.attr('width', width);
+    svg.selectAll('*').remove();
+
+    if (records.length === 0) {
+        svg.attr('height', 400);
+        svg.append('text')
+            .attr('x', width / 2)
+            .attr('y', 200)
+            .attr('text-anchor', 'middle')
+            .attr('fill', 'currentColor')
+            .attr('opacity', 0.6)
+            .text('No appliances match the current filters');
+        return;
+    }
+
     const g = svg.append('g');
     const zoom = d3.zoom()
         .scaleExtent([0.3, 3])
-        .filter(event => {
-            // Only zoom on right-button + wheel, or ctrl+wheel
-            return (event.button === 2 || event.ctrlKey) || event.type !== 'wheel';
-        })
-        .on('zoom', (event) => {
-            g.attr('transform', event.transform);
-        });
-    
+        .filter(event => (event.button === 2 || event.ctrlKey) || event.type !== 'wheel')
+        .on('zoom', event => g.attr('transform', event.transform));
+
     svg.call(zoom);
-    
-    // Prevent context menu on right-click
-    svg.on('contextmenu', (event) => {
-        event.preventDefault();
-    });
+    svg.on('contextmenu', event => event.preventDefault());
 
-    // Add instructions
-    svg.append('text')
-        .attr('x', 10)
-        .attr('y', 20)
-        .attr('fill', '#9ca3af')
-        .attr('font-size', '12')
-        .text('Right-click + scroll to zoom, drag to pan');
+    svg.append('defs').append('style').text(`
+        .trunk { fill: none; stroke: var(--text-muted); stroke-width: 2; stroke-opacity: .7; }
+        .tier-rule { stroke: var(--hairline); stroke-width: 1; }
+        .tier-label { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+        .node-rect { stroke-width: 2; cursor: pointer; }
+        .node-rect.virtual { stroke-dasharray: 5,5; }
+        .node-rect.is-selected { stroke-width: 3; }
+        .node-text { cursor: pointer; user-select: none; }
+        .status-indicator { stroke: var(--raised); stroke-width: 2; }
+    `);
 
-    // Filter appliances based on active filters
-    const filteredAppliances = nodemapState.appliances.filter(a => {
-        const info = getNodeInfo(a);
-        const statusInfo = getStatusInfo(a);
-
-        // Determine logical type based on model/platform
-        const model = (a.license_platform || '').toString().toUpperCase();
-        let typeTag = 'other';
-
-        if (info.platform === 'command') {
-            typeTag = 'command';
-        } else if (model.startsWith('EFC')) {
-            typeTag = 'efc';
-        } else if (model.startsWith('EDA')) {
-            typeTag = 'discover';
-        } else if ((info.platform === 'packetstore' || info.platform === 'trace') && !info.hasIntegratedTrace) {
-            typeTag = 'trace';
-        }
-
-        // Platform / model filters
-        if (typeTag === 'discover' && !nodemapState.filters.discover) return false;
-        if (typeTag === 'trace' && !nodemapState.filters.trace) return false;
-        if (typeTag === 'efc' && !nodemapState.filters.efc) return false;
-        if (typeTag === 'other' && !nodemapState.filters.other) return false;
-        // Command nodes are always shown
-
-        // Deployment type filters
-        if (info.isVirtual && !nodemapState.filters.virtual) return false;
-        if (!info.isVirtual && !nodemapState.filters.physical) return false;
-
-        // Connection status filters: only apply to true online/error states
-        if (statusInfo.level === 'online' && !nodemapState.filters.online) return false;
-        if (statusInfo.level === 'error' && !nodemapState.filters.offline) return false;
-
-        // Search within remaining appliances
-        if (!matchesSearch(a)) return false;
-        
-        return true;
-    });
-
-    // Group appliances by type
-    const commandAppliances = filteredAppliances.filter(a => {
-        const info = getNodeInfo(a);
-        return info.platform === 'command';
-    });
-    
-    const discoverAppliances = filteredAppliances.filter(a => {
-        const info = getNodeInfo(a);
-        return info.platform === 'packet_sensor' || info.platform === 'discover' || 
-               info.platform === 'multifunction_sensor' || info.platform === 'all_in_one';
-    });
-    
-    const traceAppliances = filteredAppliances.filter(a => {
-        const info = getNodeInfo(a);
-        return (info.platform === 'packetstore' || info.platform === 'trace') && 
-               !info.hasIntegratedTrace;
-    });
-
-    // Layout parameters
     const nodeWidth = 180;
     const nodeHeight = 60;
-    const horizontalGap = 20;
-    const verticalGap = 100;
-    const rowGap = 80;
-    
-    // Calculate optimal nodes per row based on available width
-    const maxNodesPerRow = Math.floor((width - 100) / (nodeWidth + horizontalGap));
-    const nodesPerRow = Math.max(3, Math.min(maxNodesPerRow, 10));
+    const gap = 20;
+    const rowGap = 78;
+    const marginX = 24;
+    const tierGap = 64;
 
-    // Calculate positions for each group with flexible rows
-    function calculatePositions(appliances, startY) {
-        const positions = [];
-        let currentRow = 0;
-        let currentX = 0;
-        
-        appliances.forEach((app, i) => {
-            if (i > 0 && i % nodesPerRow === 0) {
-                currentRow++;
-                currentX = 0;
-            }
-            
-            const nodesInThisRow = Math.min(nodesPerRow, appliances.length - currentRow * nodesPerRow);
-            const rowWidth = nodesInThisRow * (nodeWidth + horizontalGap) - horizontalGap;
-            const rowStartX = (width - rowWidth) / 2;
-            
-            positions.push({
-                appliance: app,
-                x: rowStartX + currentX * (nodeWidth + horizontalGap),
-                y: startY + currentRow * rowGap
-            });
-            
-            currentX++;
-        });
-        
-        return positions;
+    const perRow = Math.max(1, Math.floor((width - marginX * 2 + gap) / (nodeWidth + gap)));
+
+    const consoles = sortTier(records.filter(r => r.role === 'command'));
+    const tiers = ['discover', 'trace', 'efc', 'other']
+        .map(role => ({ role, records: sortTier(records.filter(r => r.role === role)) }))
+        .filter(tier => tier.records.length > 0);
+
+    // Left-aligned grid: every row starts at the same x, so columns line up.
+    function layout(tierRecords, startY) {
+        return tierRecords.map((record, i) => ({
+            record,
+            x: marginX + (i % perRow) * (nodeWidth + gap),
+            y: startY + Math.floor(i / perRow) * rowGap
+        }));
     }
 
-    // Calculate Y positions for each tier
-    const commandY = 60;
-    const commandPositions = calculatePositions(commandAppliances, commandY);
-    const commandMaxY = commandPositions.length > 0 ? 
-        Math.max(...commandPositions.map(p => p.y)) + nodeHeight : commandY;
-    
-    const discoverY = commandMaxY + verticalGap;
-    const discoverPositions = calculatePositions(discoverAppliances, discoverY);
-    const discoverMaxY = discoverPositions.length > 0 ? 
-        Math.max(...discoverPositions.map(p => p.y)) + nodeHeight : discoverY;
-    
-    const traceY = discoverMaxY + verticalGap;
-    const tracePositions = calculatePositions(traceAppliances, traceY);
-
-    // Determine the total required height based on the lowest row that has
-    // nodes, so the SVG height closely matches the actual content.
-    let contentBottom = commandMaxY;
-    if (discoverPositions.length > 0) {
-        contentBottom = discoverMaxY;
-    }
-    if (tracePositions.length > 0) {
-        const traceMaxY = Math.max(...tracePositions.map(p => p.y)) + nodeHeight;
-        contentBottom = traceMaxY;
+    function tierBottom(positions, fallback) {
+        if (positions.length === 0) return fallback;
+        return Math.max(...positions.map(p => p.y)) + nodeHeight;
     }
 
-    const height = Math.max(400, contentBottom + verticalGap);
+    let cursorY = 24;
+    const consolePositions = layout(consoles, cursorY);
+    cursorY = tierBottom(consolePositions, cursorY);
 
-    container.style.height = height + 'px';
-    container.style.minHeight = height + 'px';
-    svg.attr('height', height);
+    const consoleX = consolePositions.length > 0
+        ? consolePositions[0].x + nodeWidth / 2
+        : marginX + nodeWidth / 2;
 
-    // Add CSS for links and nodes
-    const defs = svg.append('defs');
-    const style = defs.append('style')
-        .text(`
-            .link {
-                fill: none;
-                stroke: var(--text-muted);
-                stroke-width: 2;
-                stroke-opacity: 0.8;
-            }
-            .node-rect {
-                stroke-width: 2;
-                cursor: pointer;
-                transition: all 0.2s;
-            }
-            .node-rect:hover {
-                stroke-width: 3;
-            }
-            .node-rect.virtual {
-                stroke-dasharray: 5,5;
-            }
-            .node-text {
-                cursor: pointer;
-                user-select: none;
-            }
-            .status-indicator {
-                stroke: white;
-                stroke-width: 2;
-            }
-        `);
-
-    // Draw curved links from command to all other appliances
-    commandPositions.forEach(cmd => {
-        const cmdX = cmd.x + nodeWidth / 2;
-        const cmdY = cmd.y + nodeHeight;
-        
-        discoverPositions.forEach(dis => {
-            const disX = dis.x + nodeWidth / 2;
-            const disY = dis.y;
-            
-            const midY = (cmdY + disY) / 2;
-            
-            g.append('path')
-                .attr('class', 'link')
-                .attr('d', `M ${cmdX} ${cmdY} Q ${cmdX} ${midY}, ${disX} ${disY}`);
-        });
-        
-        tracePositions.forEach(trc => {
-            const trcX = trc.x + nodeWidth / 2;
-            const trcY = trc.y;
-            
-            const midY = (cmdY + trcY) / 2;
-            
-            g.append('path')
-                .attr('class', 'link')
-                .attr('d', `M ${cmdX} ${cmdY} Q ${cmdX} ${midY}, ${trcX} ${trcY}`);
-        });
+    // One trunk per tier instead of one edge per node. Every sensor connects to
+    // the console, so a rule and a count say it without 40 crossing curves.
+    const drawnTiers = tiers.map(tier => {
+        const ruleY = cursorY + tierGap / 2;
+        const positions = layout(tier.records, ruleY + tierGap / 2);
+        cursorY = tierBottom(positions, ruleY);
+        return { ...tier, ruleY, positions };
     });
 
-    // Draw nodes
+    const height = Math.max(400, cursorY + 32);
+    svg.attr('height', height);
+
+    if (drawnTiers.length > 0 && consolePositions.length > 0) {
+        const lastRuleY = drawnTiers[drawnTiers.length - 1].ruleY;
+        g.append('path')
+            .attr('class', 'trunk')
+            .attr('d', `M ${consoleX} ${tierBottom(consolePositions, 0)} L ${consoleX} ${lastRuleY}`);
+    }
+
+    drawnTiers.forEach(tier => {
+        g.append('line')
+            .attr('class', 'tier-rule')
+            .attr('x1', marginX)
+            .attr('y1', tier.ruleY)
+            .attr('x2', width - marginX)
+            .attr('y2', tier.ruleY);
+
+        g.append('text')
+            .attr('class', 'tier-label')
+            .attr('x', marginX)
+            .attr('y', tier.ruleY - 8)
+            .attr('fill', 'currentColor')
+            .attr('opacity', 0.65)
+            .text(`${roleLabels[tier.role] || tier.role} · ${tier.records.length}`);
+    });
+
+    function truncate(textSelection, fullText, maxWidth) {
+        let text = fullText;
+        while (textSelection.node().getComputedTextLength() > maxWidth && text.length > 1) {
+            text = text.slice(0, -1);
+            textSelection.text(text + '…');
+        }
+    }
+
     function drawNodes(positions) {
-        positions.forEach(pos => {
-            const appliance = pos.appliance;
-            const x = pos.x;
-            const y = pos.y;
-            const info = getNodeInfo(appliance);
-            const statusInfo = getStatusInfo(appliance);
-
-            const model = (appliance.license_platform || '').toString().toUpperCase();
-            let typeTag = 'other';
-
-            if (info.platform === 'command') {
-                typeTag = 'command';
-            } else if (model.startsWith('EFC')) {
-                typeTag = 'efc';
-            } else if (model.startsWith('EDA')) {
-                typeTag = 'discover';
-            } else if ((info.platform === 'packetstore' || info.platform === 'trace') && !info.hasIntegratedTrace) {
-                typeTag = 'trace';
-            }
-
-            // Use a neutral card-like fill for all nodes, with a limited set of
-            // accent colors (borders) based on platform/type to reduce visual noise
-            let strokeColor;
-            if (typeTag === 'efc') {
-                strokeColor = platformColors.efc; // Plum for Flow Collector
-            } else if (typeTag === 'discover') {
-                strokeColor = platformColors.discover;
-            } else if (typeTag === 'trace') {
-                strokeColor = platformColors.trace;
-            } else if (typeTag === 'command') {
-                strokeColor = platformColors.command;
-            } else if (typeTag === 'other') {
-                strokeColor = '#6b7280'; // text-muted gray for Other
-            } else {
-                strokeColor = platformColors[info.platform] || '#6b7280';
-            }
-
-            const fillColor = 'var(--bg-subtle)';
+        positions.forEach(({ record, x, y }) => {
+            const strokeColor = record.role === 'other'
+                ? '#6b7280'
+                : (platformColors[record.role] || platformColors[record.info.platform] || '#6b7280');
 
             const nodeGroup = g.append('g')
                 .attr('class', 'node-group')
-                .attr('data-id', appliance.id);
+                .attr('data-id', record.appliance.id);
 
             nodeGroup.append('rect')
-                .attr('class', `node-rect ${info.isVirtual ? 'virtual' : ''}`)
+                .attr('class', `node-rect ${record.info.isVirtual ? 'virtual' : ''} ${record.appliance.id === nodemapState.selectedId ? 'is-selected' : ''}`)
                 .attr('x', x)
                 .attr('y', y)
                 .attr('width', nodeWidth)
                 .attr('height', nodeHeight)
                 .attr('rx', 8)
-                .attr('fill', fillColor)
+                .attr('fill', 'var(--bg-subtle)')
                 .attr('stroke', strokeColor);
 
-            // Display name with truncation
-            const displayName = appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`;
-            const displayText = nodeGroup.append('text')
+            const nameText = nodeGroup.append('text')
                 .attr('class', 'node-text')
-                .attr('x', x + nodeWidth / 2)
-                .attr('y', y + 22)
-                .attr('text-anchor', 'middle')
+                .attr('x', x + 12)
+                .attr('y', y + 24)
                 .attr('fill', 'currentColor')
                 .attr('font-weight', '600')
                 .attr('font-size', '14')
-                .text(displayName);
-            
-            // Truncate if too long
-            let textLength = displayText.node().getComputedTextLength();
-            let text = displayName;
-            while (textLength > (nodeWidth - 10) && text.length > 0) {
-                text = text.substring(0, text.length - 1);
-                displayText.text(text + '...');
-                textLength = displayText.node().getComputedTextLength();
-            }
+                .text(record.name);
+            truncate(nameText, record.name, nodeWidth - 40);
 
-            // Model name with truncation
-            const modelName = appliance.license_platform || appliance.platform;
             const modelText = nodeGroup.append('text')
                 .attr('class', 'node-text')
-                .attr('x', x + nodeWidth / 2)
-                .attr('y', y + 40)
-                .attr('text-anchor', 'middle')
+                .attr('x', x + 12)
+                .attr('y', y + 43)
                 .attr('fill', 'currentColor')
                 .attr('font-size', '11')
                 .attr('opacity', 0.7)
-                .text(modelName);
-            
-            // Truncate model name if needed
-            textLength = modelText.node().getComputedTextLength();
-            text = modelName;
-            while (textLength > (nodeWidth - 10) && text.length > 0) {
-                text = text.substring(0, text.length - 1);
-                modelText.text(text + '...');
-                textLength = modelText.node().getComputedTextLength();
-            }
+                .text(record.model);
+            truncate(modelText, record.model, nodeWidth - 24);
 
             nodeGroup.append('circle')
                 .attr('class', 'status-indicator')
-                .attr('cx', x + nodeWidth - 10)
-                .attr('cy', y + 10)
-                .attr('r', 6)
-                .attr('fill', statusInfo.circleColor);
+                .attr('cx', x + nodeWidth - 12)
+                .attr('cy', y + 12)
+                .attr('r', 5)
+                .attr('fill', record.status.circleColor);
 
-            if (info.hasIntegratedTrace) {
-                nodeGroup.append('rect')
-                    .attr('x', x + 5)
-                    .attr('y', y + 5)
-                    .attr('width', 30)
-                    .attr('height', 16)
-                    .attr('rx', 4)
-                    .attr('fill', platformColors.trace)
-                    .attr('opacity', 0.8);
-                
-                nodeGroup.append('text')
-                    .attr('class', 'node-text')
-                    .attr('x', x + 20)
-                    .attr('y', y + 16)
-                    .attr('text-anchor', 'middle')
-                    .attr('fill', 'white')
-                    .attr('font-size', '9')
-                    .attr('font-weight', '600')
-                    .text('PCAP');
-            }
-
-            nodeGroup.on('click', () => showNodeDetails(appliance));
+            nodeGroup.on('click', () => selectAppliance(record));
         });
     }
 
-    drawNodes(commandPositions);
-    drawNodes(discoverPositions);
-    drawNodes(tracePositions);
+    drawNodes(consolePositions);
+    drawnTiers.forEach(tier => drawNodes(tier.positions));
 }
 
-// Show/hide node details panel
+/* ------------------------------- Details panel ------------------------------- */
+
 function showNodeDetailsPanel() {
     const panel = document.getElementById('nodeDetailsPanel');
     const graphArea = document.getElementById('graphMainArea');
-    
+    const listArea = document.getElementById('listMainArea');
+
     panel.style.display = 'flex';
-    // Trigger reflow so the slide-in transition runs
-    panel.offsetHeight;
+    panel.offsetHeight; // reflow so the slide-in transition runs
     panel.classList.add('is-open');
 
-    // Give the graph the remaining width
     graphArea.style.width = 'calc(100% - 384px)';
+    listArea.style.width = 'calc(100% - 384px)';
 
-    // Re-render graph to fit new container size
-    setTimeout(() => {
-        renderGraph();
-    }, 350); // Wait for animation to complete
+    // Only the SVG needs re-measuring; the list reflows on its own.
+    if (nodemapState.view === 'topology') {
+        setTimeout(() => renderGraph(getVisibleRecords()), 350);
+    }
 }
 
 function hideNodeDetailsPanel() {
     const panel = document.getElementById('nodeDetailsPanel');
     const graphArea = document.getElementById('graphMainArea');
-    
+    const listArea = document.getElementById('listMainArea');
+
     panel.classList.remove('is-open');
     graphArea.style.width = '100%';
-    
-    // Re-render graph to fit new container size
-    setTimeout(() => {
-        renderGraph();
-    }, 350); // Wait for animation to complete
-    
-    // Hide panel after animation
-    setTimeout(() => {
-        panel.style.display = 'none';
-    }, 300);
+    listArea.style.width = '100%';
+    nodemapState.selectedId = null;
+
+    if (nodemapState.view === 'topology') {
+        setTimeout(() => renderGraph(getVisibleRecords()), 350);
+    } else {
+        document.querySelectorAll('.appliance-row.is-selected')
+            .forEach(row => row.classList.remove('is-selected'));
+    }
+
+    setTimeout(() => { panel.style.display = 'none'; }, 300);
 }
 
-// Show node details in right panel
-function showNodeDetails(appliance) {
+function selectAppliance(record) {
+    nodemapState.selectedId = record.appliance.id;
+
+    if (nodemapState.view === 'list') {
+        document.querySelectorAll('.appliance-row').forEach(row => {
+            row.classList.toggle('is-selected', row.dataset.id === String(record.appliance.id));
+        });
+    } else {
+        document.querySelectorAll('.node-rect').forEach(rect => {
+            const owner = rect.closest('.node-group');
+            rect.classList.toggle('is-selected', owner?.dataset.id === String(record.appliance.id));
+        });
+    }
+
+    showNodeDetails(record);
+}
+
+function showNodeDetails(record) {
+    const { appliance, info, status } = record;
     const content = document.getElementById('nodeDetailsPanelContent');
-    const info = getNodeInfo(appliance);
-    const statusInfo = getStatusInfo(appliance);
-    const displayName = appliance.display_name || appliance.hostname || `Appliance ${appliance.id}`;
-    
+
     content.innerHTML = `
         <div class="stack">
             <div>
                 <div class="filter-group-title">Basic information</div>
                 <div class="detail-panel stack-sm">
-                    ${detailItem('Name', displayName)}
-                    ${detailItem('Model', appliance.license_platform || 'Unknown')}
+                    ${detailItem('Name', record.name)}
+                    ${detailItem('Role', roleLabels[record.role] || record.role)}
+                    ${detailItem('Model', record.model)}
                     ${detailItem('Platform', appliance.platform || 'Unknown')}
-                    ${detailItem('Firmware', appliance.firmware_version || 'Unknown')}
+                    ${detailItem('Firmware', record.firmware)}
                     <div>
                         <span class="detail-label">Status</span>
-                        <span class="${statusInfo.badgeClass}"><span class="badge-dot"></span>${escapeHtml(statusInfo.statusText)}</span>
+                        <span class="${status.badgeClass}"><span class="badge-dot"></span>${escapeHtml(status.statusText)}</span>
                     </div>
                     <div>
                         <span class="detail-label">Type</span>
-                        <span class="badge">${info.isVirtual ? 'Virtual' : 'Physical'}</span>
+                        <span class="badge">${record.typeLabel}</span>
                     </div>
                     ${info.hasIntegratedTrace ? `
                     <div>
@@ -642,70 +757,58 @@ function showNodeDetails(appliance) {
                 </div>
             </div>
 
-            ${appliance.product_modules && appliance.product_modules.length > 0 ? `
+            ${record.modules.length > 0 ? `
             <div>
                 <div class="filter-group-title">Product modules</div>
                 <div class="row-tight">
-                    ${appliance.product_modules.map(module => {
-                        const label = (module == null ? '' : module.toString()).toUpperCase();
-                        return `<span class="badge">${escapeHtml(label)}</span>`;
-                    }).join('')}
+                    ${record.modules.map(module => `<span class="badge">${escapeHtml(module)}</span>`).join('')}
                 </div>
             </div>
             ` : ''}
         </div>
     `;
-    
+
     showNodeDetailsPanel();
 }
 
-// Update search term and re-render
+/* ------------------------------- Controls ------------------------------- */
+
 function updateNodemapSearch(searchValue) {
     nodemapState.searchTerm = searchValue.trim();
     if (nodemapState.appliances.length > 0) {
-        renderGraph();
+        renderNodemap();
     }
 }
 
-// Show/hide controls when connected
 function showNodemapControls() {
     const controls = document.getElementById('nodemapControls');
-    if (controls) {
-        controls.style.display = 'flex';
-    }
+    if (controls) controls.style.display = 'flex';
 }
 
 function hideNodemapControls() {
     const controls = document.getElementById('nodemapControls');
-    if (controls) {
-        controls.style.display = 'none';
-    }
+    if (controls) controls.style.display = 'none';
 }
 
-// Update filter checkboxes to match current state
+const nodemapFilterMap = {
+    'filter-discover': 'discover',
+    'filter-trace': 'trace',
+    'filter-efc': 'efc',
+    'filter-other': 'other',
+    'filter-physical': 'physical',
+    'filter-virtual': 'virtual',
+    'filter-online': 'online',
+    'filter-offline': 'offline'
+};
+
 function updateFilterCheckboxes() {
-    const filterMap = {
-        'filter-discover': 'discover', 
-        'filter-trace': 'trace',
-        'filter-efc': 'efc',
-        'filter-other': 'other',
-        'filter-physical': 'physical',
-        'filter-virtual': 'virtual',
-        'filter-online': 'online',
-        'filter-offline': 'offline'
-    };
-
-    for (const [elementId, filterKey] of Object.entries(filterMap)) {
+    for (const [elementId, filterKey] of Object.entries(nodemapFilterMap)) {
         const checkbox = document.getElementById(elementId);
-        if (checkbox) {
-            checkbox.checked = nodemapState.filters[filterKey];
-        }
+        if (checkbox) checkbox.checked = nodemapState.filters[filterKey];
     }
 }
 
-// Set up event listeners for filter controls
 function setupNodemapFilterEventListeners() {
-    // Filter button to show modal
     const showFiltersBtn = document.getElementById('showNodemapFilters');
     if (showFiltersBtn) {
         showFiltersBtn.addEventListener('click', () => {
@@ -714,48 +817,41 @@ function setupNodemapFilterEventListeners() {
         });
     }
 
-    // Search input
     const searchInput = document.getElementById('nodemapSearch');
     if (searchInput) {
-        searchInput.addEventListener('input', (e) => {
-            updateNodemapSearch(e.target.value);
+        searchInput.addEventListener('input', e => updateNodemapSearch(e.target.value));
+    }
+
+    document.querySelectorAll('#nodemapViewToggle button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (nodemapState.view === btn.dataset.view) return;
+            nodemapState.view = btn.dataset.view;
+            renderNodemap();
+        });
+    });
+
+    const groupSelect = document.getElementById('nodemapGroupBy');
+    if (groupSelect) {
+        groupSelect.addEventListener('change', e => {
+            nodemapState.groupBy = e.target.value;
+            renderNodemap();
         });
     }
 
-    // Filter modal controls
     const closeFiltersBtn = document.getElementById('closeNodemapFilters');
     if (closeFiltersBtn) {
-        closeFiltersBtn.addEventListener('click', () => {
-            hideModal('nodemapFiltersModal');
-        });
+        closeFiltersBtn.addEventListener('click', () => hideModal('nodemapFiltersModal'));
     }
 
     const applyFiltersBtn = document.getElementById('applyNodemapFilters');
     if (applyFiltersBtn) {
         applyFiltersBtn.addEventListener('click', () => {
-            // Update filter state from checkboxes
-            const filterMap = {
-                'filter-discover': 'discover', 
-                'filter-trace': 'trace',
-                'filter-efc': 'efc',
-                'filter-other': 'other',
-                'filter-physical': 'physical',
-                'filter-virtual': 'virtual',
-                'filter-online': 'online',
-                'filter-offline': 'offline'
-            };
-
-            for (const [elementId, filterKey] of Object.entries(filterMap)) {
+            for (const [elementId, filterKey] of Object.entries(nodemapFilterMap)) {
                 const checkbox = document.getElementById(elementId);
-                if (checkbox) {
-                    nodemapState.filters[filterKey] = checkbox.checked;
-                }
+                if (checkbox) nodemapState.filters[filterKey] = checkbox.checked;
             }
 
-            // Re-render graph and close modal
-            if (nodemapState.appliances.length > 0) {
-                renderGraph();
-            }
+            if (nodemapState.appliances.length > 0) renderNodemap();
             hideModal('nodemapFiltersModal');
         });
     }
@@ -763,7 +859,6 @@ function setupNodemapFilterEventListeners() {
     const resetFiltersBtn = document.getElementById('resetNodemapFilters');
     if (resetFiltersBtn) {
         resetFiltersBtn.addEventListener('click', () => {
-            // Reset all filters to true
             Object.keys(nodemapState.filters).forEach(key => {
                 nodemapState.filters[key] = true;
             });
@@ -771,51 +866,39 @@ function setupNodemapFilterEventListeners() {
         });
     }
 
-    // Close node details panel
     const closeNodeDetailsPanelBtn = document.getElementById('closeNodeDetailsPanel');
     if (closeNodeDetailsPanelBtn) {
-        closeNodeDetailsPanelBtn.addEventListener('click', () => {
-            hideNodeDetailsPanel();
-        });
+        closeNodeDetailsPanelBtn.addEventListener('click', hideNodeDetailsPanel);
     }
 
-    // Modal background click to close (only for filters modal now)
     const modal = document.getElementById('nodemapFiltersModal');
     if (modal) {
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                hideModal('nodemapFiltersModal');
-            }
+        modal.addEventListener('click', e => {
+            if (e.target === modal) hideModal('nodemapFiltersModal');
         });
     }
 }
 
-// Nodemap module activation function (called every time module is shown)
+/* ------------------------------- Lifecycle ------------------------------- */
+
 function activateNodemapModule() {
     console.log('Activating Nodemap module');
-    
-    // Check if we need to load/refresh based on connection state
+
     if (state.connected && nodemapState.appliances.length === 0) {
-        // Connected but no appliances loaded, load them
         loadAppliances();
-    } else if (state.connected && nodemapState.appliances.length > 0) {
-        // Connected and have appliances, make sure controls are visible
+    } else if (state.connected) {
         showNodemapControls();
-        document.getElementById('graphContainer').style.display = 'block';
+        document.getElementById('graphContainer').style.display = 'flex';
         document.getElementById('nodemapWelcome').style.display = 'none';
-    } else if (!state.connected) {
-        // Not connected, show welcome
+        renderNodemap();
+    } else {
         showNodemapWelcome();
     }
 }
 
-// Nodemap module initialization function (called once when module first loads)
 function initNodemapModule() {
     console.log('Initializing Nodemap module');
-    
-    // Set up event listeners
+
     setupNodemapFilterEventListeners();
-    
-    // Initial activation
     activateNodemapModule();
 }

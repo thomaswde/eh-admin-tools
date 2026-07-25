@@ -3,6 +3,7 @@
 class ModuleLoader {
     constructor() {
         this.loadedModules = new Set();
+        this.loadingModules = new Map();
         this.moduleMap = {
             'dashboards': 'dashboard-manager.js',
             'users': 'user-manager.js',
@@ -18,11 +19,24 @@ class ModuleLoader {
         };
     }
 
-    async loadModule(moduleName) {
+    loadModule(moduleName) {
         if (this.loadedModules.has(moduleName)) {
-            return true; // Already loaded
+            return Promise.resolve(true); // Already loaded
+        }
+        if (this.loadingModules.has(moduleName)) {
+            return this.loadingModules.get(moduleName);
         }
 
+        const pending = this.loadModuleOnce(moduleName).finally(() => {
+            if (this.loadingModules.get(moduleName) === pending) {
+                this.loadingModules.delete(moduleName);
+            }
+        });
+        this.loadingModules.set(moduleName, pending);
+        return pending;
+    }
+
+    async loadModuleOnce(moduleName) {
         const moduleFile = this.moduleMap[moduleName];
         if (!moduleFile) {
             console.warn(`Module '${moduleName}' not found in module map`);

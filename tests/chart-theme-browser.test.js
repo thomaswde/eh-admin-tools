@@ -46,6 +46,11 @@ test('chart theme dependency explicitly exports the API used by System Health', 
 
     assert.equal(typeof window.initChartThemePanel, 'function');
     assert.equal(typeof window.chartThemeResolvedColors, 'function');
+    const firstPanelInitializer = window.initChartThemePanel;
+    const firstPaletteResolver = window.chartThemeResolvedColors;
+    assert.doesNotThrow(() => vm.runInContext(chartThemeSource, context));
+    assert.equal(window.initChartThemePanel, firstPanelInitializer);
+    assert.equal(window.chartThemeResolvedColors, firstPaletteResolver);
 
     vm.runInContext(systemHealthSource, context);
     assert.doesNotThrow(() => vm.runInContext('setupSystemHealthStylePanel()', context));

@@ -13,6 +13,15 @@
 // writes to <install>/chart-themes/, so they survive an upgrade and can be
 // copied between installs.
 
+(() => {
+
+if (
+    typeof window.initChartThemePanel === 'function'
+    && typeof window.chartThemeResolvedColors === 'function'
+) {
+    return;
+}
+
 const CHART_THEME_STORAGE_KEY = 'ehChartTheme';
 const CHART_THEME_AUTO_ID = 'auto';
 const CHART_THEME_DRAFT_ID = 'draft';
@@ -514,3 +523,5 @@ function chartThemeEscape(value) {
 // on browser-specific handling of top-level function declarations.
 window.initChartThemePanel = initChartThemePanel;
 window.chartThemeResolvedColors = chartThemeResolvedColors;
+
+})();

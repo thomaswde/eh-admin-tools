@@ -25,6 +25,11 @@ const SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS = [
     'standard_capacity', 'total_analysis_capacity', 'advanced_capacity_source',
     'standard_capacity_source', 'api_advanced_analysis_capacity', 'api_total_capacity'
 ];
+const SYSTEM_HEALTH_DETAIL_CSV_COLUMNS = [
+    'Sensor', 'Model', 'Status', 'Packet peak', 'Packet capacity',
+    'Throughput peak', 'Throughput capacity', 'Trigger capacity', 'Trigger drops',
+    'Advanced', 'Standard', 'Discovery', 'Analysis capacity'
+];
 const systemHealthState = {
     initialized: false,
     catalog: {},
@@ -736,7 +741,7 @@ function renderSystemHealthReport(report) {
     renderSystemHealthSummary(report, rows);
     renderSystemHealthCharts(rows);
     renderSystemHealthTable(rows);
-    renderSystemHealthErrors(report.errors || []);
+    renderSystemHealthErrors(systemHealthCollectorNotes(report));
     updateSystemHealthCsvButtons();
 }
 
@@ -815,27 +820,13 @@ function renderSystemHealthAnalysisChart(rows) {
 }
 
 function renderSystemHealthTable(rows) {
-    const sorted = [...rows].sort((a, b) => {
-        const aRisk = Math.max(
-            a.packetCapacity ? a.packetPeak / a.packetCapacity : 0,
-            a.throughputCapacity ? a.throughputGbps / a.throughputCapacity : 0,
-            a.triggerCyclesAvail ? a.triggerCyclesPeak / a.triggerCyclesAvail : 0
-        );
-        const bRisk = Math.max(
-            b.packetCapacity ? b.packetPeak / b.packetCapacity : 0,
-            b.throughputCapacity ? b.throughputGbps / b.throughputCapacity : 0,
-            b.triggerCyclesAvail ? b.triggerCyclesPeak / b.triggerCyclesAvail : 0
-        );
-        return bRisk - aRisk || (a.name || '').localeCompare(b.name || '');
-    });
+    const sorted = sortSystemHealthDetailRows(rows);
 
     document.getElementById('systemHealthTableBody').innerHTML = sorted.map(row => {
         const advancedCount = row.analysis.advanced || 0;
         const standardCount = row.analysis.standard || 0;
         const discoveryCount = row.analysis.discovery || 0;
-        const totalCapacity = row.capacity && row.capacity.total_analysis !== null
-            ? row.capacity.total_analysis
-            : (row.advancedCapacity || 0) + (row.standardCapacity || 0);
+        const totalCapacity = systemHealthTotalAnalysisCapacity(row);
         const overPacket = row.packetCapacity > 0 && row.packetPeak >= row.packetCapacity;
         const overThroughput = row.throughputCapacity > 0 && row.throughputGbps >= row.throughputCapacity;
         const overTriggers = row.triggerCyclesAvail > 0 && row.triggerCyclesPeak >= row.triggerCyclesAvail;
@@ -867,11 +858,222 @@ function renderSystemHealthTable(rows) {
     }).join('') || '<tr><td colspan="13">No Discover sensors were returned.</td></tr>';
 }
 
+function sortSystemHealthDetailRows(rows) {
+    return [...rows].sort((a, b) => {
+        const aRisk = Math.max(
+            a.packetCapacity ? a.packetPeak / a.packetCapacity : 0,
+            a.throughputCapacity ? a.throughputGbps / a.throughputCapacity : 0,
+            a.triggerCyclesAvail ? a.triggerCyclesPeak / a.triggerCyclesAvail : 0
+        );
+        const bRisk = Math.max(
+            b.packetCapacity ? b.packetPeak / b.packetCapacity : 0,
+            b.throughputCapacity ? b.throughputGbps / b.throughputCapacity : 0,
+            b.triggerCyclesAvail ? b.triggerCyclesPeak / b.triggerCyclesAvail : 0
+        );
+        return bRisk - aRisk || (a.name || '').localeCompare(b.name || '');
+    });
+}
+
+function systemHealthTotalAnalysisCapacity(row) {
+    return row.capacity && row.capacity.total_analysis !== null && row.capacity.total_analysis !== undefined
+        ? row.capacity.total_analysis
+        : (row.advancedCapacity || 0) + (row.standardCapacity || 0);
+}
+
+function systemHealthSensorDetailRows(report) {
+    return sortSystemHealthDetailRows(systemHealthRows(report)).map(row => {
+        const advancedCount = row.analysis.advanced || 0;
+        const standardCount = row.analysis.standard || 0;
+        const discoveryCount = row.analysis.discovery || 0;
+        return {
+            'Sensor': row.name || row.hostname || row.id,
+            'Model': row.license_platform || '',
+            'Status': systemHealthRowStatusText(row) || 'complete',
+            'Packet peak': formatSystemHealthRate(row.packetPeak),
+            'Packet capacity': formatSystemHealthRate(row.packetCapacity),
+            'Throughput peak': formatSystemHealthGbps(row.throughputGbps),
+            'Throughput capacity': formatSystemHealthGbps(row.throughputCapacity),
+            'Trigger capacity': formatSystemHealthTriggerCapacity(row),
+            'Trigger drops': formatSystemHealthNumber(row.triggerDropsTotal),
+            'Advanced': formatSystemHealthTierValue(advancedCount, row.advancedCapacity || 0),
+            'Standard': formatSystemHealthTierValue(standardCount, row.standardCapacity || 0),
+            'Discovery': formatSystemHealthNumber(discoveryCount),
+            'Analysis capacity': formatSystemHealthNumber(systemHealthTotalAnalysisCapacity(row))
+        };
+    });
+}
+
+function systemHealthSensorDetailCsv(report) {
+    return systemHealthRowsToCsv(SYSTEM_HEALTH_DETAIL_CSV_COLUMNS, systemHealthSensorDetailRows(report));
+}
+
 function renderSystemHealthErrors(errors) {
     const notes = document.getElementById('systemHealthNotes');
     const list = document.getElementById('systemHealthErrorList');
     notes.style.display = errors.length ? 'block' : 'none';
     list.innerHTML = errors.map(error => `<li>${escapeSystemHealthHtml(error)}</li>`).join('');
+}
+
+function systemHealthCollectorNotes(report) {
+    const errors = Array.from(new Set((report && report.errors) || []));
+    const remaining = new Set(errors);
+    const appliances = (report && report.appliances) || [];
+    const appliancesById = Object.fromEntries(appliances.map(appliance => [String(appliance.id), appliance]));
+    const notes = [];
+    const coverageGroups = new Map();
+    const coveragePattern = /^(.+?) \(([^()]+)\): ([a-z][a-z0-9_]*)(?: - (.*))?$/i;
+
+    errors.forEach(error => {
+        const match = coveragePattern.exec(String(error));
+        if (!match) return;
+        const [, rawMetric, rawId, rawStatus, rawDetail = ''] = match;
+        const id = String(rawId);
+        const status = rawStatus.toLowerCase();
+        const detail = rawDetail.trim();
+        const key = `${status}\u0000${detail.toLowerCase()}`;
+        if (!coverageGroups.has(key)) {
+            coverageGroups.set(key, {
+                status,
+                detail,
+                sensorIds: new Set(),
+                metrics: new Set()
+            });
+        }
+        const group = coverageGroups.get(key);
+        group.sensorIds.add(id);
+        group.metrics.add(systemHealthCollectorMetricLabel(rawMetric));
+        remaining.delete(error);
+    });
+
+    const coveredConditionKeys = new Set();
+    coverageGroups.forEach(group => {
+        const sensorIds = Array.from(group.sensorIds).sort(systemHealthSortIds);
+        const metricLabels = Array.from(group.metrics).sort((a, b) => {
+            const order = ['Packet rate', 'Throughput', 'Trigger cycles', 'Trigger capacity', 'Trigger-drop totals'];
+            return order.indexOf(a) - order.indexOf(b) || a.localeCompare(b);
+        });
+        sensorIds.forEach(id => coveredConditionKeys.add(`${id}\u0000${group.status}\u0000${group.detail.toLowerCase()}`));
+        const count = sensorIds.length;
+        const checks = systemHealthNaturalList(metricLabels);
+        const statusText = group.status === 'offline'
+            ? 'Metric collection was unavailable'
+            : `${capitalizeSystemHealthKey(group.status.replace(/_/g, ' '))} metric coverage`;
+        const detailText = group.detail ? `: ${group.detail}` : '';
+        notes.push(`${statusText} for ${count.toLocaleString()} ${count === 1 ? 'sensor' : 'sensors'} across ${checks}${detailText}. Affected: ${systemHealthCollectorSubjectList(sensorIds, appliancesById)}.`);
+    });
+
+    const analysisSubjects = [];
+    let unrecognizedTotal = 0;
+    Object.entries((report && report.device_analysis) || {}).forEach(([id, analysis]) => {
+        const count = Number(analysis && analysis.unrecognized || 0);
+        if (!count) return;
+        unrecognizedTotal += count;
+        analysisSubjects.push(`${systemHealthCollectorSubject(id, appliancesById)} (${count.toLocaleString()})`);
+    });
+    if (analysisSubjects.length) {
+        const sensorCount = analysisSubjects.length;
+        notes.push(`${unrecognizedTotal.toLocaleString()} ${unrecognizedTotal === 1 ? 'device has' : 'devices have'} unrecognized analysis values across ${sensorCount.toLocaleString()} ${sensorCount === 1 ? 'sensor' : 'sensors'}. Affected: ${systemHealthTruncatedList(analysisSubjects)}.`);
+    }
+    errors.forEach(error => {
+        if (/^Device analysis \([^)]+\): \d+ devices? had unrecognized analysis values\.$/i.test(String(error))) {
+            remaining.delete(error);
+        }
+    });
+
+    const healthGroups = new Map();
+    const synchronizationSubjects = [];
+    const synchronizationTimes = [];
+    appliances.forEach(appliance => {
+        const id = String(appliance.id);
+        (appliance.health_conditions || []).forEach(condition => {
+            const rawError = `${appliance.name}: ${condition.message}`;
+            remaining.delete(rawError);
+            const detail = String(condition.message || '');
+            if (condition.type === 'offline') {
+                const statusDetail = detail.replace(/^appliance status is /i, '');
+                if (coveredConditionKeys.has(`${id}\u0000offline\u0000${statusDetail.toLowerCase()}`)) return;
+            }
+            if (condition.type === 'synchronization') {
+                synchronizationSubjects.push(systemHealthCollectorSubject(id, appliancesById));
+                const timeMatch = /last synchronization was (.+)$/i.exec(detail);
+                const timestamp = timeMatch ? Date.parse(timeMatch[1]) : NaN;
+                if (Number.isFinite(timestamp)) synchronizationTimes.push(timestamp);
+                return;
+            }
+            const key = `${condition.type || 'health'}\u0000${detail}`;
+            if (!healthGroups.has(key)) {
+                healthGroups.set(key, {
+                    type: condition.type || 'health',
+                    detail,
+                    sensorIds: []
+                });
+            }
+            healthGroups.get(key).sensorIds.push(id);
+        });
+    });
+
+    healthGroups.forEach(group => {
+        const subjects = Array.from(new Set(group.sensorIds)).sort(systemHealthSortIds);
+        const count = subjects.length;
+        let message;
+        if (group.type === 'license') {
+            const status = group.detail.replace(/^license status is /i, '');
+            message = `${count.toLocaleString()} ${count === 1 ? 'sensor reports' : 'sensors report'} license status “${status}”`;
+        } else if (group.type === 'data_access') {
+            message = `${count.toLocaleString()} ${count === 1 ? 'sensor does' : 'sensors do'} not allow metric data access`;
+        } else if (group.type === 'offline') {
+            const status = group.detail.replace(/^appliance status is /i, '');
+            message = `${count.toLocaleString()} ${count === 1 ? 'sensor reports' : 'sensors report'} appliance status “${status}”`;
+        } else {
+            message = `${count.toLocaleString()} ${count === 1 ? 'sensor reports' : 'sensors report'} ${group.detail}`;
+        }
+        notes.push(`${message}. Affected: ${systemHealthCollectorSubjectList(subjects, appliancesById)}.`);
+    });
+
+    if (synchronizationSubjects.length) {
+        const subjects = Array.from(new Set(synchronizationSubjects)).sort();
+        const oldest = synchronizationTimes.length
+            ? ` Oldest reported synchronization: ${new Date(Math.min(...synchronizationTimes)).toISOString()}.`
+            : '';
+        notes.push(`${subjects.length.toLocaleString()} ${subjects.length === 1 ? 'sensor has' : 'sensors have'} a stale synchronization timestamp.${oldest} Affected: ${systemHealthTruncatedList(subjects)}.`);
+    }
+
+    notes.push(...remaining);
+    return Array.from(new Set(notes));
+}
+
+function systemHealthCollectorMetricLabel(metric) {
+    const labels = {
+        bytes: 'Throughput',
+        pkts: 'Packet rate',
+        trigger_cycles: 'Trigger cycles',
+        trigger_cycles_avail: 'Trigger capacity',
+        'trigger-drop totals': 'Trigger-drop totals'
+    };
+    return labels[String(metric).trim()] || String(metric).trim();
+}
+
+function systemHealthNaturalList(values) {
+    if (!values.length) return 'the collected metrics';
+    if (values.length === 1) return values[0];
+    if (values.length === 2) return `${values[0]} and ${values[1]}`;
+    return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
+}
+
+function systemHealthCollectorSubject(id, appliancesById) {
+    const appliance = appliancesById[String(id)] || {};
+    const name = appliance.name || appliance.hostname || '';
+    return name && name !== String(id) ? `${name} (${id})` : String(id);
+}
+
+function systemHealthCollectorSubjectList(ids, appliancesById) {
+    return systemHealthTruncatedList(ids.map(id => systemHealthCollectorSubject(id, appliancesById)));
+}
+
+function systemHealthTruncatedList(values, limit = 8) {
+    const shown = values.slice(0, limit);
+    const remainder = values.length - shown.length;
+    return remainder > 0 ? `${shown.join(', ')}, and ${remainder.toLocaleString()} more` : systemHealthNaturalList(shown);
 }
 
 function capitalizeSystemHealthKey(key) {
@@ -975,15 +1177,25 @@ function systemHealthAnalysisModelPages(rows) {
             const discovery = row.analysis.discovery || 0;
             const advancedRatio = advancedCapacity ? advanced / advancedCapacity : 0;
             const standardRatio = standardCapacity ? standard / standardCapacity : 0;
-            const risk = Math.max(advancedRatio, standardRatio) + (discovery > 0 ? 0.001 + Math.min(1, discovery / 1000) : 0);
-            return { ...row, advancedRatio, standardRatio, discoveryOverflow: discovery, risk };
-        }).sort((a, b) => b.risk - a.risk || b.discoveryOverflow - a.discoveryOverflow || (a.name || '').localeCompare(b.name || ''));
+            const totalDevices = systemHealthAnalysisDeviceTotal(row);
+            return { ...row, advancedRatio, standardRatio, discoveryOverflow: discovery, totalDevices };
+        }).sort((a, b) => b.totalDevices - a.totalDevices || (a.name || '').localeCompare(b.name || ''));
         const discoveryTotal = rowsWithRisk.reduce((sum, row) => sum + (row.analysis.discovery || 0), 0);
-        return { model, rows: rowsWithRisk, advancedCapacity, standardCapacity, discoveryTotal };
+        const totalDevices = rowsWithRisk.reduce((sum, row) => sum + row.totalDevices, 0);
+        return { model, rows: rowsWithRisk, advancedCapacity, standardCapacity, discoveryTotal, totalDevices };
     });
 
-    pages.sort((a, b) => b.discoveryTotal - a.discoveryTotal || b.rows.length - a.rows.length || a.model.localeCompare(b.model));
+    pages.sort((a, b) => b.totalDevices - a.totalDevices || b.rows.length - a.rows.length || a.model.localeCompare(b.model));
     return pages;
+}
+
+function systemHealthAnalysisDeviceTotal(row) {
+    const reported = row.analysis && row.analysis.total;
+    if (reported !== null && reported !== undefined && Number.isFinite(Number(reported))) {
+        return Number(reported);
+    }
+    return ['advanced', 'standard', 'discovery', 'unrecognized']
+        .reduce((sum, tier) => sum + Number(row.analysis && row.analysis[tier] || 0), 0);
 }
 
 function currentSystemHealthModelPage(key, pages) {
@@ -1048,7 +1260,8 @@ function updateSystemHealthAnalysisHeader(meta) {
         const parts = [
             `${meta.totalRows} ${meta.totalRows === 1 ? 'sensor' : 'sensors'}`,
             `Adv cap ${meta.advancedCapacity ? formatSystemHealthNumber(meta.advancedCapacity) : '-'}`,
-            `Std cap ${meta.standardCapacity ? formatSystemHealthNumber(meta.standardCapacity) : '-'}`
+            `Std cap ${meta.standardCapacity ? formatSystemHealthNumber(meta.standardCapacity) : '-'}`,
+            'Sorted by total devices'
         ];
         if (advancedHot) parts.push(`${advancedHot} at Adv cap`);
         if (standardHot) parts.push(`${standardHot} at Std cap`);
@@ -1453,12 +1666,14 @@ function slugSystemHealthFilename(value) {
 function setupSystemHealthCsvControls() {
     const loadButton = document.getElementById('systemHealthLoadCsvButton');
     const exportButton = document.getElementById('systemHealthExportCsvButton');
+    const tableExportButton = document.getElementById('systemHealthExportTableCsvButton');
     const apiExportButton = document.getElementById('systemHealthExportApiCsvButton');
     const pdfButton = document.getElementById('systemHealthExportPdfButton');
     const input = document.getElementById('systemHealthCsvInput');
     if (loadButton && input) loadButton.addEventListener('click', () => input.click());
     if (input) input.addEventListener('change', loadSystemHealthCsvFiles);
     if (exportButton) exportButton.addEventListener('click', exportSystemHealthSummaryCsv);
+    if (tableExportButton) tableExportButton.addEventListener('click', exportSystemHealthSensorDetailCsv);
     if (apiExportButton) apiExportButton.addEventListener('click', exportSystemHealthApiCsvFiles);
     if (pdfButton) pdfButton.addEventListener('click', exportSystemHealthPdf);
     updateSystemHealthCsvButtons();
@@ -1466,9 +1681,11 @@ function setupSystemHealthCsvControls() {
 
 function updateSystemHealthCsvButtons() {
     const exportButton = document.getElementById('systemHealthExportCsvButton');
+    const tableExportButton = document.getElementById('systemHealthExportTableCsvButton');
     const apiExportButton = document.getElementById('systemHealthExportApiCsvButton');
     const pdfButton = document.getElementById('systemHealthExportPdfButton');
     if (exportButton) exportButton.disabled = !systemHealthState.currentReport;
+    if (tableExportButton) tableExportButton.disabled = !systemHealthState.currentReport;
     if (apiExportButton) {
         const report = systemHealthState.currentReport;
         apiExportButton.disabled = !report || report.source_type !== 'api';
@@ -1701,6 +1918,13 @@ function exportSystemHealthSummaryCsv() {
     if (!report) return;
     downloadSystemHealthCsv('system_health_summary.csv', systemHealthUnifiedSummaryCsv(report));
     setSystemHealthCsvStatus('Exported system_health_summary.csv. This single file can rebuild every System Health chart.');
+}
+
+function exportSystemHealthSensorDetailCsv() {
+    const report = systemHealthState.currentReport;
+    if (!report) return;
+    downloadSystemHealthCsv('system_health_sensor_detail.csv', systemHealthSensorDetailCsv(report));
+    setSystemHealthCsvStatus('Exported system_health_sensor_detail.csv with the Sensor detail table columns and rows.');
 }
 
 function systemHealthUnifiedSummaryCsv(report) {

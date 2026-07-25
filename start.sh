@@ -210,7 +210,7 @@ fi
 
 runtime_is_healthy() {
     [ -x "$VENV_PYTHON" ] &&
-        "$VENV_PYTHON" -c 'import fastapi, httpx, playwright, uvicorn' >/dev/null 2>&1 &&
+        "$VENV_PYTHON" -c 'import dotenv, fastapi, httpx, keyring, playwright, uvicorn' >/dev/null 2>&1 &&
         "$VENV_PYTHON" -m pip check >/dev/null 2>&1
 }
 
@@ -352,7 +352,7 @@ esac
 APP_URL="http://127.0.0.1:$PORT/"
 BROWSER_URL="${APP_URL}?build=$UI_CACHE_KEY"
 export EH_API_RESPONSE_LOG=${EH_API_RESPONSE_LOG:-$API_LOG}
-export EH_API_LOG_VERBOSITY=${EH_API_LOG_VERBOSITY:-off}
+export EH_API_LOG_VERBOSITY=${EH_API_LOG_VERBOSITY:-errors}
 
 open_when_ready() {
     attempts=0

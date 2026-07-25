@@ -34,6 +34,25 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000
 
 Open <http://127.0.0.1:8000>.
 
+## Saved ExtraHop connections
+
+After a manual connection authenticates successfully, its credentials are saved through the
+operating-system credential service: macOS Keychain or Linux Secret Service. The browser receives
+only the tenant or hostname, an opaque connection ID, and the active session cookie. If the
+operating-system credential service is unavailable, the active connection still works and the UI
+shows that it could not be saved.
+
+The app also reads a local `.env` file at startup. Copy `.env.example` to `.env`, replace the
+example values, and restart:
+
+```bash
+cp .env.example .env
+```
+
+Connections use numbered variables, so additional RevealX 360 or Enterprise entries can use
+indexes `2`, `3`, and so on. `.env` is ignored by Git, but it contains plaintext secrets; prefer
+the connection form and operating-system credential store for normal use.
+
 ## Tests
 
 ```bash
@@ -59,7 +78,7 @@ Use the API Logging control in the sidebar to write proxied ExtraHop API respons
 - `Metadata`: every response with status, timing, byte count, and response shape.
 - `Full`: every response with parsed response bodies and credential-shaped fields redacted.
 
-Full response logs can still contain sensitive operational data. Review them before sharing. The default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
+Full response logs can still contain sensitive operational data. Review them before sharing. API response logging defaults to `Errors`; the default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
 
 ## Security defaults
 
@@ -67,7 +86,8 @@ Full response logs can still contain sensitive operational data. Review them bef
 - Browser sessions use HTTP-only, SameSite cookies and expire after 12 idle hours.
 - RevealX 360 tenant names are restricted to one DNS label.
 - Enterprise TLS certificates are verified by default. The UI provides an explicit opt-in for a known self-signed lab certificate.
-- API credentials remain server-side after login and password fields are cleared.
+- API credentials remain server-side, password fields are cleared, and successful manual
+  connections are persisted through macOS Keychain or Linux Secret Service.
 - Product-catalog file overrides are accepted only through the startup environment variable `EH_CATALOG_PATH`.
 
 ## Theme

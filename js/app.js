@@ -16,8 +16,13 @@ async function initializeApp() {
     // Load saved config on page load
     loadSavedConfig();
 
+    // Start loading .env and OS-credential entries without delaying restoration
+    // of an existing browser session.
+    const savedConnectionsPromise = loadSavedConnections();
+
     // Restore a still-valid backend session after a frontend reload
     await restoreBackendSession();
+    await savedConnectionsPromise;
     
     // Set up global event listeners
     setupGlobalEventListeners();
@@ -44,7 +49,13 @@ async function restoreBackendSession() {
 
         showConnectedState();
         await openConnectedAppliances();
-        showStatus('Reconnected to the existing session.', false);
+        const saveWarning = sessionStorage.getItem('eh_connection_save_warning');
+        if (saveWarning) {
+            sessionStorage.removeItem('eh_connection_save_warning');
+            showStatus(saveWarning, true);
+        } else {
+            showStatus('Reconnected to the existing session.', false);
+        }
     } catch (error) {
         console.warn('No existing backend session to restore:', error);
     }
@@ -109,6 +120,13 @@ function setupGlobalEventListeners() {
 
     // Connect button
     document.getElementById('connectBtn').addEventListener('click', handleConnect);
+    document.getElementById('connectSavedBtn').addEventListener('click', handleSavedConnect);
+    document.getElementById('addConnectionBtn').addEventListener('click', () => {
+        showNewConnectionForm(true);
+    });
+    document.getElementById('cancelAddConnectionBtn').addEventListener('click', () => {
+        showNewConnectionForm(false);
+    });
     document.getElementById('disconnectBtn').addEventListener('click', handleDisconnect);
 
     const apiLoggingVerbosity = document.getElementById('apiLoggingVerbosity');
@@ -196,7 +214,12 @@ function setupConnectionPanel() {
     document.getElementById('welcomeConnectBtn').addEventListener('click', (event) => {
         event.stopPropagation();
         setConnectionPanelOpen(true);
-        document.getElementById('tenantName').focus();
+        const savedSelect = document.getElementById('savedConnectionSelect');
+        if (!savedSelect.disabled) {
+            savedSelect.focus();
+        } else {
+            document.getElementById('addConnectionBtn').focus();
+        }
     });
 }
 

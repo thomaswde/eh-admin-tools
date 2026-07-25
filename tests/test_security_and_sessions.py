@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import main
+from backend.connection_store import ConnectionStorageError
 from backend.extrahop_client import ExtraHopClient, SessionMetadata
 from backend.session_store import SessionStore
 
@@ -19,6 +20,41 @@ class DummyExtraHopClient:
             verify_tls=config.get("verifyTls", True),
         )
         self.authenticate = AsyncMock()
+
+
+class DummyConnectionStore:
+    def __init__(self):
+        self.saved = []
+        self.configs = {}
+
+    def save(self, config):
+        self.saved.append(config)
+        return {
+            "id": "enterprise-saved",
+            "type": config["type"],
+            "host": config.get("host"),
+        }
+
+    def get(self, connection_id):
+        if connection_id not in self.configs:
+            raise KeyError(connection_id)
+        return self.configs[connection_id]
+
+    def list_connections(self):
+        return {
+            "connections": [
+                {
+                    "id": connection_id,
+                    "type": config["type"],
+                    "label": config.get("tenant") or config.get("host"),
+                }
+                for connection_id, config in self.configs.items()
+            ],
+            "groupByDeployment": False,
+            "env": {"found": False, "connectionCount": 0},
+            "secureStorage": {"available": True, "connectionCount": len(self.configs)},
+            "warnings": [],
+        }
 
 
 class ExtraHopClientValidationTests(unittest.TestCase):
@@ -156,6 +192,90 @@ class BackendRouteSecurityTests(unittest.TestCase):
         self.assertNotEqual(first_id, second_id)
         self.assertIsNone(main.sessions.get(first_id))
         self.assertIsNotNone(main.sessions.get(second_id))
+
+    def test_successful_manual_connection_is_saved_server_side(self):
+        config = {
+            "type": "enterprise",
+            "host": "sensor.example.test",
+            "apiKey": "key",
+        }
+        store = DummyConnectionStore()
+        with (
+            patch("main.ExtraHopClient", DummyExtraHopClient),
+            patch("main.connection_store", store),
+        ):
+            response = self.client.post("/backend/session", json=config)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["savedConnection"])
+        self.assertEqual(response.json()["connectionId"], "enterprise-saved")
+        self.assertEqual(store.saved, [{**config, "verifyTls": True}])
+
+    def test_secure_storage_failure_does_not_discard_active_session(self):
+        config = {
+            "type": "enterprise",
+            "host": "sensor.example.test",
+            "apiKey": "key",
+        }
+        store = DummyConnectionStore()
+        with (
+            patch("main.ExtraHopClient", DummyExtraHopClient),
+            patch("main.connection_store", store),
+            patch.object(
+                store,
+                "save",
+                side_effect=ConnectionStorageError(
+                    "The operating-system credential store is unavailable; "
+                    "the connection was not saved."
+                ),
+            ),
+        ):
+            response = self.client.post("/backend/session", json=config)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["connected"])
+        self.assertFalse(response.json()["savedConnection"])
+        self.assertIsNotNone(main.sessions.get(self.client.cookies.get(main.SESSION_COOKIE)))
+
+    def test_saved_connection_endpoint_resolves_credentials_server_side(self):
+        store = DummyConnectionStore()
+        store.configs["cloud-saved"] = {
+            "type": "360",
+            "tenant": "tenant",
+            "apiId": "id",
+            "apiSecret": "secret",
+        }
+        with (
+            patch("main.ExtraHopClient", side_effect=DummyExtraHopClient) as client_class,
+            patch("main.connection_store", store),
+        ):
+            response = self.client.post("/backend/connections/cloud-saved/session")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["config"],
+            {"type": "360", "tenant": "tenant"},
+        )
+        client_class.assert_called_once()
+        self.assertEqual(client_class.call_args.args[0]["apiSecret"], "secret")
+        self.assertNotIn("secret", response.text)
+
+    def test_saved_connection_list_never_contains_credentials(self):
+        store = DummyConnectionStore()
+        store.configs["enterprise-saved"] = {
+            "type": "enterprise",
+            "host": "sensor.example.test",
+            "apiKey": "secret",
+        }
+        with patch("main.connection_store", store):
+            response = self.client.get("/backend/connections")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["connections"][0]["label"],
+            "sensor.example.test",
+        )
+        self.assertNotIn("secret", response.text)
 
 
 if __name__ == "__main__":

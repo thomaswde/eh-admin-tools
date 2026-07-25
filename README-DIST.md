@@ -34,7 +34,16 @@ Press **Ctrl+C** in the launcher window to stop the application.
 
 ## Connect to ExtraHop
 
-Choose RevealX 360 or RevealX Enterprise and enter the requested credentials. Credentials are held by the local Python service, are not sent to a third-party proxy, and are not saved in browser storage.
+Open the connection menu and either select a saved connection or choose **Add new connection**.
+New connections offer the existing RevealX 360 and RevealX Enterprise credential forms. After a
+successful login, credentials are saved in macOS Keychain or Linux Secret Service. They are held
+by the local Python service, are not sent to a third-party proxy, and are never saved in browser
+storage.
+
+You can also copy `.env.example` to `.env` beside this README and restart the app. The included
+example shows one RevealX 360 and one Enterprise connection. A `.env` file contains plaintext
+credentials, so use the operating-system credential store for normal use and protect any `.env`
+file you create.
 
 Enterprise TLS certificates are verified by default. Enable **Allow an untrusted or self-signed TLS certificate** only for a lab appliance you recognize and trust.
 
@@ -82,7 +91,7 @@ Themes you save are written to the `chart-themes` folder beside this file, one s
 The launcher prints the writable log directory during startup and diagnostics.
 
 - `server.log` contains local startup and request status messages.
-- `api-responses.jsonl` is created only when API Logging is enabled in the UI.
+- `api-responses.jsonl` records failed API responses and network errors by default; logging can be changed or disabled in the UI.
 - **Full** API logging can contain sensitive operational data even though credential-shaped fields are redacted. Review logs before sharing them.
 
 ## Launcher options

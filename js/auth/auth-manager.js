@@ -31,6 +31,149 @@ async function apiRequestWithRetry(apiMethod, ...args) {
     }
 }
 
+function groupSavedConnections(connections) {
+    const sorted = [...(connections || [])].sort((left, right) => {
+        const labelOrder = String(left.label || '').localeCompare(
+            String(right.label || ''),
+            undefined,
+            { sensitivity: 'base' }
+        );
+        if (labelOrder !== 0) return labelOrder;
+        return String(left.id || '').localeCompare(String(right.id || ''));
+    });
+    const has360 = sorted.some(connection => connection.type === '360');
+    const hasEnterprise = sorted.some(connection => connection.type === 'enterprise');
+    if (!has360 || !hasEnterprise) {
+        return [{ label: null, connections: sorted }];
+    }
+    return [
+        {
+            label: 'RevealX 360',
+            connections: sorted.filter(connection => connection.type === '360')
+        },
+        {
+            label: 'RevealX Enterprise',
+            connections: sorted.filter(connection => connection.type === 'enterprise')
+        }
+    ];
+}
+
+async function loadSavedConnections() {
+    const select = document.getElementById('savedConnectionSelect');
+    const connectBtn = document.getElementById('connectSavedBtn');
+    const status = document.getElementById('savedConnectionStatus');
+    if (!select || !connectBtn || !status) return;
+
+    select.disabled = true;
+    connectBtn.disabled = true;
+    status.textContent = 'Checking the local .env file and secure credential store.';
+
+    try {
+        const catalog = await ExtraHopAPI.listSavedConnections();
+        const connections = Array.isArray(catalog.connections) ? catalog.connections : [];
+        select.replaceChildren();
+
+        if (connections.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'No saved connections';
+            select.appendChild(option);
+        } else {
+            for (const group of groupSavedConnections(connections)) {
+                const parent = group.label
+                    ? Object.assign(document.createElement('optgroup'), { label: group.label })
+                    : select;
+                for (const connection of group.connections) {
+                    const option = document.createElement('option');
+                    option.value = connection.id;
+                    option.textContent = connection.label;
+                    option.dataset.deploymentType = connection.type;
+                    parent.appendChild(option);
+                }
+                if (group.label) select.appendChild(parent);
+            }
+        }
+
+        select.disabled = connections.length === 0;
+        connectBtn.disabled = connections.length === 0;
+
+        const sourceParts = [];
+        if (catalog.env?.connectionCount) {
+            sourceParts.push(`${catalog.env.connectionCount} from .env`);
+        }
+        if (catalog.secureStorage?.connectionCount) {
+            sourceParts.push(`${catalog.secureStorage.connectionCount} from secure storage`);
+        }
+        const warnings = [...new Set(
+            (Array.isArray(catalog.warnings) ? catalog.warnings : [])
+                .filter(message => typeof message === 'string' && message)
+        )];
+        if (connections.length === 0) {
+            status.textContent = warnings.join(' ') || 'No saved connections found.';
+        } else {
+            status.textContent = `${connections.length} saved connection${connections.length === 1 ? '' : 's'}`
+                + (sourceParts.length ? ` (${sourceParts.join(', ')})` : '')
+                + '.';
+            if (warnings.length) {
+                status.textContent += ` ${warnings.join(' ')}`;
+            }
+        }
+    } catch (error) {
+        select.replaceChildren();
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Saved connections unavailable';
+        select.appendChild(option);
+        status.textContent = error.message;
+    }
+}
+
+function showNewConnectionForm(show) {
+    const form = document.getElementById('configForm');
+    form.style.display = show ? 'flex' : 'none';
+    if (show) {
+        document.getElementById('deploymentType').focus();
+    } else {
+        clearCredentialInputs();
+    }
+}
+
+function completeConnection(api) {
+    state.apiConfig = api.config;
+    state.connected = true;
+    sessionStorage.setItem('eh_config', JSON.stringify(api.config));
+    if (api.savedConnection === false && api.connectionStorage?.message) {
+        sessionStorage.setItem('eh_connection_save_warning', api.connectionStorage.message);
+    } else {
+        sessionStorage.removeItem('eh_connection_save_warning');
+    }
+    window.apiClient = api;
+    clearCredentialInputs();
+
+    // A new connection may target a different ExtraHop environment. Reload
+    // before rendering so no module can reuse data, reports, or in-flight work.
+    clearEnvironmentBoundContent();
+}
+
+async function handleSavedConnect() {
+    const connectBtn = document.getElementById('connectSavedBtn');
+    const connectionId = document.getElementById('savedConnectionSelect').value;
+    if (!connectionId) return;
+
+    try {
+        connectBtn.disabled = true;
+        connectBtn.textContent = 'Connecting...';
+        const api = new ExtraHopAPI({ connectionId });
+        await api.authenticate();
+        completeConnection(api);
+    } catch (error) {
+        showStatus('✖ ' + error.message, true);
+        showConnectionError(error);
+        connectBtn.textContent = 'Connect';
+        connectBtn.disabled = false;
+    }
+}
+
 async function handleConnect() {
     const connectBtn = document.getElementById('connectBtn');
     const deploymentType = document.getElementById('deploymentType').value;
@@ -72,22 +215,13 @@ async function handleConnect() {
         const api = new ExtraHopAPI(config);
         await api.authenticate();
 
-        state.apiConfig = api.config;
-        state.connected = true;
-        sessionStorage.setItem('eh_config', JSON.stringify(api.config));
-        window.apiClient = api;
-        clearCredentialInputs();
-
-        // A successful manual connection may target a different ExtraHop
-        // environment. Reload before rendering so no module can reuse data,
-        // reports, charts, or in-flight work from the previous environment.
-        clearEnvironmentBoundContent();
+        completeConnection(api);
         return;
 
     } catch (error) {
         showStatus('✖ ' + error.message, true);
         showConnectionError(error);
-        connectBtn.textContent = 'Connect';
+        connectBtn.textContent = 'Connect and save';
         connectBtn.disabled = false;
     }
 }

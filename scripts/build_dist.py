@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST_DIR = REPO_ROOT / "dist"
 
 ROOT_FILES = {
+    ".env.example": ".env.example",
     "start.sh": "start.sh",
     "START-HERE.command": "START-HERE.command",
     "README-DIST.md": "README.md",
@@ -88,6 +89,7 @@ def make_checksum_manifest(package_root: Path) -> None:
 def validate_package(package_root: Path) -> None:
     required = [
         "START-HERE.command",
+        ".env.example",
         "start.sh",
         "README.md",
         "VERSION",

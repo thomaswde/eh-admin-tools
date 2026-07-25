@@ -42,7 +42,20 @@
 
             <div class="conn-panel" id="connPanel" hidden>
                 <h2>Connection</h2>
-                <p class="field-hint" style="margin-bottom: 14px;">Credentials stay server-side. This browser only holds a session cookie.</p>
+                <p class="field-hint" style="margin-bottom: 14px;">Credentials stay out of the browser. Manual connections are saved in your operating system credential store.</p>
+
+                <!-- Saved connection picker -->
+                <div id="connectionChooser" class="stack-sm">
+                    <div class="field">
+                        <label for="savedConnectionSelect">Saved connections</label>
+                        <select id="savedConnectionSelect" disabled>
+                            <option value="">Loading saved connections…</option>
+                        </select>
+                        <span id="savedConnectionStatus" class="field-hint">Checking the local .env file and secure credential store.</span>
+                    </div>
+                    <button type="button" id="connectSavedBtn" class="btn-primary btn-block" disabled>Connect</button>
+                    <button type="button" id="addConnectionBtn" class="btn btn-block">Add new connection</button>
+                </div>
 
                 <!-- Connected state -->
                 <div id="connectedState" class="hidden">
@@ -61,7 +74,11 @@
                 </div>
 
                 <!-- Configuration form -->
-                <div id="configForm" class="stack-sm">
+                <div id="configForm" class="stack-sm" style="display: none;">
+                    <div class="connection-form-head">
+                        <h3>New connection</h3>
+                        <button type="button" id="cancelAddConnectionBtn" class="btn-link">Cancel</button>
+                    </div>
                     <div class="field">
                         <label for="deploymentType">Deployment type</label>
                         <select id="deploymentType">
@@ -119,7 +136,7 @@
                         </label>
                     </div>
 
-                    <button type="button" id="connectBtn" class="btn-primary btn-block">Connect</button>
+                    <button type="button" id="connectBtn" class="btn-primary btn-block">Connect and save</button>
                 </div>
 
                 <div class="conn-divider"></div>
@@ -129,7 +146,7 @@
                     <label for="apiLoggingVerbosity">API response logging</label>
                     <select id="apiLoggingVerbosity">
                         <option value="off">Off</option>
-                        <option value="errors">Errors</option>
+                        <option value="errors" selected>Errors</option>
                         <option value="metadata">Metadata</option>
                         <option value="full">Full</option>
                     </select>
@@ -445,17 +462,6 @@
                         </div>
                     </div>
 
-                    <div class="card">
-                        <div class="card-head">
-                            <h2 class="card-title">How this works</h2>
-                        </div>
-                        <ul class="card-list">
-                            <li>Fetches appliance inventory to map <code>node_id</code> values to node names and platforms.</li>
-                            <li>Batches <code>/devices/search</code> calls in large chunks for the selected time range.</li>
-                            <li>Aggregates totals by node and analysis type: Standard, Advanced, Discovery, Flow Log.</li>
-                            <li>Visualizes totals, a stacked bar chart, and a detailed breakdown.</li>
-                        </ul>
-                    </div>
                 </div>
 
                 <div class="row-tight">
@@ -876,7 +882,7 @@
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
                                     <h2 class="card-title">Analysis Tier Pressure</h2>
-                                    <p class="card-desc">Advanced and Standard utilization by sensor, with Discovery shown as overflow.</p>
+                                    <p class="card-desc">Advanced and Standard utilization by sensor, with Discovery shown as overflow. Sensors are sorted by total device count.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthAnalysisChart">Export PNG</button>
@@ -910,9 +916,13 @@
                         </div>
 
                         <div class="card">
-                            <div class="card-head">
-                                <h2 class="card-title">Sensor detail</h2>
-                                <p class="card-desc">This unified per-sensor view is the source for chart rendering and summary CSV round trips.</p>
+                            <div class="card-head row row-top">
+                                <div>
+                                    <h2 class="card-title">Sensor detail</h2>
+                                    <p class="card-desc">This unified per-sensor view is the source for chart rendering and summary CSV round trips.</p>
+                                </div>
+                                <div class="spacer"></div>
+                                <button type="button" id="systemHealthExportTableCsvButton" class="btn btn-sm" disabled>Export CSV</button>
                             </div>
                             <div class="table-container table-scroll">
                                 <table>
@@ -1012,7 +1022,7 @@
                             </div>
                             <div class="field">
                                 <label for="auditLogBatchSize">Batch size</label>
-                                <input type="number" id="auditLogBatchSize" value="1000" min="10" max="1000">
+                                <input type="number" id="auditLogBatchSize" value="10000" min="10" max="10000">
                                 <span class="field-hint">Number of entries to fetch per request.</span>
                             </div>
                         </div>
@@ -1075,43 +1085,66 @@
         </div>
 
         <!-- ---------------------- Connected Appliances ---------------------- -->
-        <div id="nodemapModule" class="module-content page" style="display: none;">
-            <div class="page-head">
-                <h1 class="page-title">Connected Appliances</h1>
-                <p class="page-desc">Visualize your ExtraHop appliance topology and relationships.</p>
-            </div>
-
-            <div id="graphContainer" class="graph-container" style="display: none;">
-                <div id="graphMainArea" class="graph-main">
-                    <svg id="nodeGraph"></svg>
+        <div id="nodemapModule" class="module-content page page-fill" style="display: none;">
+            <div class="fill-column">
+                <div class="page-head">
+                    <h1 class="page-title">Connected Appliances</h1>
+                    <p class="page-desc">Review appliance status, firmware, and topology across your deployment.</p>
                 </div>
 
-                <div id="nodemapControls" class="graph-controls" style="display: none;">
+                <div id="nodemapSummary" class="nodemap-summary" style="display: none;"></div>
+
+                <div id="nodemapControls" class="nodemap-controls" style="display: none;">
+                    <div id="nodemapViewToggle" class="segmented" role="tablist" aria-label="Appliance view">
+                        <button type="button" data-view="list" class="is-active" role="tab" aria-selected="true">List</button>
+                        <button type="button" data-view="topology" role="tab" aria-selected="false">Topology</button>
+                    </div>
+
                     <button type="button" id="showNodemapFilters" class="btn btn-sm">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path>
                         </svg>
                         Filters
                     </button>
+
+                    <label id="nodemapGroupControl" class="nodemap-group">
+                        <span>Group</span>
+                        <select id="nodemapGroupBy">
+                            <option value="status">Status</option>
+                            <option value="role">Role</option>
+                            <option value="model">Model</option>
+                            <option value="firmware">Firmware</option>
+                            <option value="none">None</option>
+                        </select>
+                    </label>
+
                     <input type="search" id="nodemapSearch" placeholder="Search appliances…">
                 </div>
 
-                <div id="nodeDetailsPanel" class="node-details-panel" style="display: none;">
-                    <div class="node-details-head">
-                        <h2 class="card-title">Appliance details</h2>
-                        <button type="button" id="closeNodeDetailsPanel" class="icon-btn" aria-label="Close panel">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                                <path d="M6 18L18 6M6 6l12 12"></path>
-                            </svg>
-                        </button>
-                    </div>
-                    <div id="nodeDetailsPanelContent" class="node-details-body"></div>
-                </div>
-            </div>
+                <div id="graphContainer" class="graph-container" style="display: none;">
+                    <div id="listMainArea" class="list-main"></div>
 
-            <div id="nodemapWelcome" class="empty-inline">
-                <p class="strong" style="margin-bottom: 6px;">Nothing loaded yet</p>
-                <p>Connect to your ExtraHop deployment to visualize the appliance topology.</p>
+                    <div id="graphMainArea" class="graph-main" style="display: none;">
+                        <svg id="nodeGraph"></svg>
+                    </div>
+
+                    <div id="nodeDetailsPanel" class="node-details-panel" style="display: none;">
+                        <div class="node-details-head">
+                            <h2 class="card-title">Appliance details</h2>
+                            <button type="button" id="closeNodeDetailsPanel" class="icon-btn" aria-label="Close panel">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                                    <path d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <div id="nodeDetailsPanelContent" class="node-details-body"></div>
+                    </div>
+                </div>
+
+                <div id="nodemapWelcome" class="empty-inline">
+                    <p class="strong" style="margin-bottom: 6px;">Nothing loaded yet</p>
+                    <p>Connect to your ExtraHop deployment to visualize the appliance topology.</p>
+                </div>
             </div>
         </div>
     </main>

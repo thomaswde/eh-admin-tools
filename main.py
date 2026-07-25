@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.api_response_logger import ApiResponseLogger, LOG_VERBOSITIES
+from backend.connection_store import ConnectionStorageError, ConnectionStore
 from backend.extrahop_client import ExtraHopApiError, ExtraHopClient
 from backend.session_store import SessionStore
 
@@ -79,8 +80,9 @@ app.add_middleware(
 sessions = SessionStore(ttl_seconds=SESSION_TTL_SECONDS, max_sessions=MAX_SESSIONS)
 api_response_logger = ApiResponseLogger(
     Path(os.environ.get("EH_API_RESPONSE_LOG", APP_ROOT / "logs" / "api-responses.jsonl")),
-    os.environ.get("EH_API_LOG_VERBOSITY", "off"),
+    os.environ.get("EH_API_LOG_VERBOSITY", "errors"),
 )
+connection_store = ConnectionStore(APP_ROOT)
 
 app.mount("/css", StaticFiles(directory=APP_ROOT / "css"), name="css")
 app.mount("/js", StaticFiles(directory=APP_ROOT / "js"), name="js")
@@ -202,16 +204,17 @@ async def favicon() -> FileResponse:
     return FileResponse(APP_ROOT / "favicon.png")
 
 
-
-@app.post("/backend/session")
-async def create_session(
+async def establish_session(
     config: ConnectionConfig,
     response: Response,
-    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    replace_session_id: str | None,
+    *,
+    save_connection: bool,
 ) -> dict[str, Any]:
+    config_dict = config.model_dump(exclude_none=True)
     client: ExtraHopClient | None = None
     try:
-        client = ExtraHopClient(config.model_dump(exclude_none=True), api_response_logger)
+        client = ExtraHopClient(config_dict, api_response_logger)
         await client.authenticate()
     except ExtraHopApiError as error:
         if client:
@@ -234,7 +237,7 @@ async def create_session(
             },
         ) from error
 
-    session_id = await sessions.acreate(client, replace_session_id=eh_admin_session)
+    session_id = await sessions.acreate(client, replace_session_id=replace_session_id)
     response.set_cookie(
         SESSION_COOKIE,
         session_id,
@@ -244,7 +247,84 @@ async def create_session(
         max_age=SESSION_TTL_SECONDS,
         path="/",
     )
-    return {"connected": True, "config": client.metadata.public_dict()}
+    result: dict[str, Any] = {
+        "connected": True,
+        "config": client.metadata.public_dict(),
+    }
+    if save_connection:
+        try:
+            saved = await asyncio.to_thread(connection_store.save, config_dict)
+            result.update(
+                {
+                    "savedConnection": True,
+                    "connectionId": saved["id"],
+                    "connectionStorage": {"available": True, "message": None},
+                }
+            )
+        except ConnectionStorageError as error:
+            result.update(
+                {
+                    "savedConnection": False,
+                    "connectionStorage": {
+                        "available": False,
+                        "message": str(error),
+                    },
+                }
+            )
+    return result
+
+
+@app.get("/backend/connections")
+async def list_saved_connections() -> dict[str, Any]:
+    return await asyncio.to_thread(connection_store.list_connections)
+
+
+@app.post("/backend/connections/{connection_id}/session")
+async def create_saved_connection_session(
+    connection_id: str,
+    response: Response,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    try:
+        stored_config = await asyncio.to_thread(connection_store.get, connection_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404,
+            detail={"message": "Saved connection was not found."},
+        ) from error
+    except ConnectionStorageError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"message": str(error)},
+        ) from error
+
+    try:
+        config = ConnectionConfig.model_validate(stored_config)
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "Saved connection settings are invalid."},
+        ) from error
+    return await establish_session(
+        config,
+        response,
+        eh_admin_session,
+        save_connection=False,
+    )
+
+
+@app.post("/backend/session")
+async def create_session(
+    config: ConnectionConfig,
+    response: Response,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    return await establish_session(
+        config,
+        response,
+        eh_admin_session,
+        save_connection=True,
+    )
 
 
 @app.get("/backend/api-logging")

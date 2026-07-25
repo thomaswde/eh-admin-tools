@@ -28,7 +28,7 @@ SENSITIVE_KEY_PARTS = (
 
 
 class ApiResponseLogger:
-    def __init__(self, log_path: Path, verbosity: str = "off") -> None:
+    def __init__(self, log_path: Path, verbosity: str = "errors") -> None:
         self.log_path = log_path
         self.verbosity = self._normalize_verbosity(verbosity)
         self._lock = Lock()

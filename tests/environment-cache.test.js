@@ -70,6 +70,9 @@ test('successful manual connections reload before opening cached module content'
         sessionStorage: {
             setItem(key, value) {
                 stored.set(key, value);
+            },
+            removeItem(key) {
+                stored.delete(key);
             }
         },
         clearEnvironmentBoundContent() {

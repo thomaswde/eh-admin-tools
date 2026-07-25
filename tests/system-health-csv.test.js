@@ -21,7 +21,11 @@ const csvApi = vm.runInContext(`({
     parseSystemHealthCsv,
     buildSystemHealthReportFromUnifiedCsv,
     systemHealthUnifiedSummaryCsv,
-    systemHealthRows
+    systemHealthRows,
+    systemHealthSensorDetailCsv,
+    systemHealthAnalysisModelPages,
+    systemHealthCollectorNotes,
+    SYSTEM_HEALTH_DETAIL_CSV_COLUMNS
 })`, context);
 
 function fixtureReport() {
@@ -246,4 +250,98 @@ test('load rejects sensor rows mixed from different report windows', () => {
         () => csvApi.buildSystemHealthReportFromUnifiedCsv(rows),
         /inconsistent report_until_ms/
     );
+});
+
+test('sensor detail CSV contains exactly the visible table columns and rows', () => {
+    const report = fixtureReport();
+    const rows = csvApi.parseSystemHealthCsv(csvApi.systemHealthSensorDetailCsv(report));
+
+    assert.deepEqual(Object.keys(rows[0]), Array.from(csvApi.SYSTEM_HEALTH_DETAIL_CSV_COLUMNS));
+    assert.equal(rows.length, report.appliances.length);
+    assert.equal(rows[0].Sensor, 'sensor, one');
+    assert.equal(rows[0]['Packet peak'], '2K p/s');
+    assert.equal(rows[0]['Trigger capacity'], '90% (90 / 100)');
+    assert.equal(rows[0]['Analysis capacity'], '5,000');
+    assert.equal(rows[0].schema_version, undefined);
+    assert.equal(rows[0].appliance_id, undefined);
+});
+
+test('analysis chart sorts sensor bars and model pages by total device count', () => {
+    const pages = csvApi.systemHealthAnalysisModelPages([
+        {
+            id: 'risk',
+            name: 'High utilization',
+            license_platform: 'Model A',
+            advancedCapacity: 100,
+            standardCapacity: 100,
+            analysis: { advanced: 100, standard: 0, discovery: 0, unrecognized: 0, total: 100 }
+        },
+        {
+            id: 'volume',
+            name: 'Most devices',
+            license_platform: 'Model A',
+            advancedCapacity: 100,
+            standardCapacity: 100,
+            analysis: { advanced: 10, standard: 10, discovery: 0, unrecognized: 1000, total: 1020 }
+        },
+        {
+            id: 'other',
+            name: 'Other model',
+            license_platform: 'Model B',
+            advancedCapacity: 100,
+            standardCapacity: 100,
+            analysis: { advanced: 50, standard: 50, discovery: 0, unrecognized: 0, total: 100 }
+        }
+    ]);
+
+    assert.equal(pages[0].model, 'Model A');
+    assert.deepEqual(Array.from(pages[0].rows, row => row.id), ['volume', 'risk']);
+    assert.equal(pages[0].totalDevices, 1120);
+    assert.equal(pages[1].model, 'Model B');
+});
+
+test('collector notes consolidate repeated metric and appliance conditions', () => {
+    const metricNames = ['bytes', 'pkts', 'trigger_cycles', 'trigger_cycles_avail', 'trigger-drop totals'];
+    const errors = [
+        ...metricNames.map(metric => `${metric} (7): offline - Unable to connect`),
+        ...metricNames.map(metric => `${metric} (8): offline - This sensor requires additional configuration`),
+        'Device analysis (7): 3 devices had unrecognized analysis values.',
+        'Sensor Seven: appliance status is Unable to connect',
+        'Sensor Seven: license status is Unknown',
+        'Sensor Seven: last synchronization was 2026-01-27T15:27:09+00:00',
+        'Sensor Eight: appliance status is This sensor requires additional configuration'
+    ];
+    const notes = csvApi.systemHealthCollectorNotes({
+        errors,
+        appliances: [
+            {
+                id: '7',
+                name: 'Sensor Seven',
+                health_conditions: [
+                    { type: 'offline', message: 'appliance status is Unable to connect' },
+                    { type: 'license', message: 'license status is Unknown' },
+                    { type: 'synchronization', message: 'last synchronization was 2026-01-27T15:27:09+00:00' }
+                ]
+            },
+            {
+                id: '8',
+                name: 'Sensor Eight',
+                health_conditions: [
+                    { type: 'offline', message: 'appliance status is This sensor requires additional configuration' }
+                ]
+            }
+        ],
+        device_analysis: {
+            '7': { unrecognized: 3 },
+            '8': { unrecognized: 0 }
+        }
+    });
+
+    assert.equal(notes.length, 5);
+    assert.ok(notes.some(note => /unavailable for 1 sensor.*Unable to connect/.test(note)));
+    assert.ok(notes.some(note => /unavailable for 1 sensor.*additional configuration/.test(note)));
+    assert.ok(notes.some(note => /3 devices have unrecognized analysis values/.test(note)));
+    assert.ok(notes.some(note => /license status “Unknown”/.test(note)));
+    assert.ok(notes.some(note => /stale synchronization timestamp/.test(note)));
+    assert.ok(notes.every(note => !/^(bytes|pkts|trigger_cycles)/.test(note)));
 });
