@@ -83,13 +83,16 @@ class ApiResponseLogger:
             "response_bytes": len(response.content or b""),
         }
 
-        if self.verbosity in {"metadata", "full"}:
-            entry["response_shape"] = self._shape(self._response_payload(response))
+        response_payload = self._response_payload(response)
+        if self.verbosity in {"errors", "metadata", "full"}:
+            entry["response_shape"] = self._shape(response_payload)
 
         if self.verbosity == "full":
             if request_body is not None:
                 entry["request_body"] = self._redact(request_body)
-            entry["response"] = self._redact(self._response_payload(response))
+            entry["response"] = self._redact(response_payload)
+        elif self.verbosity == "errors":
+            entry["response"] = self._redact(response_payload)
 
         self._write(entry)
 

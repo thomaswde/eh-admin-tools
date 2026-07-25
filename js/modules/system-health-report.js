@@ -144,7 +144,7 @@ async function generateSystemHealthReport() {
         });
 
         loadingText.textContent = 'Collecting device tiers and batched system metrics...';
-        const [deviceResult, timeSeriesResult, triggerDropResult] = await Promise.all([
+        const [deviceResult, metricCollection] = await Promise.all([
             collectSystemHealthDeviceAnalysis(fromMs, untilMs, abortController.signal).catch(error => {
                 if (abortController.signal.aborted) throw error;
                 return {
@@ -153,19 +153,14 @@ async function generateSystemHealthReport() {
                     error
                 };
             }),
-            collectSystemHealthTimeSeries(metricSensors, discoverSensors, appliancesById, {
-                fromMs,
-                untilMs,
-                cycle: cyclePolicy.query_cycle,
-                signal: abortController.signal
-            }),
-            collectSystemHealthTriggerDrops(metricSensors, discoverSensors, appliancesById, {
+            collectSystemHealthMetrics(metricSensors, discoverSensors, appliancesById, {
                 fromMs,
                 untilMs,
                 cycle: cyclePolicy.query_cycle,
                 signal: abortController.signal
             })
         ]);
+        const { timeSeriesResult, triggerDropResult } = metricCollection;
         const metricResults = {
             ...timeSeriesResult.metrics,
             trigger_drops: triggerDropResult
@@ -214,6 +209,25 @@ async function generateSystemHealthReport() {
             button.disabled = false;
         }
     }
+}
+
+async function collectSystemHealthMetrics(metricSensors, allSensors, appliancesById, options) {
+    // A console can return one XID per query and forward each continuation to
+    // attached sensors. Drain one query completely before starting the next so
+    // time-series and total polling do not contend for the same remote sensors.
+    const timeSeriesResult = await collectSystemHealthTimeSeries(
+        metricSensors,
+        allSensors,
+        appliancesById,
+        options
+    );
+    const triggerDropResult = await collectSystemHealthTriggerDrops(
+        metricSensors,
+        allSensors,
+        appliancesById,
+        options
+    );
+    return { timeSeriesResult, triggerDropResult };
 }
 
 function normalizeSystemHealthAppliances(response) {

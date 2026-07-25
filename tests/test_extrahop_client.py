@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 import main
-from backend.extrahop_client import ExtraHopClient
+from backend.extrahop_client import ExtraHopApiError, ExtraHopClient
 from backend.session_store import SessionStore
 
 
@@ -93,6 +93,37 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"ok": True})
         sleep.assert_awaited_once_with(2.0)
+        await client.aclose()
+
+    async def test_retries_metrics_next_internal_server_error_only(self):
+        metrics_attempts = 0
+        appliance_attempts = 0
+
+        async def handler(request):
+            nonlocal metrics_attempts, appliance_attempts
+            if request.url.path == "/api/v1/metrics/next/77":
+                metrics_attempts += 1
+                if metrics_attempts == 1:
+                    return httpx.Response(500, json={"error_message": "remote sensor pending"})
+                return httpx.Response(200, json={"node_id": 7, "stats": []})
+            appliance_attempts += 1
+            return httpx.Response(500, json={"error_message": "permanent failure"})
+
+        client = ExtraHopClient({
+            "type": "enterprise",
+            "host": "sensor.example.test",
+            "apiKey": "key",
+        })
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch("backend.extrahop_client.asyncio.sleep", new=AsyncMock()) as sleep:
+            result = await client.request("GET", "/metrics/next/77")
+            with self.assertRaisesRegex(ExtraHopApiError, "permanent failure"):
+                await client.request("GET", "/appliances")
+
+        self.assertEqual(result, {"node_id": 7, "stats": []})
+        self.assertEqual(metrics_attempts, 2)
+        self.assertEqual(appliance_attempts, 1)
+        sleep.assert_awaited_once()
         await client.aclose()
 
     async def test_cancellation_is_not_retried_or_wrapped(self):
