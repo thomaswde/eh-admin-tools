@@ -319,14 +319,12 @@ function recommendationsFromFindings(findings, overview = {}) {
 
 /* ------------------------------------------------------------ packetstore */
 
-// An all-in-one is a packet sensor with the packetstore feature licensed, so it
-// is counted as both. Only `appliance_role === 'packetstore'` is dedicated.
-function isDedicatedPacketstore(row) {
-    return String(row && row.appliance_role || 'packetstore') === 'packetstore';
+function isPairedPacketstoreSource(row) {
+    return String(row && row.appliance_role || 'packet_sensor') !== 'all_in_one';
 }
 
 function packetstoreRoleLabel(row) {
-    return isDedicatedPacketstore(row) ? 'Packetstore' : 'All in One';
+    return isPairedPacketstoreSource(row) ? 'Paired Packetstore' : 'All in One';
 }
 
 // Loss is a fact, not a threshold: any dropped packet, secret, or frame counts.
@@ -369,22 +367,22 @@ function buildDeckModel(input) {
             || b.worst_ratio - a.worst_ratio
             || a.name.localeCompare(b.name));
 
-    // Fleet composition counts every appliance once. An all-in-one already
-    // appears in `rows` as a sensor, so only dedicated packetstores are added.
+    // Packetstore metrics are emitted by sensors, so Packetstore rows are a
+    // measured subset of `rows` and must not be counted as extra appliances.
     const modelCounts = {};
     const countModel = row => {
         const model = cleanText(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', 80);
         modelCounts[model] = (modelCounts[model] || 0) + 1;
     };
     rows.forEach(countModel);
-    packetstoreRows.filter(isDedicatedPacketstore).forEach(countModel);
 
     const totalDrops = rows.reduce((sum, row) => sum + Math.max(0, finiteNumber(row.triggerDropsTotal) || 0), 0);
     const offline = rows.filter(row => row.offline).length;
     const noAccess = rows.filter(row => !row.offline && row.data_access === false).length;
     const reporting = rows.length - absent.length;
     const atCapacity = findings.filter(item => item.at_capacity).length;
-    const allInOne = packetstoreRows.filter(row => !isDedicatedPacketstore(row)).length;
+    const allInOne = packetstoreRows.filter(row => !isPairedPacketstoreSource(row)).length;
+    const paired = packetstoreRows.length - allInOne;
     const overview = {
         sensors: rows.length,
         reporting,
@@ -397,7 +395,7 @@ function buildDeckModel(input) {
         trigger_drops: totalDrops,
         packetstores: packetstoreRows.length,
         packetstores_all_in_one: allInOne,
-        packetstores_dedicated: packetstoreRows.length - allInOne,
+        packetstores_paired: paired,
         packetstores_with_loss: packetstoreRows.filter(hasCaptureLoss).length,
         packetstores_loaded: packetstoreRows.filter(hasProcessingPressure).length,
         model_counts: Object.entries(modelCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -823,16 +821,16 @@ function addOverview(model, assets) {
         [formatCompact(overview.trigger_drops), 'Trigger drops', 'total across the window', overview.trigger_drops ? palette.high : palette.text]
     ];
     if (overview.packetstores) {
-        // The note names the split because an all-in-one is counted in both the
-        // sensor tile and this one; a reader must not see that as double-count.
+        // These are metric-producing sensors, split by integrated versus paired
+        // Packetstore topology rather than a count of physical storage systems.
         const composition = [
-            overview.packetstores_dedicated ? `${formatInteger(overview.packetstores_dedicated)} dedicated` : '',
+            overview.packetstores_paired ? `${formatInteger(overview.packetstores_paired)} paired` : '',
             overview.packetstores_all_in_one ? `${formatInteger(overview.packetstores_all_in_one)} all-in-one` : ''
         ].filter(Boolean).join(' · ');
         stats.push([
             formatInteger(overview.packetstores_with_loss),
             'Packetstores losing data',
-            `of ${formatInteger(overview.packetstores)} stores · ${composition}`,
+            `of ${formatInteger(overview.packetstores)} sources · ${composition}`,
             overview.packetstores_with_loss ? palette.high : palette.text
         ]);
     }

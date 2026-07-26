@@ -527,14 +527,19 @@ async def proxy_extrahop_request(
     except ExtraHopApiError as error:
         raise http_exception(error) from error
     finally:
-        disconnect_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await disconnect_task
+        for task in (upstream_task, disconnect_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(upstream_task, disconnect_task, return_exceptions=True)
 
 
 async def wait_for_client_disconnect(request: Request) -> None:
-    while not await request.is_disconnected():
-        await asyncio.sleep(0.1)
+    # proxy_extrahop_request() has already consumed request.body(), so the
+    # remaining ASGI receive event is the cancellable disconnect notification.
+    while True:
+        message = await request.receive()
+        if message["type"] == "http.disconnect":
+            return
 
 
 @app.on_event("shutdown")
@@ -761,7 +766,7 @@ def system_health_pdf_packetstore_page(rows: list[dict[str, Any]], page: int, pa
             if value is not None else f"{label} unavailable<br>"
             for label, value in load_values
         )
-        role = "All in One" if row.get("role") == "all_in_one" else "Packetstore"
+        role = "All in One" if row.get("role") == "all_in_one" else "Paired Packetstore"
         body.extend([
             f"<div class='name'>{html.escape(str(row.get('name') or ''))}<br><span class='muted'>{role}</span></div>",
             f"<div>{html.escape(lookback)}</div>",
@@ -770,7 +775,7 @@ def system_health_pdf_packetstore_page(rows: list[dict[str, Any]], page: int, pa
         ])
     body.append("</div>")
     subtitle = f"Retention, capture fidelity, and peak sampled 30-second processing load at {cycle_label} cadence"
-    return f"""<section class="page"><div class="page-head"><div><h2>Packetstore Health</h2><div class="muted">{html.escape(subtitle)}</div></div><div class="model">{len(rows)} appliances | Page {page} of {pages}</div></div>{''.join(body)}</section>"""
+    return f"""<section class="page"><div class="page-head"><div><h2>Packetstore Health</h2><div class="muted">{html.escape(subtitle)}</div></div><div class="model">{len(rows)} metric sources | Page {page} of {pages}</div></div>{''.join(body)}</section>"""
 
 
 def system_health_pdf_packetstore_cycle_label(report: dict[str, Any]) -> str:
@@ -844,7 +849,7 @@ def system_health_pdf_summary(rows: list[dict[str, Any]], report: dict[str, Any]
         ("Packet Risk", f"{sum(1 for r in rows if ratio(r['packet_peak'], r['packet_capacity']) >= 1):,}", "At model packet rating"),
         ("Throughput Watch", f"{sum(1 for r in rows if ratio(r['throughput_gbps'], r['throughput_capacity']) >= 0.8):,}", "At 80%+ throughput"),
         ("Trigger Drops", f"{sum(1 for r in rows if r['trigger_drops'] > 0):,}", "Sensors with drops"),
-        ("PCAP Stores", f"{len(packetstore_rows):,}", "AIO and Packetstore appliances"),
+        ("PCAP Sources", f"{len(packetstore_rows):,}", "Packetstore-backed sensors detected by cpc metrics"),
         ("PCAP Loss", f"{sum(1 for r in packetstore_rows if (r.get('packet_drops') or 0) > 0 or (r.get('slow_write_drops') or 0) > 0 or (r.get('interface_drops') or 0) > 0 or (r.get('secret_drops') or 0) > 0):,}", "Stores with observed loss"),
     ]
     return "".join(f"<div class='card'><span>{html.escape(label)}</span><b>{html.escape(value)}</b><small class='muted'>{html.escape(note)}</small></div>" for label, value, note in cards)

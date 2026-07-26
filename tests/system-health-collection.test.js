@@ -59,6 +59,24 @@ test('builds the exact batched Packetstore cpc metric request', () => {
     ]);
 });
 
+test('recognizes only the expected cpc invalid-stat response as a negative Packetstore probe', () => {
+    const miss = new Error("invalid stat name 'extrahop.system.cpc' (-32602)");
+    miss.status = 400;
+    miss.details = { error_message: "invalid stat name 'extrahop.system.cpc' (-32602)" };
+    assert.equal(health.isPacketstoreProbeMiss(miss), true);
+
+    const unauthorized = new Error('forbidden');
+    unauthorized.status = 403;
+    assert.equal(health.isPacketstoreProbeMiss(unauthorized), false);
+});
+
+test('treats a zero-valued Packetstore probe as a metric hit', () => {
+    assert.equal(health.hasMetricValue([{
+        appliance_id: '7', values: { est_lookback_sec: 0 }
+    }], health.PACKETSTORE_PROBE_METRIC, '7'), true);
+    assert.equal(health.hasMetricValue([], health.PACKETSTORE_PROBE_METRIC, '7'), false);
+});
+
 test('drains XID chunks through again, data, and null', async () => {
     const responses = [
         { xid: '90071992547409931234' },
@@ -108,6 +126,33 @@ test('preserves a sensor-specific XID failure while completing other sensor chun
     );
     assert.equal(coverage['7'].status, 'complete');
     assert.equal(coverage['8'].status, 'failed');
+});
+
+test('surfaces an upstream continuation gzip failure for partial-report diagnostics', async () => {
+    const gzipError = new Error('API request failed: 500 - gzip: invalid header');
+    gzipError.status = 500;
+    gzipError.details = {
+        response: { error_message: 'gzip: invalid header' }
+    };
+    let continuationCalls = 0;
+
+    await assert.rejects(
+        health.collectMetricEndpoint(async path => {
+            if (path === '/metrics') return { xid: 198865 };
+            continuationCalls += 1;
+            throw gzipError;
+        }, '/metrics', {}, { sleep: async () => {}, now: () => 0 }),
+        error => error === gzipError
+    );
+    assert.equal(continuationCalls, 1);
+
+    const coverage = health.buildSensorCoverage(
+        [{ id: 7, status_message: 'Online' }],
+        [],
+        { error: gzipError }
+    );
+    assert.equal(coverage['7'].status, 'failed');
+    assert.match(coverage['7'].detail, /gzip: invalid header/);
 });
 
 test('raises an explicit incomplete-result error after repeated again responses', async () => {

@@ -249,17 +249,19 @@ test('unified CSV preserves opaque IDs and legitimate zero values', () => {
     assert.equal(zero.collectionStatus.device_analysis, 'zero_valued');
 });
 
-test('unified CSV round-trips dedicated Packetstore summaries without adding it to sensor charts', () => {
+test('unified CSV round-trips Packetstore summaries under the metric-producing sensor', () => {
     const report = fixtureReport();
-    const id = 'trace-9';
+    const id = 'sensor-9';
     report.appliances.push({
-        id, name: 'Packetstore 9', platform: 'Trace', license_platform: 'ETA 8250',
-        appliance_role: 'packetstore', online: true, metric_eligible: true,
-        packetstore_metric_eligible: true, data_access: true, health_conditions: [], capacity: {}
+        id, name: 'Sensor 9', platform: 'Discover', license_platform: 'EDA 8250',
+        appliance_role: 'packet_sensor', online: true, metric_eligible: true,
+        packetstore_metric_eligible: true, packetstore_probe_status: { status: 'detected' },
+        data_access: true, health_conditions: [], capacity: {}
     });
-    report.device_analysis[id] = { status: 'not_applicable' };
+    report.device_analysis[id] = { advanced: 0, standard: 0, discovery: 0, unrecognized: 0, total: 0, status: 'zero_valued' };
     report.packetstore = {
-        appliance_ids: [id], errors: [], metrics: {
+        appliance_ids: [id], inventory_appliance_ids: [],
+        probe_status: { [id]: { status: 'detected' } }, errors: [], metrics: {
             est_lookback_sec: packetstoreMetric('time_series', id, {
                 latest_values: { [id]: 172800 }, min_values: { [id]: 86400 },
                 peak_values: { [id]: 200000 }, actual_cycles: { [id]: '1hr' }
@@ -280,8 +282,10 @@ test('unified CSV round-trips dedicated Packetstore summaries without adding it 
         csvApi.parseSystemHealthCsv(csvApi.systemHealthUnifiedSummaryCsv(report))
     );
     const packetstores = csvApi.systemHealthPacketstoreRows(loaded);
-    assert.equal(csvApi.systemHealthRows(loaded).length, 2);
+    assert.equal(csvApi.systemHealthRows(loaded).length, 3);
     assert.equal(packetstores.length, 1);
+    assert.equal(packetstores[0].appliance_role, 'packet_sensor');
+    assert.equal(packetstores[0].packetstore_probe_status.status, 'detected');
     assert.equal(packetstores[0].lookbackLatestSec, 172800);
     assert.equal(packetstores[0].lookbackMinSec, 86400);
     assert.equal(packetstores[0].packetDropRatio, 0.01);

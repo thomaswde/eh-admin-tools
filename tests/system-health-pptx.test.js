@@ -342,7 +342,7 @@ test('PowerPoint adds one consolidated Packetstore health slide instead of per-m
         meta,
         rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
         packetstore_rows: [{
-            id: 'trace', name: 'Packetstore 1', appliance_role: 'packetstore',
+            id: 'sensor', name: 'Sensor', appliance_role: 'packet_sensor',
             lookbackLatestSec: 172800, lookbackMinSec: 86400,
             packetsTotal: 1000, packetDropsTotal: 10, packetDropRatio: 0.01,
             slowWriteDropsTotal: 4, interfaceDropsTotal: 3,
@@ -364,7 +364,7 @@ test('PowerPoint adds one consolidated Packetstore health slide instead of per-m
 
 function packetstoreRow(overrides = {}) {
     return {
-        id: 'trace', name: 'Packetstore 1', appliance_role: 'packetstore',
+        id: 'sensor', name: 'Packetstore sensor', appliance_role: 'packet_sensor',
         lookbackLatestSec: 172800, lookbackMinSec: 86400,
         packetsTotal: 1000, packetDropsTotal: 0, packetDropRatio: 0,
         slowWriteDropsTotal: 0, interfaceDropsTotal: 0,
@@ -428,34 +428,34 @@ test('a clean packetstore fleet is stated rather than left silent', () => {
     assert.match(model.verdict, /All 1 packetstore captured without loss/);
 });
 
-test('all-in-one appliances are counted as both sensor and packetstore without double-counting models', () => {
+test('Packetstore metric sources remain a sensor subset without double-counting models', () => {
     const model = pptxApi.buildDeckModel({
         meta,
         rows: [
             sensorRow({ id: 'aio', name: 'All in one', license_platform: 'EDA 6320' }),
-            sensorRow({ id: 'plain', name: 'Packet sensor', license_platform: 'EDA 8320' })
+            sensorRow({ id: 'paired', name: 'Paired sensor', license_platform: 'EDA 8320' }),
+            sensorRow({ id: 'plain', name: 'Packet sensor', license_platform: 'EDA 9320' })
         ],
         packetstore_rows: [
             packetstoreRow({ id: 'aio', name: 'All in one', appliance_role: 'all_in_one', license_platform: 'EDA 6320' }),
-            packetstoreRow({ id: 'trace', name: 'Dedicated store', license_platform: 'ETA 8250' })
+            packetstoreRow({ id: 'paired', name: 'Paired sensor', appliance_role: 'packet_sensor', license_platform: 'EDA 8320' })
         ]
     });
 
-    assert.equal(model.overview.sensors, 2);
+    assert.equal(model.overview.sensors, 3);
     assert.equal(model.overview.packetstores, 2);
     assert.equal(model.overview.packetstores_all_in_one, 1);
-    assert.equal(model.overview.packetstores_dedicated, 1);
-    // Fleet composition counts three physical appliances, not four: the
-    // all-in-one is already present as a sensor.
+    assert.equal(model.overview.packetstores_paired, 1);
+    // Both Packetstore rows are already present in the sensor inventory.
     const counts = Object.fromEntries(model.overview.model_counts);
-    assert.deepEqual(counts, { 'EDA 6320': 1, 'EDA 8320': 1, 'ETA 8250': 1 });
+    assert.deepEqual(counts, { 'EDA 6320': 1, 'EDA 8320': 1, 'EDA 9320': 1 });
 
     const pptx = pptxApi.createPresentation(model, FakePptx);
     const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet health at a glance'));
     const overviewText = overviewSlide.texts.map(item => item.text).join(' | ');
     assert.match(overviewText, /Packetstores losing data/);
-    assert.match(overviewText, /1 dedicated · 1 all-in-one/);
-    assert.match(overviewText, /2 sensors · 2 packetstores/);
+    assert.match(overviewText, /1 paired · 1 all-in-one/);
+    assert.match(overviewText, /3 sensors · 2 packetstores/);
 });
 
 test('the three packetstore charts are drawn as native shapes and label their own scale', () => {

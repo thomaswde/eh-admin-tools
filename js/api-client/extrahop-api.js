@@ -1,3 +1,5 @@
+const EXTRAHOP_REQUEST_TIMEOUT_MS = 75 * 1000;
+
 class ExtraHopAPI {
     constructor(config) {
         this.config = config;
@@ -101,7 +103,10 @@ class ExtraHopAPI {
                 'Accept': 'application/json'
             },
             body: options.body,
-            signal: options.signal
+            signal: options.signal,
+            timeoutMs: options.timeoutMs === undefined
+                ? EXTRAHOP_REQUEST_TIMEOUT_MS
+                : options.timeoutMs
         });
 
         return this.parseResponse(response);
@@ -112,14 +117,56 @@ class ExtraHopAPI {
     }
 
     static async backendFetch(url, options = {}) {
+        const fetchOptions = { ...options };
+        const callerSignal = fetchOptions.signal;
+        const timeoutMs = Number(fetchOptions.timeoutMs);
+        delete fetchOptions.timeoutMs;
+
+        let timeoutId = null;
+        let timedOut = false;
+        let timeoutController = null;
+        let forwardCallerAbort = null;
+        if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+            timeoutController = new AbortController();
+            fetchOptions.signal = timeoutController.signal;
+            forwardCallerAbort = () => timeoutController.abort(callerSignal.reason);
+            if (callerSignal) {
+                if (callerSignal.aborted) {
+                    forwardCallerAbort();
+                } else {
+                    callerSignal.addEventListener('abort', forwardCallerAbort, { once: true });
+                }
+            }
+            timeoutId = setTimeout(() => {
+                timedOut = true;
+                timeoutController.abort(new Error(`Request timed out after ${timeoutMs} ms.`));
+            }, timeoutMs);
+        }
+
         try {
             return await fetch(url, {
-                ...options,
+                ...fetchOptions,
                 // Every ExtraHop environment is accessed through the same local
                 // proxy URLs, so cached GET responses must never cross sessions.
                 cache: 'no-store'
             });
         } catch (cause) {
+            if (callerSignal && callerSignal.aborted) throw cause;
+            if (timedOut) {
+                const error = new Error(
+                    `The ExtraHop API request timed out after ${Math.ceil(timeoutMs / 1000)} seconds.`
+                );
+                error.status = 504;
+                error.details = {
+                    url,
+                    status: 'Request Timeout',
+                    response: {
+                        message: cause?.message || 'The browser cancelled a request that exceeded its deadline.',
+                        hint: 'Retry the operation. Reports that support partial results will identify the affected collection group.'
+                    }
+                };
+                throw error;
+            }
             const error = new Error(
                 'The local app service could not be reached. Keep the launcher terminal open and use the URL printed by start.sh; do not open index.html directly.'
             );
@@ -132,6 +179,11 @@ class ExtraHopAPI {
                 }
             };
             throw error;
+        } finally {
+            if (timeoutId !== null) clearTimeout(timeoutId);
+            if (callerSignal && forwardCallerAbort) {
+                callerSignal.removeEventListener('abort', forwardCallerAbort);
+            }
         }
     }
 

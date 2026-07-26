@@ -124,3 +124,33 @@ test('local backend requests always bypass the browser HTTP cache', async () => 
     assert.equal(calls[0].options.method, 'GET');
     assert.equal(calls[0].options.cache, 'no-store');
 });
+
+test('ExtraHop proxy requests have a browser deadline that aborts the fetch', async () => {
+    let fetchSignal;
+    const context = vm.createContext({
+        console,
+        window: {},
+        AbortController,
+        Error,
+        setTimeout,
+        clearTimeout,
+        fetch: async (url, options) => {
+            fetchSignal = options.signal;
+            return await new Promise((resolve, reject) => {
+                options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+            });
+        }
+    });
+
+    vm.runInContext(source('js/api-client/extrahop-api.js'), context);
+    const ExtraHopAPI = vm.runInContext('ExtraHopAPI', context);
+    const api = new ExtraHopAPI({});
+
+    await assert.rejects(
+        api.request('/metrics/next/198865', { timeoutMs: 5 }),
+        error => error.status === 504
+            && /timed out/.test(error.message)
+            && error.details.status === 'Request Timeout'
+    );
+    assert.equal(fetchSignal.aborted, true);
+});
