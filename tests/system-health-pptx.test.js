@@ -222,7 +222,7 @@ test('offline hero, chart caption, recommendation colors, and Source Sans 3 are 
     assert.equal(pptx.theme.headFontFace, 'Source Sans 3');
     assert.equal(pptx.theme.bodyFontFace, 'Source Sans 3');
     assert.match(allText, /Offline appliance/);
-    assert.match(allText, /1 offline sensor not shown/);
+    assert.match(allText, /OFFLINE: Offline sensor/);
     assert.doesNotMatch(allText, /supplied a usable value|excluded rather than shown as zero/);
 
     const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet health at a glance'));

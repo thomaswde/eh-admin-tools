@@ -1085,6 +1085,10 @@ function chartSpecs(model) {
 // sensors from smaller groups. Each ratio still uses that sensor's own model or
 // licensed capacity, and the appendix preserves the model detail.
 function chartPagesForSpec(model, spec) {
+    const offlineNames = model.rows
+        .filter(row => row.offline)
+        .map(row => cleanText(row.name || row.hostname || row.id, 120) || 'Unknown sensor')
+        .sort((a, b) => a.localeCompare(b));
     const measured = model.rows
         .filter(row => !isAbsent(row) && (!spec.eligible || spec.eligible(row)))
         .map(row => ({
@@ -1110,7 +1114,7 @@ function chartPagesForSpec(model, spec) {
             entries,
             measured: measured.length,
             withheld: measured.length - shown.length,
-            offline: model.overview.offline
+            offline_names: offlineNames
         };
     });
 }
@@ -1189,8 +1193,8 @@ function addChartSlide(model, assets, spec, page, title, subtitle) {
         line: { color: pptColor(palette.grid), width: 0.75 }
     });
     const caption = [
-        page.offline > 0
-            ? `${formatInteger(page.offline)} offline ${page.offline === 1 ? 'sensor' : 'sensors'} not shown`
+        page.offline_names.length
+            ? `OFFLINE: ${page.offline_names.join(', ')}`
             : '',
         page.withheld > 0 ? `${formatInteger(page.withheld)} lower-ranked sensors continue in the appendix` : ''
     ].filter(Boolean).join(' · ');
@@ -1308,8 +1312,13 @@ function formatDays(seconds) {
 
 function addPacketstoreChartSlides(model, assets) {
     if (!model.packetstore_rows.length) return;
+    const offlineNames = model.packetstore_rows
+        .filter(row => row.offline)
+        .map(row => cleanText(row.name || row.hostname || row.id, 120) || 'Unknown sensor')
+        .sort((a, b) => a.localeCompare(b));
     packetstoreChartSpecs(model).forEach(spec => {
         const measured = model.packetstore_rows
+            .filter(row => !row.offline)
             .map(row => ({ row, values: spec.series.map(series => series.value(row)) }))
             .filter(entry => spec.include
                 ? spec.include(entry.row, entry.values)
@@ -1322,7 +1331,8 @@ function addPacketstoreChartSlides(model, assets) {
         pages.forEach((entries, index) => {
             const suffix = pages.length > 1 ? ` · ${index + 1} of ${pages.length}` : '';
             addPacketstoreChartSlide(model, assets, spec, entries, `${spec.title}${suffix}`, {
-                withheld: index === pages.length - 1 ? measured.length - shown.length : 0
+                withheld: index === pages.length - 1 ? measured.length - shown.length : 0,
+                offline_names: offlineNames
             });
         });
     });
@@ -1432,9 +1442,13 @@ function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
         : spec.key === 'fidelity'
             ? 'Bars use a fixed 0–100% scale of the offered packet or secret total.'
             : 'Bars are scaled to the longest lookback on this page. Retention is reported, not scored: no customer retention target is collected.';
-    slide.addText([caption, page.withheld > 0
+    slide.addText([
+        page.offline_names.length ? `OFFLINE: ${page.offline_names.join(', ')}` : '',
+        caption,
+        page.withheld > 0
         ? `${formatInteger(page.withheld)} lower-ranked packetstores continue in the Packetstore health table`
-        : ''].filter(Boolean).join(' · '), {
+        : ''
+    ].filter(Boolean).join(' · '), {
         x: MARGIN, y: y + 0.34, w: SLIDE_WIDTH - MARGIN * 2, h: 0.22, fontFace: FONT, fontSize: 9.5,
         color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
     });

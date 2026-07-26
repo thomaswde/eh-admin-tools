@@ -671,13 +671,43 @@ def render_system_health_pdf_html(report: dict[str, Any], style: dict[str, Any])
     pages = []
     for title, subtitle, value_key, capacity_key, unit, source_rows in metric_pages:
         for model, model_rows in system_health_pdf_model_groups(source_rows, value_key, capacity_key, unit):
-            chunks = [model_rows[i:i + 22] for i in range(0, len(model_rows), 22)] or [[]]
+            offline_names = sorted(
+                str(row.get("name") or row.get("id") or "Unknown sensor")
+                for row in model_rows
+                if not row.get("online", True)
+            )
+            reporting_rows = [row for row in model_rows if row.get("online", True)]
+            chunks = [reporting_rows[i:i + 22] for i in range(0, len(reporting_rows), 22)] or [[]]
             for index, chunk in enumerate(chunks, start=1):
-                pages.append(system_health_pdf_page(title, subtitle, model, chunk, index, len(chunks), value_key, capacity_key, unit))
-    packetstore_chunks = [packetstore_rows[i:i + 12] for i in range(0, len(packetstore_rows), 12)]
+                pages.append(system_health_pdf_page(
+                    title,
+                    subtitle,
+                    model,
+                    chunk,
+                    index,
+                    len(chunks),
+                    value_key,
+                    capacity_key,
+                    unit,
+                    offline_names,
+                ))
+    packetstore_offline_names = sorted(
+        str(row.get("name") or row.get("id") or "Unknown sensor")
+        for row in packetstore_rows
+        if not row.get("online", True)
+    )
+    reporting_packetstores = [row for row in packetstore_rows if row.get("online", True)]
+    packetstore_chunks = [
+        reporting_packetstores[i:i + 12]
+        for i in range(0, len(reporting_packetstores), 12)
+    ] or ([[]] if packetstore_offline_names else [])
     for index, chunk in enumerate(packetstore_chunks, start=1):
         pages.append(system_health_pdf_packetstore_page(
-            chunk, index, len(packetstore_chunks), system_health_pdf_packetstore_cycle_label(report)
+            chunk,
+            index,
+            len(packetstore_chunks),
+            system_health_pdf_packetstore_cycle_label(report),
+            packetstore_offline_names,
         ))
 
     generated = html.escape(str(report.get("generated_at") or ""))
@@ -713,6 +743,7 @@ h2 {{ margin: 0 0 4px; font-size: 24px; }}
 .bar.hot {{ background: {colors["high"]}; }}
 .value {{ font-size: 11px; color: {colors["text"]}; }}
 .analysis {{ grid-template-columns: 190px 1fr 1fr 230px; }}
+.offline-summary {{ margin-top: 8px; padding-top: 9px; border-top: 1px solid {colors["border"]}; color: {colors["high"]}; font-size: 11px; }}
 .packetstore-grid {{ display: grid; grid-template-columns: 175px 1fr 1.35fr 1.25fr; gap: 8px 12px; align-items: center; font-size: 10px; }}
 .packetstore-grid .head {{ font-weight: 700; color: {colors["subtle"]}; border-bottom: 1px solid {colors["border"]}; padding-bottom: 6px; }}
 .mini {{ height: 9px; background: {colors["track"]}; margin: 2px 0; }}
@@ -821,6 +852,7 @@ def system_health_pdf_packetstore_rows(report: dict[str, Any]) -> list[dict[str,
             "id": sid,
             "name": appliance.get("name") or appliance.get("hostname") or f"Appliance {sid}",
             "role": appliance.get("appliance_role") or "packetstore",
+            "online": bool(appliance.get("online", True)),
             "lookback_latest": value("est_lookback_sec", "latest_values", sid),
             "lookback_min": value("est_lookback_sec", "min_values", sid),
             "packets": packets,
@@ -838,7 +870,14 @@ def system_health_pdf_packetstore_rows(report: dict[str, Any]) -> list[dict[str,
     return rows
 
 
-def system_health_pdf_packetstore_page(rows: list[dict[str, Any]], page: int, pages: int, cycle_label: str) -> str:
+def system_health_pdf_packetstore_page(
+    rows: list[dict[str, Any]],
+    page: int,
+    pages: int,
+    cycle_label: str,
+    offline_names: list[str] | None = None,
+) -> str:
+    offline_names = offline_names or []
     body = ["<div class='packetstore-grid'><div class='head'>APPLIANCE</div><div class='head'>RETENTION</div><div class='head'>CAPTURE &amp; SECRET FIDELITY</div><div class='head'>PEAK PROCESSING LOAD</div>"]
     for row in rows:
         latest = row.get("lookback_latest")
@@ -867,8 +906,11 @@ def system_health_pdf_packetstore_page(rows: list[dict[str, Any]], page: int, pa
             f"<div>{loads}</div>",
         ])
     body.append("</div>")
+    if offline_names:
+        body.append(f"""<div class="offline-summary"><b>OFFLINE:</b> {html.escape(", ".join(offline_names))}</div>""")
     subtitle = f"Retention, capture fidelity, and peak sampled 30-second processing load at {cycle_label} cadence"
-    return f"""<section class="page"><div class="page-head"><div><h2>Packetstore Health</h2><div class="muted">{html.escape(subtitle)}</div></div><div class="model">{len(rows)} metric sources | Page {page} of {pages}</div></div>{''.join(body)}</section>"""
+    source_count = len(rows) + len(offline_names)
+    return f"""<section class="page"><div class="page-head"><div><h2>Packetstore Health</h2><div class="muted">{html.escape(subtitle)}</div></div><div class="model">{source_count} metric sources | Page {page} of {pages}</div></div>{''.join(body)}</section>"""
 
 
 def system_health_pdf_packetstore_cycle_label(report: dict[str, Any]) -> str:
@@ -894,17 +936,41 @@ def system_health_pdf_model_groups(rows: list[dict[str, Any]], value_key: str | 
     return sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0]))
 
 
-def system_health_pdf_page(title: str, subtitle: str, model: str, rows: list[dict[str, Any]], page: int, pages: int, value_key: str | None, capacity_key: str | None, unit: str) -> str:
+def system_health_pdf_page(
+    title: str,
+    subtitle: str,
+    model: str,
+    rows: list[dict[str, Any]],
+    page: int,
+    pages: int,
+    value_key: str | None,
+    capacity_key: str | None,
+    unit: str,
+    offline_names: list[str] | None = None,
+) -> str:
+    offline_names = offline_names or []
     if unit == "analysis":
-        chart_rows = "\n".join(system_health_pdf_analysis_row(row) for row in rows) or "<p class='muted'>No device analysis data returned.</p>"
+        chart_rows = "\n".join(system_health_pdf_analysis_row(row) for row in rows)
     else:
-        chart_rows = "\n".join(system_health_pdf_bar_row(row, value_key or "", capacity_key or "", unit) for row in rows) or "<p class='muted'>No metric data returned.</p>"
+        chart_rows = "\n".join(system_health_pdf_bar_row(row, value_key or "", capacity_key or "", unit) for row in rows)
+    if not chart_rows and not offline_names:
+        chart_rows = (
+            "<p class='muted'>No device analysis data returned.</p>"
+            if unit == "analysis"
+            else "<p class='muted'>No metric data returned.</p>"
+        )
+    offline_summary = (
+        f"""<div class="offline-summary"><b>OFFLINE:</b> {html.escape(", ".join(offline_names))}</div>"""
+        if offline_names
+        else ""
+    )
+    sensor_count = len(rows) + len(offline_names)
     return f"""<section class="page">
   <div class="page-head">
     <div><h2>{html.escape(title)}</h2><div class="muted">{html.escape(subtitle)}</div></div>
-    <div class="model"><b>{html.escape(model)}</b><br>{len(rows)} sensors | Page {page} of {pages}</div>
+    <div class="model"><b>{html.escape(model)}</b><br>{sensor_count} sensors | Page {page} of {pages}</div>
   </div>
-  <div class="chart">{chart_rows}</div>
+  <div class="chart">{chart_rows}{offline_summary}</div>
 </section>"""
 
 

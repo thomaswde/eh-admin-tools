@@ -28,6 +28,7 @@ const csvApi = vm.runInContext(`({
     systemHealthFidelityBarRatio,
     systemHealthPacketstoreHasLoss,
     systemHealthSensorDetailCsv,
+    systemHealthMetricModelPages,
     systemHealthAnalysisModelPages,
     systemHealthCollectorNotes,
     SYSTEM_HEALTH_DETAIL_CSV_COLUMNS
@@ -390,6 +391,49 @@ test('analysis chart sorts sensor bars and model pages by total device count', (
     assert.deepEqual(Array.from(pages[0].rows, row => row.id), ['volume', 'risk']);
     assert.equal(pages[0].totalDevices, 1120);
     assert.equal(pages[1].model, 'Model B');
+});
+
+test('model chart pages separate and alphabetize offline sensors', () => {
+    const rows = [
+        {
+            id: 'online',
+            name: 'Reporting sensor',
+            license_platform: 'Model A',
+            packetPeak: 50,
+            packetCapacity: 100,
+            analysis: { advanced: 10, standard: 5, discovery: 0, total: 15 }
+        },
+        {
+            id: 'z',
+            name: 'Zulu sensor',
+            license_platform: 'Model A',
+            offline: true,
+            packetPeak: 0,
+            packetCapacity: 100,
+            analysis: { advanced: 0, standard: 0, discovery: 0, total: 0 }
+        },
+        {
+            id: 'a',
+            name: 'Alpha sensor',
+            license_platform: 'Model A',
+            offline: true,
+            packetPeak: 0,
+            packetCapacity: 100,
+            analysis: { advanced: 0, standard: 0, discovery: 0, total: 0 }
+        }
+    ];
+    const metricPage = csvApi.systemHealthMetricModelPages(rows, {
+        valueKey: 'packetPeak',
+        capacityKey: 'packetCapacity'
+    })[0];
+    const analysisPage = csvApi.systemHealthAnalysisModelPages(rows)[0];
+
+    assert.deepEqual(Array.from(metricPage.rows, row => row.id), ['online']);
+    assert.deepEqual(Array.from(metricPage.offlineRows, row => row.id), ['a', 'z']);
+    assert.equal(metricPage.sensorCount, 3);
+    assert.deepEqual(Array.from(analysisPage.rows, row => row.id), ['online']);
+    assert.deepEqual(Array.from(analysisPage.offlineRows, row => row.id), ['a', 'z']);
+    assert.equal(analysisPage.sensorCount, 3);
 });
 
 test('collector notes consolidate repeated metric and appliance conditions', () => {

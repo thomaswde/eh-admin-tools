@@ -293,6 +293,39 @@ class SystemHealthPdfProjectionTests(unittest.TestCase):
 
         self.assertIn("<span>PCAP Loss</span><b>1</b>", summary)
 
+    def test_pdf_lists_offline_sensors_without_empty_chart_rows(self):
+        html_output = main.system_health_pdf_page(
+            "Packet Rate",
+            "Peak rate",
+            "EDA",
+            [{
+                "name": "Reporting sensor",
+                "online": True,
+                "packet_peak": 50,
+                "packet_capacity": 100,
+                "metric_status": {"pkts": "complete"},
+            }],
+            1,
+            1,
+            "packet_peak",
+            "packet_capacity",
+            "pps",
+            ["Alpha sensor", "Zulu sensor"],
+        )
+
+        self.assertIn("<b>OFFLINE:</b> Alpha sensor, Zulu sensor", html_output)
+        self.assertEqual(html_output.count('class="row"'), 1)
+
+        packetstore_html = main.system_health_pdf_packetstore_page(
+            [],
+            1,
+            1,
+            "30sec",
+            ["Offline Packetstore"],
+        )
+        self.assertIn("<b>OFFLINE:</b> Offline Packetstore", packetstore_html)
+        self.assertNotIn("class='mini'", packetstore_html)
+
 
 if __name__ == "__main__":
     unittest.main()

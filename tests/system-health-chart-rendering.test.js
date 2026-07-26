@@ -6,13 +6,16 @@ const vm = require('node:vm');
 
 function chartContext(width = 1000) {
     const rectangles = [];
+    const texts = [];
     const context2d = {
         setTransform() {},
         clearRect() {},
         fillRect(x, y, rectWidth, height) {
             rectangles.push({ x, y, width: rectWidth, height });
         },
-        fillText() {},
+        fillText(value) {
+            texts.push(String(value));
+        },
         measureText(value) {
             return { width: String(value).length * 6 };
         },
@@ -34,7 +37,7 @@ function chartContext(width = 1000) {
             return context2d;
         }
     };
-    return { canvas, rectangles };
+    return { canvas, rectangles, texts };
 }
 
 function loadSystemHealthRenderer() {
@@ -131,4 +134,73 @@ test('System Health canvas charts do not paint full-width alternating table rows
         false,
         'analysis charts should only paint bounded bar tracks and fills'
     );
+});
+
+test('offline sensors are listed once below charts instead of receiving empty bars', () => {
+    const context = loadSystemHealthRenderer();
+    const utilization = chartContext();
+    const analysis = chartContext();
+    context.utilizationCanvas = utilization.canvas;
+    context.analysisCanvas = analysis.canvas;
+    context.reportingRows = [{
+        id: 'online',
+        name: 'Reporting sensor',
+        packetPeak: 50,
+        packetCapacity: 100,
+        collectionStatus: { pkts: 'complete' },
+        analysis: { advanced: 10, standard: 5, discovery: 0 }
+    }];
+    context.offlineRows = [
+        { id: 'z', name: 'Zulu sensor', offline: true },
+        { id: 'a', name: 'Alpha sensor', offline: true }
+    ];
+
+    vm.runInContext(`
+        drawSystemHealthUtilizationCanvas(utilizationCanvas, reportingRows, {
+            key: 'packet',
+            valueKey: 'packetPeak',
+            capacityKey: 'packetCapacity',
+            formatter: value => String(value)
+        }, { offlineRows });
+        drawSystemHealthAnalysisCanvas(analysisCanvas, reportingRows, {
+            advancedCapacity: 100,
+            standardCapacity: 100,
+            offlineRows
+        });
+    `, context);
+
+    assert.equal(utilization.rectangles.length, 2, 'only the reporting sensor gets a track and fill');
+    assert.equal(analysis.rectangles.length, 4, 'only the reporting sensor gets Advanced and Standard tracks and fills');
+    assert.equal(utilization.texts.filter(text => text.startsWith('OFFLINE:')).length, 1);
+    assert.equal(analysis.texts.filter(text => text.startsWith('OFFLINE:')).length, 1);
+    assert.ok(utilization.texts.includes('OFFLINE: Alpha sensor, Zulu sensor'));
+    assert.ok(analysis.texts.includes('OFFLINE: Alpha sensor, Zulu sensor'));
+});
+
+test('offline Packetstores use the same compact footer in all three charts', () => {
+    const context = loadSystemHealthRenderer();
+    const lookback = chartContext();
+    const fidelity = chartContext();
+    const load = chartContext();
+    context.lookbackCanvas = lookback.canvas;
+    context.fidelityCanvas = fidelity.canvas;
+    context.loadCanvas = load.canvas;
+    context.offlinePacketstores = [
+        { id: 'z', name: 'Zulu Packetstore', offline: true },
+        { id: 'a', name: 'Alpha Packetstore', offline: true }
+    ];
+
+    vm.runInContext(`
+        drawSystemHealthPacketstoreLookback(lookbackCanvas, [], offlinePacketstores);
+        drawSystemHealthPacketstoreFidelity(fidelityCanvas, [], offlinePacketstores);
+        drawSystemHealthPacketstoreLoad(loadCanvas, [], offlinePacketstores);
+    `, context);
+
+    [lookback, fidelity, load].forEach(chart => {
+        assert.equal(chart.rectangles.length, 0);
+        assert.deepEqual(
+            chart.texts.filter(text => text.startsWith('OFFLINE:')),
+            ['OFFLINE: Alpha Packetstore, Zulu Packetstore']
+        );
+    });
 });
