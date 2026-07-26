@@ -1152,7 +1152,7 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
             </div>
         </section>
         <section class="system-health-summary-group ${analysisWatch || discoverySensors ? 'is-watch' : ''}">
-            <div class="system-health-summary-kicker">Licensed analysis</div>
+            <div class="system-health-summary-kicker">Analysis Capacity</div>
             <div class="system-health-summary-hero">
                 <span class="system-health-summary-value">${formatSystemHealthNumber(analysisWatch)}</span>
                 <span class="system-health-summary-qualifier">sensors at 80% or more</span>

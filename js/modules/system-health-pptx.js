@@ -146,7 +146,7 @@ function isAbsent(row) {
 // Flow Sensors collect flow telemetry and IDS Sensors process IDS rules; neither
 // role is expected to discover devices or report device-analysis tiers.
 function applianceRole(row) {
-    const model = cleanText(row.license_platform || (row.capacity && row.capacity.model), 80)
+    const model = applianceModelLabel(row)
         .replace(/\s+/g, '').toUpperCase();
     const platform = cleanText(row.platform, 80).toLowerCase().replace(/[_-]+/g, ' ');
     if (model.startsWith('EFC') || platform.includes('flow sensor') || platform.includes('flow collector')) {
@@ -154,6 +154,16 @@ function applianceRole(row) {
     }
     if (model.startsWith('IDS') || platform === 'ids' || platform.startsWith('ids ')) return 'ids';
     return 'packet_sensor';
+}
+
+function applianceModelLabel(row) {
+    return cleanText(row && (row.license_platform || (row.capacity && row.capacity.model) || row.platform), 80)
+        || 'Unknown model';
+}
+
+function applianceNameWithModel(row) {
+    const name = cleanText(row && (row.name || row.hostname || row.id), 120) || 'Unknown sensor';
+    return `${name} (${applianceModelLabel(row)})`;
 }
 
 function supportsDeviceAnalysis(row) {
@@ -356,8 +366,8 @@ function isPairedPacketstoreSource(row) {
     return String(row && row.appliance_role || 'packet_sensor') !== 'all_in_one';
 }
 
-function packetstoreRoleLabel(row) {
-    return isPairedPacketstoreSource(row) ? 'Paired Packetstore' : 'All in One';
+function packetstoreModelLabel(row) {
+    return applianceModelLabel(row);
 }
 
 // Loss is a fact, not a threshold: any dropped packet, secret, frame, or block counts.
@@ -614,8 +624,13 @@ function formatRate(value) {
 }
 
 function formatGbps(value) {
+    const formatted = formatGbpsValue(value);
+    return formatted === '—' ? formatted : `${formatted} Gbps`;
+}
+
+function formatGbpsValue(value) {
     const number = finiteNumber(value);
-    return number === null ? '—' : `${number.toLocaleString(undefined, { maximumFractionDigits: 2 })} Gbps`;
+    return number === null ? '—' : number.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 function formatCompact(value, suffix = '') {
@@ -1086,7 +1101,8 @@ function chartSpecs(model) {
             subtitle: `Peak ${cycle} average as a share of rated packet-processing capacity.`,
             value: row => finiteNumber(row.packetPeak),
             capacity: row => finiteNumber(row.packetCapacity),
-            format: formatRate
+            format: formatRate,
+            formatPair: (value, capacity) => `${formatCompact(value)} / ${formatRate(capacity)}`
         },
         {
             key: 'throughput',
@@ -1094,7 +1110,8 @@ function chartSpecs(model) {
             subtitle: `Peak ${cycle} average as a share of rated throughput capacity.`,
             value: row => finiteNumber(row.throughputGbps),
             capacity: row => finiteNumber(row.throughputCapacity),
-            format: formatGbps
+            format: formatGbps,
+            formatPair: (value, capacity) => `${formatGbpsValue(value)} / ${formatGbps(capacity)}`
         },
         {
             key: 'triggers',
@@ -1103,6 +1120,7 @@ function chartSpecs(model) {
             value: row => finiteNumber(row.triggerCyclesPeak),
             capacity: row => finiteNumber(row.triggerCyclesAvail),
             format: value => formatCompact(value),
+            formatPair: (value, capacity) => `${formatCompact(value)} / ${formatCompact(capacity)} cycles`,
             note: row => Number(row.triggerDropsTotal || 0) > 0
                 ? `${formatCompact(row.triggerDropsTotal)} drops` : ''
         },
@@ -1114,6 +1132,7 @@ function chartSpecs(model) {
             capacity: row => finiteNumber(row.advancedCapacity),
             eligible: supportsDeviceAnalysis,
             format: value => `${formatInteger(value)} devices`,
+            formatPair: (value, capacity) => `${formatInteger(value)} / ${formatInteger(capacity)} devices`,
             note: row => {
                 const discovery = finiteNumber(row.analysis && row.analysis.discovery);
                 return discovery ? `${formatInteger(discovery)} in Discovery` : '';
@@ -1127,6 +1146,7 @@ function chartSpecs(model) {
             capacity: row => finiteNumber(row.standardCapacity),
             eligible: supportsDeviceAnalysis,
             format: value => `${formatInteger(value)} devices`,
+            formatPair: (value, capacity) => `${formatInteger(value)} / ${formatInteger(capacity)} devices`,
             note: row => {
                 const discovery = finiteNumber(row.analysis && row.analysis.discovery);
                 return discovery ? `${formatInteger(discovery)} in Discovery` : '';
@@ -1142,13 +1162,13 @@ function chartSpecs(model) {
 function chartPagesForSpec(model, spec) {
     const offlineNames = model.rows
         .filter(row => row.offline)
-        .map(row => cleanText(row.name || row.hostname || row.id, 120) || 'Unknown sensor')
+        .map(applianceNameWithModel)
         .sort((a, b) => a.localeCompare(b));
     const measured = model.rows
         .filter(row => !isAbsent(row) && (!spec.eligible || spec.eligible(row)))
         .map(row => ({
             row,
-            model: cleanText(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', 80),
+            model: applianceModelLabel(row),
             value: spec.value(row),
             capacity: spec.capacity(row),
             ratio: safeRatio(spec.value(row), spec.capacity(row))
@@ -1179,11 +1199,9 @@ function addChartSlides(model, assets) {
         const pages = chartPagesForSpec(model, spec);
         pages.forEach((page, index) => {
             const suffix = pages.length > 1 ? `, ${index + 1} of ${pages.length}` : '';
-            const capacityLabel = page.capacity ? ` Rated capacity: ${spec.format(page.capacity)}.`
-                : page.capacity_varies ? ' Rated capacity varies by sensor.' : '';
             addChartSlide(model, assets, spec, page,
                 `${spec.title}${suffix}`,
-                `${spec.subtitle} Model: ${page.model}.${capacityLabel}`);
+                spec.subtitle);
         });
     });
 }
@@ -1219,8 +1237,13 @@ function addChartSlide(model, assets, spec, page, title, subtitle) {
         const ratio = entry.ratio;
         const barColor = ratio >= 1 ? palette.high : ratio >= 0.8 ? palette.mid : palette.low;
         slide.addText(clipName(entry.row.name || entry.row.hostname || entry.row.id), {
-            x: MARGIN, y: y + 0.055, w: 2.45, h: 0.26, fontFace: FONT, fontSize: 10,
+            x: MARGIN, y: y + 0.025, w: 2.45, h: 0.22, fontFace: FONT, fontSize: 9.5,
             color: pptColor(palette.subtle), margin: 0, align: 'right', breakLine: false
+        });
+        slide.addText(entry.model, {
+            x: MARGIN, y: y + 0.245, w: 2.45, h: 0.15, fontFace: FONT, fontSize: 7.5,
+            color: pptColor(palette.muted), margin: 0, align: 'right', breakLine: false,
+            fit: 'shrink'
         });
         slide.addShape(model.pptx.ShapeType.rect, {
             x: plotLeft, y: y + 0.065, w: span, h: 0.24,
@@ -1231,15 +1254,22 @@ function addChartSlide(model, assets, spec, page, title, subtitle) {
             fill: { color: pptColor(barColor) }, line: { type: 'none' }
         });
         slide.addText(ratio >= 0.01 ? formatPercent(ratio) : '<1%', {
-            x: plotRight + 0.20, y: y + 0.055, w: 0.66, h: 0.26, fontFace: FONT, fontSize: 10,
+            x: plotRight + 0.08, y: y + 0.055, w: 0.66, h: 0.26, fontFace: FONT, fontSize: 10,
             bold: true, color: pptColor(palette.text), margin: 0, align: 'right'
         });
         const note = spec.note ? spec.note(entry.row) : '';
-        slide.addText(note || spec.format(entry.value), {
-            x: plotRight + 0.96, y: y + 0.055, w: 1.55, h: 0.26, fontFace: FONT, fontSize: 10,
-            color: pptColor(note ? palette.high : palette.muted), margin: 0, align: 'right',
+        slide.addText(spec.formatPair(entry.value, entry.capacity), {
+            x: plotRight + 0.80, y: y + (note ? 0.015 : 0.055), w: 1.49, h: 0.24,
+            fontFace: FONT, fontSize: 9.5, color: pptColor(palette.muted), margin: 0, align: 'right',
             breakLine: false, fit: 'shrink'
         });
+        if (note) {
+            slide.addText(note, {
+                x: plotRight + 0.80, y: y + 0.245, w: 1.49, h: 0.14,
+                fontFace: FONT, fontSize: 7.5, bold: true, color: pptColor(palette.high),
+                margin: 0, align: 'right', breakLine: false, fit: 'shrink'
+            });
+        }
         y += rowHeight;
     });
 
@@ -1377,7 +1407,7 @@ function addPacketstoreChartSlides(model, assets) {
     if (!model.packetstore_rows.length) return;
     const offlineNames = model.packetstore_rows
         .filter(row => row.offline)
-        .map(row => cleanText(row.name || row.hostname || row.id, 120) || 'Unknown sensor')
+        .map(applianceNameWithModel)
         .sort((a, b) => a.localeCompare(b));
     packetstoreChartSpecs(model).forEach(spec => {
         const measured = model.packetstore_rows
@@ -1459,7 +1489,7 @@ function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
             x: MARGIN, y: y + (rowHeight - 0.26) / 2, w: 2.45, h: 0.26, fontFace: FONT, fontSize: 10,
             color: pptColor(palette.subtle), margin: 0, align: 'right', breakLine: false
         });
-        slide.addText(packetstoreRoleLabel(row), {
+        slide.addText(packetstoreModelLabel(row), {
             x: MARGIN, y: y + (rowHeight - 0.26) / 2 + 0.18, w: 2.45, h: 0.16, fontFace: FONT, fontSize: 7.5,
             color: pptColor(palette.muted), margin: 0, align: 'right', charSpacing: 0.8
         });

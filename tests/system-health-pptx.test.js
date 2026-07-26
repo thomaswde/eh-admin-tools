@@ -242,6 +242,43 @@ test('offline hero, chart caption, recommendation colors, and Source Sans 3 are 
     assert.deepEqual(bulletColors, ['EF4444', 'F59E0B']);
 });
 
+test('capacity charts show each sensor model and its used-to-capacity value', () => {
+    const model = pptxApi.buildDeckModel({
+        meta: { ...meta, cycle_label: '1hr' },
+        rows: [sensorRow({
+            id: 'sensor-a', name: 'Sensor A', license_platform: 'EDA 1100V',
+            packetPeak: 240, packetCapacity: 1000,
+            throughputGbps: 0.24, throughputCapacity: 1,
+            triggerCyclesPeak: 45, triggerCyclesAvail: 100, triggerUtilization: 0.45,
+            triggerDropsTotal: 3,
+            analysis: { advanced: 250, standard: 400, discovery: 6 },
+            advancedCapacity: 1000, standardCapacity: 4000
+        })]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const titleOf = title => pptx._slides.find(slide => slide.texts.some(item => item.text === title));
+    const throughput = titleOf('Throughput by sensor');
+    const throughputText = throughput.texts.map(item => item.text).join(' | ');
+
+    assert.match(throughputText, /Peak 1-hour average as a share of rated throughput capacity\./);
+    assert.doesNotMatch(throughputText, /Model:|Rated capacity:/);
+    assert.match(throughputText, /0\.24 \/ 1 Gbps/);
+
+    const name = throughput.texts.find(item => item.text === 'Sensor A');
+    const applianceModel = throughput.texts.find(item => item.text === 'EDA 1100V');
+    assert.ok(applianceModel.options.fontSize < name.options.fontSize);
+    assert.ok(applianceModel.options.y > name.options.y);
+
+    assert.match(titleOf('Packet rate by sensor').texts.map(item => item.text).join(' | '), /240 \/ 1K p\/s/);
+    const triggerText = titleOf('Trigger utilization by sensor').texts.map(item => item.text).join(' | ');
+    assert.match(triggerText, /45 \/ 100 cycles/);
+    assert.match(triggerText, /3 drops/);
+    const advancedText = titleOf('Advanced Analysis usage').texts.map(item => item.text).join(' | ');
+    assert.match(advancedText, /250 \/ 1,000 devices/);
+    assert.match(advancedText, /6 in Discovery/);
+    assert.match(titleOf('Standard Analysis usage').texts.map(item => item.text).join(' | '), /400 \/ 4,000 devices/);
+});
+
 test('offline hero is omitted when the fleet has no offline appliances', () => {
     const { pptx } = presentationFor([sensorRow({ id: 'healthy', name: 'Healthy sensor' })]);
     assert.doesNotMatch(presentationText(pptx), /Offline appliance/);
@@ -367,7 +404,7 @@ test('PowerPoint omits the redundant Packetstore health table slide', () => {
 
 function packetstoreRow(overrides = {}) {
     return {
-        id: 'sensor', name: 'Packetstore sensor', appliance_role: 'packet_sensor',
+        id: 'sensor', name: 'Packetstore sensor', appliance_role: 'packet_sensor', license_platform: 'EDA 9300',
         lookbackLatestSec: 172800, lookbackMinSec: 86400,
         packetsTotal: 1000, packetDropsTotal: 0, packetDropRatio: 0,
         slowWriteDropsTotal: 0, interfaceDropsTotal: 0, blocksDroppedTotal: 0,
@@ -507,6 +544,10 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     assert.equal((retention.images || []).length, 0);
     // Retention is reported, not scored, so the slide says so out loud.
     assert.match(retention.texts.map(item => item.text).join(' '), /no retention target is set/);
+    const retentionName = retention.texts.find(item => item.text === 'Store A');
+    const retentionModel = retention.texts.find(item => item.text === 'EDA 9300');
+    assert.ok(retentionModel.options.fontSize < retentionName.options.fontSize);
+    assert.ok(retentionModel.options.y > retentionName.options.y);
 
     // Load is the only packetstore chart with a capacity, so it is the only one
     // that draws the 80% guide.
@@ -514,10 +555,11 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     assert.ok(load.texts.some(item => item.text === '80%'));
     assert.ok(!retention.texts.some(item => item.text === '80%'));
 
-    // Both roles are labeled on the chart itself, matching the health table.
+    // The appliance model is shown below every source name; role shorthand is
+    // deliberately omitted because it is not the hardware model.
     const loadText = load.texts.map(item => item.text).join(' | ');
-    assert.match(loadText, /All in One/);
-    assert.match(loadText, /Packetstore/);
+    assert.match(loadText, /EDA 9300/);
+    assert.doesNotMatch(loadText, /All in One|Paired Packetstore/);
 
     const fidelity = titleOf('Packet and TLS secret loss');
     const fidelityText = fidelity.texts.map(item => item.text).join(' | ');

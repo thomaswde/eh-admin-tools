@@ -43,6 +43,7 @@ test('Devices use a horizontal borderless chart with state-aware colors', () => 
 
 test('System Health and Records labels and layouts match the revised UI', () => {
     const html = source('index.html');
+    const systemHealth = source('js/modules/system-health-report.js');
 
     assert.match(html, /<h2 class="card-title">Report<\/h2>/);
     assert.match(html, /<h2 class="card-title">Import and export<\/h2>/);
@@ -53,6 +54,8 @@ test('System Health and Records labels and layouts match the revised UI', () => 
     assert.match(html, /Reserved daily capacity \(GB\)/);
     assert.match(html, /Utilized daily capacity \(GB\)/);
     assert.match(html, /Total uncompressed record bytes/);
+    assert.match(systemHealth, /system-health-summary-kicker">Analysis Capacity</);
+    assert.doesNotMatch(systemHealth, /system-health-summary-kicker">Licensed analysis</);
 });
 
 test('Selected controls use neutral shading instead of cyan outlines', () => {
