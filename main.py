@@ -862,6 +862,7 @@ def system_health_pdf_packetstore_rows(report: dict[str, Any]) -> list[dict[str,
             "packet_drop_ratio": packet_drops / packets if packets and packet_drops is not None else None,
             "slow_write_drops": value("pkts_dropped_wrslow", "totals", sid),
             "interface_drops": value("if_drops", "totals", sid),
+            "blocks_dropped": value("blocks_dropped", "totals", sid),
             "secrets": secrets,
             "secret_drops": secret_drops,
             "secret_drop_ratio": secret_drops / secrets if secrets and secret_drops is not None else None,
@@ -892,7 +893,8 @@ def system_health_pdf_packetstore_page(
         fidelity = (
             f"Packets {packet_label} ({int(row.get('packet_drops') or 0):,} dropped) · "
             f"Secrets {secret_label} ({int(row.get('secret_drops') or 0):,} of {int(row.get('secrets') or 0):,} dropped)<br>"
-            f"Slow-write {int(row.get('slow_write_drops') or 0):,} · interface {int(row.get('interface_drops') or 0):,}"
+            f"Slow-write {int(row.get('slow_write_drops') or 0):,} · interface {int(row.get('interface_drops') or 0):,} · "
+            f"blocks {int(row.get('blocks_dropped') or 0):,}"
         )
         load_values = [("Input", row.get("input_load")), ("Compress", row.get("compress_load")), ("Write", row.get("write_load"))]
         loads = "".join(
@@ -1015,7 +1017,7 @@ def system_health_pdf_summary(rows: list[dict[str, Any]], report: dict[str, Any]
         ("Throughput Watch", f"{sum(1 for r in rows if ratio(r['throughput_gbps'], r['throughput_capacity']) >= 0.8):,}", "At 80%+ throughput"),
         ("Trigger Drops", f"{sum(1 for r in rows if r['trigger_drops'] > 0):,}", "Sensors with drops"),
         ("PCAP Sources", f"{len(packetstore_rows):,}", "Packetstore-backed sensors detected by cpc metrics"),
-        ("PCAP Loss", f"{sum(1 for r in packetstore_rows if (r.get('packet_drops') or 0) > 0 or (r.get('slow_write_drops') or 0) > 0 or (r.get('interface_drops') or 0) > 0 or (r.get('secret_drops') or 0) > 0):,}", "Stores with observed loss"),
+        ("PCAP Loss", f"{sum(1 for r in packetstore_rows if (r.get('packet_drops') or 0) > 0 or (r.get('slow_write_drops') or 0) > 0 or (r.get('interface_drops') or 0) > 0 or (r.get('blocks_dropped') or 0) > 0 or (r.get('secret_drops') or 0) > 0):,}", "Stores with observed loss"),
     ]
     return "".join(f"<div class='card'><span>{html.escape(label)}</span><b>{html.escape(value)}</b><small class='muted'>{html.escape(note)}</small></div>" for label, value, note in cards)
 

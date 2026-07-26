@@ -1008,14 +1008,14 @@
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
                                     <h2 class="card-title">Packetstore Capture and Secret Fidelity</h2>
-                                    <p class="card-desc">Share of offered packets and TLS secrets dropped over the report window. Slow-write drops are a subset of packet drops; interface drops remain a separate raw count.</p>
+                                    <p class="card-desc">Share of offered packets and TLS secrets dropped over the report window. Each series is scored independently; slow-write, interface, and dropped-block counters identify where capture pressure occurred.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreFidelityChart">Export PNG</button>
                             </div>
                             <div class="system-health-tier-legend">
-                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>Packet drops</span>
-                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>Secret drops</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>&gt;0–1% warning</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>&gt;1% critical</span>
                             </div>
                             <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreFidelityChart"></canvas></div>
                         </div>
@@ -1048,6 +1048,7 @@
                                         <th>Appliance</th><th>Role</th><th>Model</th><th>Status</th>
                                         <th class="num">Latest lookback</th><th class="num">Min lookback</th><th class="num">Packets</th>
                                         <th class="num">Packet drops</th><th class="num">Slow-write</th><th class="num">Interface drops</th>
+                                        <th class="num">Blocks</th>
                                         <th class="num">Secrets</th><th class="num">Secret drops</th><th class="num">Input load</th>
                                         <th class="num">Compress load</th><th class="num">Write load</th>
                                     </tr></thead>

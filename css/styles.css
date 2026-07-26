@@ -2417,6 +2417,14 @@ td.actions .btn-danger { margin-left: 6px; }
     color: var(--warn);
 }
 
+.system-health-summary-group.is-loss-warning .system-health-summary-facts b {
+    color: var(--warn);
+}
+
+.system-health-summary-group.is-loss-critical .system-health-summary-facts b {
+    color: var(--danger-text);
+}
+
 .system-health-section-head {
     padding: 6px 2px 0;
 }
@@ -2553,5 +2561,17 @@ td.actions .btn-danger { margin-left: 6px; }
 .system-health-overflow-row td.system-health-overflow-cell {
     background-color: var(--warn-border);
     color: var(--warn);
+    font-weight: 700;
+}
+
+.system-health-overflow-row td.system-health-warning-cell {
+    background-color: var(--warn-border);
+    color: var(--warn);
+    font-weight: 700;
+}
+
+.system-health-overflow-row td.system-health-critical-cell {
+    background-color: var(--danger-border);
+    color: var(--danger-text);
     font-weight: 700;
 }

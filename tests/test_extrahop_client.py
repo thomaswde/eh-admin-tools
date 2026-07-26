@@ -293,6 +293,15 @@ class SystemHealthPdfProjectionTests(unittest.TestCase):
 
         self.assertIn("<span>PCAP Loss</span><b>1</b>", summary)
 
+        block_summary = main.system_health_pdf_summary([], {}, [{
+            "packet_drops": 0,
+            "slow_write_drops": 0,
+            "interface_drops": 0,
+            "blocks_dropped": 3,
+            "secret_drops": 0,
+        }])
+        self.assertIn("<span>PCAP Loss</span><b>1</b>", block_summary)
+
     def test_pdf_lists_offline_sensors_without_empty_chart_rows(self):
         html_output = main.system_health_pdf_page(
             "Packet Rate",

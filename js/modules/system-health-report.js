@@ -10,6 +10,7 @@ const SYSTEM_HEALTH_OFFLINE_LABEL_HEIGHT = 16;
 const SYSTEM_HEALTH_OFFLINE_LABEL_GAP = 5;
 const SYSTEM_HEALTH_OFFLINE_LINE_HEIGHT = 15;
 const SYSTEM_HEALTH_OFFLINE_BOTTOM_PAD = 14;
+const SYSTEM_HEALTH_PACKETSTORE_CRITICAL_DROP_RATIO = 0.01;
 const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '3';
 const SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS = [
     'schema_version', 'generated_at', 'report_lookback_days', 'report_from_ms', 'report_until_ms',
@@ -955,6 +956,7 @@ function systemHealthPacketstoreRows(report) {
             packetDropsTotal: packetDrops,
             slowWriteDropsTotal: total('pkts_dropped_wrslow'),
             interfaceDropsTotal: total('if_drops'),
+            blocksDroppedTotal: total('blocks_dropped'),
             packetDropRatio: packets !== null && packets > 0 && packetDrops !== null ? packetDrops / packets : null,
             secretsTotal: secrets,
             secretDropsTotal: secretDrops,
@@ -974,7 +976,35 @@ function systemHealthPacketstoreHasLoss(row) {
     return (Number(row && row.packetDropsTotal) || 0) > 0
         || (Number(row && row.slowWriteDropsTotal) || 0) > 0
         || (Number(row && row.interfaceDropsTotal) || 0) > 0
+        || (Number(row && row.blocksDroppedTotal) || 0) > 0
         || (Number(row && row.secretDropsTotal) || 0) > 0;
+}
+
+// Drop percentages are scored independently so packet loss never changes the
+// secret series (or vice versa). Raw cause counters have no denominator and
+// therefore remain warnings rather than being promoted to a critical rate.
+function systemHealthPacketstoreDropSeverity(ratio, droppedTotal = 0) {
+    const value = Number(ratio);
+    if (Number.isFinite(value) && value > SYSTEM_HEALTH_PACKETSTORE_CRITICAL_DROP_RATIO) return 'critical';
+    if ((Number.isFinite(value) && value > 0) || (Number(droppedTotal) || 0) > 0) return 'warning';
+    return 'clean';
+}
+
+function systemHealthPacketstoreLossSeverity(row) {
+    const packet = systemHealthPacketstoreDropSeverity(row && row.packetDropRatio, row && row.packetDropsTotal);
+    const secret = systemHealthPacketstoreDropSeverity(row && row.secretDropRatio, row && row.secretDropsTotal);
+    if (packet === 'critical' || secret === 'critical') return 'critical';
+    return packet === 'warning' || secret === 'warning'
+        || (Number(row && row.slowWriteDropsTotal) || 0) > 0
+        || (Number(row && row.interfaceDropsTotal) || 0) > 0
+        || (Number(row && row.blocksDroppedTotal) || 0) > 0
+        ? 'warning' : 'clean';
+}
+
+function systemHealthPacketstoreSeverityColor(colors, severity) {
+    return severity === 'critical' ? colors.high
+        : severity === 'warning' ? colors.mid
+            : colors.low;
 }
 
 function metricSystemHealthPeak(report, metricName, id) {
@@ -1072,6 +1102,9 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
     }).length;
     const discoverySensors = rows.filter(row => (row.analysis.discovery || 0) > 0).length;
     const packetstoreLoss = packetstoreRows.filter(systemHealthPacketstoreHasLoss).length;
+    const packetstoreCriticalLoss = packetstoreRows.filter(row => systemHealthPacketstoreLossSeverity(row) === 'critical').length;
+    const packetstoreLossClass = packetstoreCriticalLoss ? 'is-loss-critical'
+        : packetstoreLoss ? 'is-loss-warning' : '';
     const retention = systemHealthAveragePacketstoreLookback(packetstoreRows);
     const lookbackDays = report.window && report.window.lookback_days;
     const cycle = systemHealthReportCycleLabel(report);
@@ -1118,7 +1151,7 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
                 <span><b>${formatSystemHealthNumber(discoverySensors)}</b> with devices in Discovery</span>
             </div>
         </section>
-        <section class="system-health-summary-group ${packetstoreLoss ? 'is-alert' : ''}">
+        <section class="system-health-summary-group ${packetstoreLossClass}">
             <div class="system-health-summary-kicker">Packetstore retention</div>
             <div class="system-health-summary-hero">
                 <span class="system-health-summary-value">${escapeSystemHealthHtml(retentionValue)}</span>
@@ -1127,6 +1160,7 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
             <p class="system-health-summary-note">${formatSystemHealthNumber(retention.reporting_sources)} of ${formatSystemHealthNumber(retention.total_sources)} Packetstore metric sources reported a lookback.</p>
             <div class="system-health-summary-facts">
                 <span><b>${formatSystemHealthNumber(packetstoreLoss)}</b> with capture or secret loss</span>
+                <span><b>${formatSystemHealthNumber(packetstoreCriticalLoss)}</b> above 1% loss</span>
             </div>
         </section>`;
 }
@@ -1141,7 +1175,11 @@ function renderSystemHealthPacketstoreCharts(report, rows) {
         systemHealthPacketstoreLookbackRows(reportingRows),
         offlineRows
     );
-    drawSystemHealthPacketstoreFidelity(document.getElementById('systemHealthPacketstoreFidelityChart'), reportingRows, offlineRows);
+    drawSystemHealthPacketstoreFidelity(
+        document.getElementById('systemHealthPacketstoreFidelityChart'),
+        systemHealthPacketstoreFidelityRows(reportingRows),
+        offlineRows
+    );
     drawSystemHealthPacketstoreLoad(document.getElementById('systemHealthPacketstoreLoadChart'), reportingRows, offlineRows);
 }
 
@@ -1151,6 +1189,18 @@ function systemHealthPacketstoreLookbackRows(rows) {
         return Number.isFinite(value) && value > 0;
     }).slice().sort((a, b) => Number(a.lookbackLatestSec) - Number(b.lookbackLatestSec)
         || Number(a.lookbackMinSec || 0) - Number(b.lookbackMinSec || 0)
+        || String(a.name || a.id || '').localeCompare(String(b.name || b.id || '')));
+}
+
+function systemHealthPacketstoreFidelityRows(rows) {
+    const rank = row => systemHealthPacketstoreLossSeverity(row) === 'critical' ? 2
+        : systemHealthPacketstoreLossSeverity(row) === 'warning' ? 1 : 0;
+    const ratio = row => Math.max(Number(row && row.packetDropRatio) || 0, Number(row && row.secretDropRatio) || 0);
+    const counters = row => ['slowWriteDropsTotal', 'interfaceDropsTotal', 'blocksDroppedTotal']
+        .reduce((sum, key) => sum + (Number(row && row[key]) || 0), 0);
+    return [...(rows || [])].sort((a, b) => rank(b) - rank(a)
+        || ratio(b) - ratio(a)
+        || counters(b) - counters(a)
         || String(a.name || a.id || '').localeCompare(String(b.name || b.id || '')));
 }
 
@@ -1250,17 +1300,50 @@ function drawSystemHealthPacketstoreFidelity(canvas, rows, offlineRows = []) {
         const y = 24 + index * 42;
         ctx.fillStyle = colors.subtle; ctx.font = '11px Arial'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
         ctx.fillText(truncateSystemHealthCanvasText(ctx, row.name || row.id, left - 12), left - 8, y + 13);
-        [['packetDropRatio', colors.high, 0], ['secretDropRatio', colors.mid, 16]].forEach(([key, color, offset]) => {
+        [
+            ['packetDropRatio', 'packetDropsTotal', 0],
+            ['secretDropRatio', 'secretDropsTotal', 16]
+        ].forEach(([key, totalKey, offset]) => {
             const value = row[key];
+            const severity = systemHealthPacketstoreDropSeverity(value, row[totalKey]);
             ctx.fillStyle = colors.track; ctx.fillRect(left, y + offset, plotWidth, 10);
-            if (value !== null) { ctx.fillStyle = color; ctx.fillRect(left, y + offset, plotWidth * systemHealthFidelityBarRatio(value), 10); }
+            if (value !== null && Number(value) > 0) {
+                ctx.fillStyle = systemHealthPacketstoreSeverityColor(colors, severity);
+                ctx.fillRect(left, y + offset, Math.max(2, plotWidth * systemHealthFidelityBarRatio(value)), 10);
+            }
         });
-        ctx.fillStyle = colors.text; ctx.textAlign = 'left'; ctx.font = '10px Arial';
-        ctx.fillText(`packets ${formatSystemHealthPercent(row.packetDropRatio)} · secrets ${formatSystemHealthPercent(row.secretDropRatio)} (${formatSystemHealthCompactNumber(row.secretDropsTotal)} / ${formatSystemHealthCompactNumber(row.secretsTotal)})`, left + plotWidth + 8, y + 7);
-        ctx.fillStyle = colors.muted;
-        ctx.fillText(`slow-write ${formatSystemHealthNumber(row.slowWriteDropsTotal)} · interface ${formatSystemHealthNumber(row.interfaceDropsTotal)}`, left + plotWidth + 8, y + 23);
+        const packetSeverity = systemHealthPacketstoreDropSeverity(row.packetDropRatio, row.packetDropsTotal);
+        const secretSeverity = systemHealthPacketstoreDropSeverity(row.secretDropRatio, row.secretDropsTotal);
+        drawSystemHealthCanvasSegments(ctx, left + plotWidth + 8, y + 7, [
+            { text: `packets ${formatSystemHealthPercent(row.packetDropRatio)}`, severity: packetSeverity },
+            { text: ' · ' },
+            { text: `secrets ${formatSystemHealthPercent(row.secretDropRatio)} (${formatSystemHealthCompactNumber(row.secretDropsTotal)} / ${formatSystemHealthCompactNumber(row.secretsTotal)})`, severity: secretSeverity }
+        ], colors, '10px Arial');
+        drawSystemHealthCanvasSegments(ctx, left + plotWidth + 8, y + 23, [
+            { text: `slow-write ${formatSystemHealthNumber(row.slowWriteDropsTotal)}`, severity: Number(row.slowWriteDropsTotal) > 0 ? 'warning' : 'clean' },
+            { text: ' · ' },
+            { text: `interface ${formatSystemHealthNumber(row.interfaceDropsTotal)}`, severity: Number(row.interfaceDropsTotal) > 0 ? 'warning' : 'clean' },
+            { text: ' · ' },
+            { text: `blocks ${formatSystemHealthNumber(row.blocksDroppedTotal)}`, severity: Number(row.blocksDroppedTotal) > 0 ? 'warning' : 'clean' }
+        ], colors, '10px Arial', true);
     });
     drawSystemHealthOfflineSummary(ctx, width, chartHeight, offlineLayout);
+}
+
+function drawSystemHealthCanvasSegments(ctx, x, y, segments, colors, font, mutedClean = false) {
+    let cursor = x;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    (segments || []).forEach(segment => {
+        const severity = segment.severity || 'clean';
+        const alert = severity === 'warning' || severity === 'critical';
+        ctx.font = `${alert ? 'bold ' : ''}${font}`;
+        ctx.fillStyle = severity === 'critical' ? colors.high
+            : severity === 'warning' ? colors.mid
+                : mutedClean ? colors.muted : colors.text;
+        ctx.fillText(segment.text, cursor, y);
+        cursor += ctx.measureText(segment.text).width;
+    });
 }
 
 function systemHealthFidelityBarRatio(value) {
@@ -1390,6 +1473,11 @@ function renderSystemHealthPacketstoreTable(rows) {
     body.innerHTML = rows.map(row => {
         const dropped = systemHealthPacketstoreHasLoss(row);
         const hot = Math.max(row.inputLoadPeak || 0, row.compressionLoadPeak || 0, row.diskWriteLoadPeak || 0) >= 80;
+        const packetSeverity = systemHealthPacketstoreDropSeverity(row.packetDropRatio, row.packetDropsTotal);
+        const secretSeverity = systemHealthPacketstoreDropSeverity(row.secretDropRatio, row.secretDropsTotal);
+        const severityCell = severity => severity === 'critical' ? ' class="system-health-critical-cell"'
+            : severity === 'warning' ? ' class="system-health-warning-cell"' : '';
+        const counterCell = value => Number(value) > 0 ? ' class="system-health-warning-cell"' : '';
         return `<tr class="${dropped || hot ? 'system-health-overflow-row' : ''}">
             <td>${escapeSystemHealthHtml(row.name || row.id)}</td>
             <td>${escapeSystemHealthHtml(systemHealthPacketstoreRoleLabel(row))}</td>
@@ -1398,16 +1486,17 @@ function renderSystemHealthPacketstoreTable(rows) {
             <td>${formatSystemHealthDays(Number(row.lookbackLatestSec) / 86400)}</td>
             <td>${formatSystemHealthDays(Number(row.lookbackMinSec) / 86400)}</td>
             <td>${formatSystemHealthNumber(row.packetsTotal)}</td>
-            <td${dropped ? ' class="system-health-overflow-cell"' : ''}>${formatSystemHealthNumber(row.packetDropsTotal)} (${formatSystemHealthPercent(row.packetDropRatio)})</td>
-            <td>${formatSystemHealthNumber(row.slowWriteDropsTotal)}</td>
-            <td>${formatSystemHealthNumber(row.interfaceDropsTotal)}</td>
+            <td${severityCell(packetSeverity)}>${formatSystemHealthNumber(row.packetDropsTotal)} (${formatSystemHealthPercent(row.packetDropRatio)})</td>
+            <td${counterCell(row.slowWriteDropsTotal)}>${formatSystemHealthNumber(row.slowWriteDropsTotal)}</td>
+            <td${counterCell(row.interfaceDropsTotal)}>${formatSystemHealthNumber(row.interfaceDropsTotal)}</td>
+            <td${counterCell(row.blocksDroppedTotal)}>${formatSystemHealthNumber(row.blocksDroppedTotal)}</td>
             <td>${formatSystemHealthNumber(row.secretsTotal)}</td>
-            <td>${formatSystemHealthNumber(row.secretDropsTotal)} (${formatSystemHealthPercent(row.secretDropRatio)})</td>
+            <td${severityCell(secretSeverity)}>${formatSystemHealthNumber(row.secretDropsTotal)} (${formatSystemHealthPercent(row.secretDropRatio)})</td>
             <td>${formatSystemHealthPercentValue(row.inputLoadPeak)}</td>
             <td>${formatSystemHealthPercentValue(row.compressionLoadPeak)}</td>
             <td>${formatSystemHealthPercentValue(row.diskWriteLoadPeak)}</td>
         </tr>`;
-    }).join('') || '<tr><td colspan="15">No Packetstore-backed sensors were detected.</td></tr>';
+    }).join('') || '<tr><td colspan="16">No Packetstore-backed sensors were detected.</td></tr>';
 }
 
 function systemHealthPacketstoreRoleLabel(row) {

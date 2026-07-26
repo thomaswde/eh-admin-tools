@@ -55,7 +55,8 @@ test('builds the exact batched Packetstore cpc metric request', () => {
         { name: 'compress_load' }, { name: 'disk_write_load' }
     ]);
     assert.deepEqual(health.PACKETSTORE_TOTAL_METRICS, [
-        'pkts', 'pkts_dropped', 'pkts_dropped_wrslow', 'secrets', 'secrets_dropped', 'if_drops'
+        'pkts', 'pkts_dropped', 'pkts_dropped_wrslow', 'secrets', 'secrets_dropped',
+        'if_drops', 'blocks_dropped'
     ]);
 });
 

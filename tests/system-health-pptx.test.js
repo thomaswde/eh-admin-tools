@@ -138,7 +138,11 @@ class FakePptx {
     addSlide() {
         const slide = {
             texts: [], shapes: [], tables: [], images: [], notes: [],
-            addText(text, options = {}) { this.texts.push({ text: String(text), options }); },
+            addText(text, options = {}) {
+                const runs = Array.isArray(text) ? text : null;
+                const normalized = runs ? runs.map(run => String(run && run.text || '')).join('') : String(text);
+                this.texts.push({ text: normalized, runs, options });
+            },
             addShape(type, options = {}) { this.shapes.push({ type, options }); },
             addTable(rows, options = {}) { this.tables.push({ rows, options }); },
             addImage(options = {}) { this.images.push(options); },
@@ -365,7 +369,7 @@ function packetstoreRow(overrides = {}) {
         id: 'sensor', name: 'Packetstore sensor', appliance_role: 'packet_sensor',
         lookbackLatestSec: 172800, lookbackMinSec: 86400,
         packetsTotal: 1000, packetDropsTotal: 0, packetDropRatio: 0,
-        slowWriteDropsTotal: 0, interfaceDropsTotal: 0,
+        slowWriteDropsTotal: 0, interfaceDropsTotal: 0, blocksDroppedTotal: 0,
         secretsTotal: 100, secretDropsTotal: 0, secretDropRatio: 0,
         inputLoadPeak: 20, compressionLoadPeak: 12, diskWriteLoadPeak: 15,
         ...overrides
@@ -495,7 +499,7 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     assert.match(fidelityText, /fixed 0–100% scale/);
     assert.match(fidelityText, /secrets 0% \(0 \/ 100\)/);
     const packetDropBar = fidelity.shapes.find(shape => shape.type === 'rect'
-        && shape.options.fill && shape.options.fill.color === 'EF4444');
+        && shape.options.fill && shape.options.fill.color === 'F59E0B');
     assert.ok(packetDropBar.options.w < 0.1, 'a 1% drop rate should occupy about 1% of the chart width');
 });
 
@@ -541,6 +545,9 @@ test('Packetstore retention shows the average lookback on the first retention sl
     assert.match(retentionSlides[0].texts.map(item => item.text).join(' | '), /AVERAGE LOOKBACK/);
     assert.match(retentionSlides[0].texts.map(item => item.text).join(' | '), /5\.0d/);
     assert.match(retentionSlides[0].texts.map(item => item.text).join(' | '), /9 reporting sources/);
+    const hero = retentionSlides[0].texts.find(item => item.text === '5.0d');
+    assert.equal(hero.options.fontSize, 31);
+    assert.ok(hero.options.y < 1, 'average lookback hero sits in the upper-right header area');
     assert.doesNotMatch(retentionSlides[1].texts.map(item => item.text).join(' | '), /AVERAGE LOOKBACK/);
 });
 
@@ -588,20 +595,44 @@ test('small drop rates never round to zero, and the highlight follows the actual
     const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore capture and secret fidelity'));
     const find = pattern => slide.texts.find(item => pattern.test(item.text));
 
-    assert.match(find(/^packets/).text, /packets 0\.02%/);
-    assert.equal(find(/packets 0\.02%/).options.color, 'EF4444');
+    const microLossLine = find(/packets 0\.02%/);
+    assert.match(microLossLine.text, /packets 0\.02%/);
+    assert.equal(microLossLine.options.color, 'F59E0B');
 
     // The frame-loss store keeps a plain 0% ratio line and moves the highlight
     // to the counter line that carries the loss.
-    const ratioLine = slide.texts.filter(item => /^packets 0% /.test(item.text))[0];
+    const ratioLine = slide.texts.filter(item => /^packets 0%/.test(item.text))[0];
     assert.ok(!ratioLine.options.bold);
     const noteLine = slide.texts.find(item => /interface 3,100/.test(item.text));
-    assert.equal(noteLine.options.color, 'EF4444');
+    assert.equal(noteLine.options.color, 'F59E0B');
 
     assert.equal(pptx._slides.some(s => s.texts.some(item => item.text === 'Packetstore health')), false);
 
     const actions = pptx._slides.find(s => s.texts.some(item => item.text === 'Recommended next steps'));
-    assert.equal(actions.shapes.find(shape => shape.type === 'ellipse').options.fill.color, 'EF4444');
+    assert.equal(actions.shapes.find(shape => shape.type === 'ellipse').options.fill.color, 'F59E0B');
+});
+
+test('packet and secret loss are classified and colored independently', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        packetstore_rows: [packetstoreRow({
+            packetDropsTotal: 5, packetDropRatio: 0.005,
+            secretDropsTotal: 2, secretDropRatio: 0.02,
+            blocksDroppedTotal: 7
+        })]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore capture and secret fidelity'));
+    const packetLabel = slide.texts.find(item => /^packets 0\.50%/.test(item.text));
+    const secretLabel = slide.texts.find(item => /^secrets 2%/.test(item.text));
+    const causeLine = slide.texts.find(item => /blocks 7/.test(item.text));
+
+    assert.equal(packetLabel.options.color, 'F59E0B');
+    assert.equal(secretLabel.options.color, 'EF4444');
+    assert.equal(causeLine.options.color, 'F59E0B');
+    assert.equal(model.overview.packetstore_loss_severity, 'critical');
+    assert.equal(model.overview.packetstores_with_critical_loss, 1);
 });
 
 test('counter-only loss remains visible when fidelity denominators are unavailable', () => {
@@ -620,7 +651,8 @@ test('counter-only loss remains visible when fidelity denominators are unavailab
 
     assert.ok(slide, 'counter-only loss should create a fidelity chart');
     assert.match(slide.texts.map(item => item.text).join(' | '), /interface 42/);
-    assert.match(slide.texts.map(item => item.text).join(' | '), /packets — · secrets —/);
+    assert.ok(slide.texts.some(item => /^packets —/.test(item.text)));
+    assert.ok(slide.texts.some(item => /^secrets —/.test(item.text)));
 });
 
 test('measured zero packetstore values do not draw non-zero colored bars', () => {

@@ -28,6 +28,8 @@ const csvApi = vm.runInContext(`({
     systemHealthHorizontalChartLayout,
     systemHealthFidelityBarRatio,
     systemHealthPacketstoreHasLoss,
+    systemHealthPacketstoreDropSeverity,
+    systemHealthPacketstoreLossSeverity,
     systemHealthSensorDetailCsv,
     systemHealthMetricModelPages,
     systemHealthAnalysisModelPages,
@@ -279,7 +281,8 @@ test('unified CSV round-trips Packetstore summaries under the metric-producing s
             pkts_dropped_wrslow: packetstoreMetric('total_by_object', id, { totals: { [id]: 4 } }),
             secrets: packetstoreMetric('total_by_object', id, { totals: { [id]: 100 } }),
             secrets_dropped: packetstoreMetric('total_by_object', id, { totals: { [id]: 2 } }),
-            if_drops: packetstoreMetric('total_by_object', id, { totals: { [id]: 3 } })
+            if_drops: packetstoreMetric('total_by_object', id, { totals: { [id]: 3 } }),
+            blocks_dropped: packetstoreMetric('total_by_object', id, { totals: { [id]: 6 } })
         }
     };
 
@@ -295,6 +298,7 @@ test('unified CSV round-trips Packetstore summaries under the metric-producing s
     assert.equal(packetstores[0].lookbackMinSec, 86400);
     assert.equal(packetstores[0].packetDropRatio, 0.01);
     assert.equal(packetstores[0].secretDropRatio, 0.02);
+    assert.equal(packetstores[0].blocksDroppedTotal, 6);
     assert.equal(packetstores[0].diskWriteLoadPeak, 81);
 });
 
@@ -309,8 +313,23 @@ test('slow-write packet drops count as Packetstore capture loss', () => {
         packetDropsTotal: 0,
         slowWriteDropsTotal: 0,
         interfaceDropsTotal: 0,
+        blocksDroppedTotal: 0,
         secretDropsTotal: 0
     }), false);
+    assert.equal(csvApi.systemHealthPacketstoreHasLoss({ blocksDroppedTotal: 1 }), true);
+});
+
+test('Packetstore packet and secret drop severity is independent and monotonic', () => {
+    assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0, 0), 'clean');
+    assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.005, 5), 'warning');
+    assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.0075, 7), 'warning');
+    assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.01, 10), 'warning');
+    assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.01001, 11), 'critical');
+    assert.equal(csvApi.systemHealthPacketstoreLossSeverity({
+        packetDropRatio: 0, packetDropsTotal: 0,
+        secretDropRatio: 0.02, secretDropsTotal: 2
+    }), 'critical');
+    assert.equal(csvApi.systemHealthPacketstoreLossSeverity({ blocksDroppedTotal: 3 }), 'warning');
 });
 
 test('retention chart sorts shortest positive lookback first and omits unavailable zeros', () => {

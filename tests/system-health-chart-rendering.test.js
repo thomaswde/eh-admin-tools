@@ -12,11 +12,11 @@ function chartContext(width = 1000) {
         setTransform() {},
         clearRect() {},
         fillRect(x, y, rectWidth, height) {
-            rectangles.push({ x, y, width: rectWidth, height });
+            rectangles.push({ x, y, width: rectWidth, height, fillStyle: this.fillStyle });
         },
         fillText(value, x, y) {
             texts.push(String(value));
-            textDraws.push({ text: String(value), x, y });
+            textDraws.push({ text: String(value), x, y, fillStyle: this.fillStyle, font: this.font });
         },
         measureText(value) {
             return { width: String(value).length * 6 };
@@ -236,4 +236,24 @@ test('offline Packetstores use the same compact footer in all three charts', () 
         assert.ok(chart.texts.includes('2 OFFLINE'));
         assert.ok(chart.texts.includes('Alpha Packetstore, Zulu Packetstore'));
     });
+});
+
+test('Packetstore fidelity colors packet and secret loss independently and shows dropped blocks', () => {
+    const context = loadSystemHealthRenderer();
+    const fidelity = chartContext();
+    context.fidelityCanvas = fidelity.canvas;
+    context.fidelityRows = [{
+        id: 'store', name: 'Packetstore',
+        packetDropRatio: 0.005, packetDropsTotal: 5,
+        secretDropRatio: 0.02, secretDropsTotal: 2, secretsTotal: 100,
+        slowWriteDropsTotal: 0, interfaceDropsTotal: 0, blocksDroppedTotal: 7
+    }];
+
+    vm.runInContext('drawSystemHealthPacketstoreFidelity(fidelityCanvas, fidelityRows, []);', context);
+
+    assert.ok(fidelity.rectangles.some(rect => rect.fillStyle === '#f59e0b'), 'packet warning bar is orange');
+    assert.ok(fidelity.rectangles.some(rect => rect.fillStyle === '#ef4444'), 'secret critical bar is red');
+    assert.equal(fidelity.textDraws.find(draw => draw.text.startsWith('packets')).fillStyle, '#f59e0b');
+    assert.equal(fidelity.textDraws.find(draw => draw.text.startsWith('secrets')).fillStyle, '#ef4444');
+    assert.equal(fidelity.textDraws.find(draw => draw.text.startsWith('blocks')).fillStyle, '#f59e0b');
 });

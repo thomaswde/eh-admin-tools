@@ -19,7 +19,10 @@
     const PACKETSTORE_PROBE_CYCLE = '30sec';
     const PACKETSTORE_PROBE_WINDOW_MS = 5 * 60 * 1000;
     const PACKETSTORE_TIME_SERIES_METRICS = ['est_lookback_sec', 'input_load', 'compress_load', 'disk_write_load'];
-    const PACKETSTORE_TOTAL_METRICS = ['pkts', 'pkts_dropped', 'pkts_dropped_wrslow', 'secrets', 'secrets_dropped', 'if_drops'];
+    const PACKETSTORE_TOTAL_METRICS = [
+        'pkts', 'pkts_dropped', 'pkts_dropped_wrslow', 'secrets', 'secrets_dropped',
+        'if_drops', 'blocks_dropped'
+    ];
     const MAX_BUCKETS_PER_SENSOR = 10_000;
     const MAX_SCALAR_POINTS_PER_REPORT = 500_000;
     const DEFAULT_XID_DEADLINE_MS = 5 * 60 * 1000;
