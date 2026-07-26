@@ -24,6 +24,7 @@ const csvApi = vm.runInContext(`({
     systemHealthRows,
     systemHealthPacketstoreRows,
     systemHealthPacketstoreLookbackRows,
+    systemHealthAveragePacketstoreLookback,
     systemHealthHorizontalChartLayout,
     systemHealthFidelityBarRatio,
     systemHealthPacketstoreHasLoss,
@@ -319,6 +320,21 @@ test('retention chart sorts shortest positive lookback first and omits unavailab
         { id: 'short', name: 'Short', lookbackLatestSec: 86400, lookbackMinSec: 43200 }
     ]);
     assert.deepEqual(Array.from(rows, row => row.id), ['short', 'long']);
+});
+
+test('average Packetstore lookback uses only sources that reported a measured value', () => {
+    const summary = csvApi.systemHealthAveragePacketstoreLookback([
+        { id: 'one-day', lookbackLatestSec: 86400, collectionStatus: { est_lookback_sec: 'complete' } },
+        { id: 'three-days', lookbackLatestSec: 259200, collectionStatus: { est_lookback_sec: 'complete' } },
+        { id: 'measured-zero', lookbackLatestSec: 0, collectionStatus: { est_lookback_sec: 'zero_valued' } },
+        { id: 'missing', lookbackLatestSec: null, collectionStatus: { est_lookback_sec: 'empty' } },
+        { id: 'legacy-zero', lookbackLatestSec: 0, collectionStatus: {} },
+        { id: 'offline', lookbackLatestSec: 864000, offline: true, collectionStatus: { est_lookback_sec: 'complete' } }
+    ]);
+
+    assert.equal(summary.reporting_sources, 3);
+    assert.equal(summary.total_sources, 6);
+    assert.equal(summary.average_seconds, 115200);
 });
 
 test('horizontal charts share a right gutter and fidelity bars use a fixed 100 percent scale', () => {

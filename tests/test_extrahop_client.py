@@ -313,7 +313,8 @@ class SystemHealthPdfProjectionTests(unittest.TestCase):
             ["Alpha sensor", "Zulu sensor"],
         )
 
-        self.assertIn("<b>OFFLINE:</b> Alpha sensor, Zulu sensor", html_output)
+        self.assertIn("<b>2 OFFLINE</b>", html_output)
+        self.assertIn('<div class="offline-names">Alpha sensor, Zulu sensor</div>', html_output)
         self.assertEqual(html_output.count('class="row"'), 1)
 
         packetstore_html = main.system_health_pdf_packetstore_page(
@@ -323,7 +324,8 @@ class SystemHealthPdfProjectionTests(unittest.TestCase):
             "30sec",
             ["Offline Packetstore"],
         )
-        self.assertIn("<b>OFFLINE:</b> Offline Packetstore", packetstore_html)
+        self.assertIn("<b>1 OFFLINE</b>", packetstore_html)
+        self.assertIn('<div class="offline-names">Offline Packetstore</div>', packetstore_html)
         self.assertNotIn("class='mini'", packetstore_html)
 
 

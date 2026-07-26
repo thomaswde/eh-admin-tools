@@ -743,7 +743,9 @@ h2 {{ margin: 0 0 4px; font-size: 24px; }}
 .bar.hot {{ background: {colors["high"]}; }}
 .value {{ font-size: 11px; color: {colors["text"]}; }}
 .analysis {{ grid-template-columns: 190px 1fr 1fr 230px; }}
-.offline-summary {{ margin-top: 8px; padding-top: 9px; border-top: 1px solid {colors["border"]}; color: {colors["high"]}; font-size: 11px; }}
+.offline-summary {{ margin-top: 12px; padding: 12px 0 8px; border-top: 1px solid {colors["border"]}; font-size: 11px; }}
+.offline-summary b {{ display: block; margin-bottom: 5px; color: {colors["high"]}; }}
+.offline-summary .offline-names {{ color: {colors["muted"]}; line-height: 1.4; overflow-wrap: anywhere; }}
 .packetstore-grid {{ display: grid; grid-template-columns: 175px 1fr 1.35fr 1.25fr; gap: 8px 12px; align-items: center; font-size: 10px; }}
 .packetstore-grid .head {{ font-weight: 700; color: {colors["subtle"]}; border-bottom: 1px solid {colors["border"]}; padding-bottom: 6px; }}
 .mini {{ height: 9px; background: {colors["track"]}; margin: 2px 0; }}
@@ -907,7 +909,10 @@ def system_health_pdf_packetstore_page(
         ])
     body.append("</div>")
     if offline_names:
-        body.append(f"""<div class="offline-summary"><b>OFFLINE:</b> {html.escape(", ".join(offline_names))}</div>""")
+        body.append(
+            f"""<div class="offline-summary"><b>{len(offline_names):,} OFFLINE</b>"""
+            f"""<div class="offline-names">{html.escape(", ".join(offline_names))}</div></div>"""
+        )
     subtitle = f"Retention, capture fidelity, and peak sampled 30-second processing load at {cycle_label} cadence"
     source_count = len(rows) + len(offline_names)
     return f"""<section class="page"><div class="page-head"><div><h2>Packetstore Health</h2><div class="muted">{html.escape(subtitle)}</div></div><div class="model">{source_count} metric sources | Page {page} of {pages}</div></div>{''.join(body)}</section>"""
@@ -960,7 +965,8 @@ def system_health_pdf_page(
             else "<p class='muted'>No metric data returned.</p>"
         )
     offline_summary = (
-        f"""<div class="offline-summary"><b>OFFLINE:</b> {html.escape(", ".join(offline_names))}</div>"""
+        f"""<div class="offline-summary"><b>{len(offline_names):,} OFFLINE</b>"""
+        f"""<div class="offline-names">{html.escape(", ".join(offline_names))}</div></div>"""
         if offline_names
         else ""
     )

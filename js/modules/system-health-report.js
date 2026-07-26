@@ -4,6 +4,12 @@ const SYSTEM_HEALTH_ROWS_PER_PAGE = 22;
 const SYSTEM_HEALTH_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_HEALTH_DEVICE_LIMIT = 5000;
 const SYSTEM_HEALTH_CHART_RIGHT_GUTTER = 300;
+const SYSTEM_HEALTH_OFFLINE_PAD_X = 20;
+const SYSTEM_HEALTH_OFFLINE_TOP_PAD = 14;
+const SYSTEM_HEALTH_OFFLINE_LABEL_HEIGHT = 16;
+const SYSTEM_HEALTH_OFFLINE_LABEL_GAP = 5;
+const SYSTEM_HEALTH_OFFLINE_LINE_HEIGHT = 15;
+const SYSTEM_HEALTH_OFFLINE_BOTTOM_PAD = 14;
 const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '3';
 const SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS = [
     'schema_version', 'generated_at', 'report_lookback_days', 'report_from_ms', 'report_until_ms',
@@ -1049,37 +1055,85 @@ function renderSystemHealthReport(report) {
 function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
     const offlineSensors = rows.filter(row => row.offline).length;
     const dataUnavailableSensors = rows.filter(row => row.data_access === false).length;
-    const packetRisk = rows.filter(row => row.packetCapacity && row.packetPeak >= row.packetCapacity).length;
+    const onlineSensors = Math.max(0, rows.length - offlineSensors);
+    const packetWatch = rows.filter(row => row.packetCapacity && row.packetPeak / row.packetCapacity >= 0.8).length;
     const throughputWatch = rows.filter(row => row.throughputCapacity && row.throughputGbps / row.throughputCapacity >= 0.8).length;
     const triggerWatch = rows.filter(row => row.triggerUtilization !== null && row.triggerUtilization >= 0.8).length;
     const triggerDropSensors = rows.filter(row => row.triggerDropsTotal > 0).length;
+    const processingWatch = rows.filter(row => (row.packetCapacity && row.packetPeak / row.packetCapacity >= 0.8)
+        || (row.throughputCapacity && row.throughputGbps / row.throughputCapacity >= 0.8)
+        || (row.triggerUtilization !== null && row.triggerUtilization >= 0.8)
+        || row.triggerDropsTotal > 0).length;
+    const analysisWatch = rows.filter(row => {
+        const advanced = Number(row.analysis && row.analysis.advanced);
+        const standard = Number(row.analysis && row.analysis.standard);
+        return (row.advancedCapacity > 0 && Number.isFinite(advanced) && advanced / row.advancedCapacity >= 0.8)
+            || (row.standardCapacity > 0 && Number.isFinite(standard) && standard / row.standardCapacity >= 0.8);
+    }).length;
     const discoverySensors = rows.filter(row => (row.analysis.discovery || 0) > 0).length;
     const packetstoreLoss = packetstoreRows.filter(systemHealthPacketstoreHasLoss).length;
-    const cards = [
-        ['Sensors', formatSystemHealthNumber(rows.length), 'Discover sensors returned'],
-        ['Offline', formatSystemHealthNumber(offlineSensors), dataUnavailableSensors ? `${dataUnavailableSensors} also lack data access` : 'Appliance status is not online'],
-        ['Lookback', `${report.window.lookback_days} days`, `Peak ${systemHealthReportCycleLabel(report)} averages`],
-        ['Packet Risk', formatSystemHealthNumber(packetRisk), `At model rating on peak ${systemHealthReportCycleLabel(report)} average`],
-        ['Throughput Watch', formatSystemHealthNumber(throughputWatch), `At 80%+ on peak ${systemHealthReportCycleLabel(report)} average`],
-        ['Trigger Watch', formatSystemHealthNumber(triggerWatch), 'At 80%+ trigger cycle capacity'],
-        ['Trigger Drops', formatSystemHealthNumber(triggerDropSensors), 'Sensors with dropped trigger executions'],
-        ['PCAP Sources', formatSystemHealthNumber(packetstoreRows.length), 'Packetstore-backed sensors detected by cpc metrics'],
-        ['PCAP Loss', formatSystemHealthNumber(packetstoreLoss), 'Sources with packet, slow-write, interface, or secret drops'],
-        ['Discovery Overflow', formatSystemHealthNumber(discoverySensors), 'Sensors with Discovery devices']
-    ];
-
-    document.getElementById('systemHealthSummary').innerHTML = cards.map(([label, value, note]) => `
-        <div class="stat">
-            <div class="stat-label">${escapeHtml(label)}</div>
-            <div class="stat-value">${escapeHtml(value)}</div>
-            <div class="stat-sub">${escapeHtml(note)}</div>
-        </div>
-    `).join('');
+    const retention = systemHealthAveragePacketstoreLookback(packetstoreRows);
+    const lookbackDays = report.window && report.window.lookback_days;
+    const cycle = systemHealthReportCycleLabel(report);
+    const retentionValue = retention.average_seconds === null
+        ? '—'
+        : formatSystemHealthDays(retention.average_seconds / (SYSTEM_HEALTH_DAY_MS / 1000));
+    const summary = document.getElementById('systemHealthSummary');
+    if (!summary) return;
+    summary.innerHTML = `
+        <section class="system-health-summary-group">
+            <div class="system-health-summary-kicker">Fleet scope</div>
+            <div class="system-health-summary-hero">
+                <span class="system-health-summary-value">${formatSystemHealthNumber(onlineSensors)}</span>
+                <span class="system-health-summary-qualifier">of ${formatSystemHealthNumber(rows.length)} sensors online</span>
+            </div>
+            <p class="system-health-summary-note">${escapeSystemHealthHtml(`${lookbackDays}-day report window · peak ${cycle} bucket averages`)}</p>
+            <div class="system-health-summary-facts">
+                <span><b>${formatSystemHealthNumber(offlineSensors)}</b> offline</span>
+                <span><b>${formatSystemHealthNumber(dataUnavailableSensors)}</b> without data access</span>
+            </div>
+        </section>
+        <section class="system-health-summary-group ${processingWatch ? 'is-alert' : ''}">
+            <div class="system-health-summary-kicker">Sensor processing</div>
+            <div class="system-health-summary-hero">
+                <span class="system-health-summary-value">${formatSystemHealthNumber(processingWatch)}</span>
+                <span class="system-health-summary-qualifier">sensors need review</span>
+            </div>
+            <p class="system-health-summary-note">At least 80% of a measured processing limit, or reporting trigger drops.</p>
+            <div class="system-health-summary-facts">
+                <span><b>${formatSystemHealthNumber(packetWatch)}</b> packet rate</span>
+                <span><b>${formatSystemHealthNumber(throughputWatch)}</b> throughput</span>
+                <span><b>${formatSystemHealthNumber(triggerWatch)}</b> trigger load</span>
+                <span><b>${formatSystemHealthNumber(triggerDropSensors)}</b> with drops</span>
+            </div>
+        </section>
+        <section class="system-health-summary-group ${analysisWatch || discoverySensors ? 'is-watch' : ''}">
+            <div class="system-health-summary-kicker">Licensed analysis</div>
+            <div class="system-health-summary-hero">
+                <span class="system-health-summary-value">${formatSystemHealthNumber(analysisWatch)}</span>
+                <span class="system-health-summary-qualifier">sensors near tier capacity</span>
+            </div>
+            <p class="system-health-summary-note">Advanced or Standard Analysis is at least 80% of licensed capacity.</p>
+            <div class="system-health-summary-facts">
+                <span><b>${formatSystemHealthNumber(discoverySensors)}</b> with devices in Discovery</span>
+            </div>
+        </section>
+        <section class="system-health-summary-group ${packetstoreLoss ? 'is-alert' : ''}">
+            <div class="system-health-summary-kicker">Packetstore retention</div>
+            <div class="system-health-summary-hero">
+                <span class="system-health-summary-value">${escapeSystemHealthHtml(retentionValue)}</span>
+                <span class="system-health-summary-qualifier">average latest PCAP lookback</span>
+            </div>
+            <p class="system-health-summary-note">${formatSystemHealthNumber(retention.reporting_sources)} of ${formatSystemHealthNumber(retention.total_sources)} Packetstore metric sources reported a lookback.</p>
+            <div class="system-health-summary-facts">
+                <span><b>${formatSystemHealthNumber(packetstoreLoss)}</b> with capture or secret loss</span>
+            </div>
+        </section>`;
 }
 
 function renderSystemHealthPacketstoreCharts(report, rows) {
     const cycleLabel = document.getElementById('systemHealthPacketstoreCycleLabel');
-    if (cycleLabel) cycleLabel.textContent = `Peak sampled 30-second input, header-compression, and disk-write CPU load at ${systemHealthPacketstoreCycleLabel(report)} cadence. The three loads are separate and are not summed.`;
+    if (cycleLabel) cycleLabel.textContent = `Highest sampled ${systemHealthPacketstoreCycleLabel(report)} bucket-average input, header-compression, and disk-write load. The three percentages are separate and are not summed.`;
     const offlineRows = rows.filter(row => row.offline);
     const reportingRows = rows.filter(row => !row.offline);
     drawSystemHealthPacketstoreLookback(
@@ -1098,6 +1152,25 @@ function systemHealthPacketstoreLookbackRows(rows) {
     }).slice().sort((a, b) => Number(a.lookbackLatestSec) - Number(b.lookbackLatestSec)
         || Number(a.lookbackMinSec || 0) - Number(b.lookbackMinSec || 0)
         || String(a.name || a.id || '').localeCompare(String(b.name || b.id || '')));
+}
+
+function systemHealthAveragePacketstoreLookback(rows) {
+    const observations = (rows || []).filter(row => {
+        if (!row || row.offline) return false;
+        const value = Number(row.lookbackLatestSec);
+        if (!Number.isFinite(value) || value < 0) return false;
+        // Positive lookback values are self-evidently measured. A zero is only
+        // included when collection explicitly identified it as a measured zero,
+        // so missing values from older imports cannot depress the average.
+        return value > 0 || systemHealthPacketstoreMetricAvailable(row, 'est_lookback_sec');
+    });
+    return {
+        average_seconds: observations.length
+            ? observations.reduce((sum, row) => sum + Number(row.lookbackLatestSec), 0) / observations.length
+            : null,
+        reporting_sources: observations.length,
+        total_sources: (rows || []).length
+    };
 }
 
 function systemHealthHorizontalChartLayout(width) {
@@ -1126,7 +1199,9 @@ function systemHealthPacketstoreMetricAvailable(row, metricName) {
 }
 
 function drawSystemHealthPacketstoreLookback(canvas, rows, offlineRows = []) {
-    const height = 62 + Math.max(offlineRows.length ? 0 : 1, rows.length) * 30 + (offlineRows.length ? 30 : 0);
+    const chartHeight = 62 + Math.max(offlineRows.length ? 0 : 1, rows.length) * 30;
+    const offlineLayout = systemHealthOfflineSummaryLayout(canvas, offlineRows);
+    const height = chartHeight + offlineLayout.height;
     const state = setupSystemHealthCanvas(canvas, height);
     if (!state) return;
     const { ctx, width } = state;
@@ -1148,17 +1223,21 @@ function drawSystemHealthPacketstoreLookback(canvas, rows, offlineRows = []) {
         if (systemHealthPacketstoreMetricAvailable(row, 'est_lookback_sec')) {
             ctx.fillStyle = colors.low; ctx.fillRect(left, y, plotWidth * Math.min(1, latestDays / maxDays), 14);
             const markerX = left + plotWidth * Math.min(1, minDays / maxDays);
-            ctx.fillStyle = colors.high; ctx.fillRect(markerX - 1, y - 2, 3, 18);
+            // The observed minimum is context, not an alert: no customer
+            // retention target is collected by this report.
+            ctx.fillStyle = colors.muted; ctx.fillRect(markerX - 1, y - 2, 3, 18);
             ctx.fillStyle = colors.text; ctx.textAlign = 'left'; ctx.fillText(`${formatSystemHealthDays(latestDays)} latest · ${formatSystemHealthDays(minDays)} min`, left + plotWidth + 8, y + 7);
         } else {
             ctx.fillStyle = colors.muted; ctx.textAlign = 'left'; ctx.fillText((row.collectionStatus.est_lookback_sec || 'unavailable').replace(/_/g, ' '), left + plotWidth + 8, y + 7);
         }
     });
-    drawSystemHealthOfflineSummary(ctx, width, 24 + rows.length * 30 + 15, offlineRows);
+    drawSystemHealthOfflineSummary(ctx, width, chartHeight, offlineLayout);
 }
 
 function drawSystemHealthPacketstoreFidelity(canvas, rows, offlineRows = []) {
-    const height = 72 + Math.max(offlineRows.length ? 0 : 1, rows.length) * 42 + (offlineRows.length ? 30 : 0);
+    const chartHeight = 72 + Math.max(offlineRows.length ? 0 : 1, rows.length) * 42;
+    const offlineLayout = systemHealthOfflineSummaryLayout(canvas, offlineRows);
+    const height = chartHeight + offlineLayout.height;
     const state = setupSystemHealthCanvas(canvas, height);
     if (!state) return;
     const { ctx, width } = state;
@@ -1181,7 +1260,7 @@ function drawSystemHealthPacketstoreFidelity(canvas, rows, offlineRows = []) {
         ctx.fillStyle = colors.muted;
         ctx.fillText(`slow-write ${formatSystemHealthNumber(row.slowWriteDropsTotal)} · interface ${formatSystemHealthNumber(row.interfaceDropsTotal)}`, left + plotWidth + 8, y + 23);
     });
-    drawSystemHealthOfflineSummary(ctx, width, 24 + rows.length * 42 + 20, offlineRows);
+    drawSystemHealthOfflineSummary(ctx, width, chartHeight, offlineLayout);
 }
 
 function systemHealthFidelityBarRatio(value) {
@@ -1190,7 +1269,9 @@ function systemHealthFidelityBarRatio(value) {
 }
 
 function drawSystemHealthPacketstoreLoad(canvas, rows, offlineRows = []) {
-    const height = 72 + Math.max(offlineRows.length ? 0 : 1, rows.length) * 42 + (offlineRows.length ? 30 : 0);
+    const chartHeight = 72 + Math.max(offlineRows.length ? 0 : 1, rows.length) * 42;
+    const offlineLayout = systemHealthOfflineSummaryLayout(canvas, offlineRows);
+    const height = chartHeight + offlineLayout.height;
     const state = setupSystemHealthCanvas(canvas, height);
     if (!state) return;
     const { ctx, width } = state;
@@ -1215,7 +1296,7 @@ function drawSystemHealthPacketstoreLoad(canvas, rows, offlineRows = []) {
         ctx.fillStyle = colors.text; ctx.textAlign = 'left'; ctx.font = '10px Arial';
         ctx.fillText(`input ${formatSystemHealthPercentValue(row.inputLoadPeak)} · compress ${formatSystemHealthPercentValue(row.compressionLoadPeak)} · write ${formatSystemHealthPercentValue(row.diskWriteLoadPeak)}`, left + plotWidth + 8, y + 13);
     });
-    drawSystemHealthOfflineSummary(ctx, width, 24 + rows.length * 42 + 20, offlineRows);
+    drawSystemHealthOfflineSummary(ctx, width, chartHeight, offlineLayout);
 }
 
 function renderSystemHealthCharts(rows) {
@@ -1669,7 +1750,7 @@ function systemHealthAnalysisModelPages(rows) {
             const advancedRatio = advancedCapacity ? advanced / advancedCapacity : 0;
             const standardRatio = standardCapacity ? standard / standardCapacity : 0;
             const totalDevices = systemHealthAnalysisDeviceTotal(row);
-            return { ...row, advancedRatio, standardRatio, discoveryOverflow: discovery, totalDevices };
+            return { ...row, advancedRatio, standardRatio, discoveryDevices: discovery, totalDevices };
         }).sort((a, b) => b.totalDevices - a.totalDevices || (a.name || '').localeCompare(b.name || ''));
         const discoveryTotal = rowsWithRisk.reduce((sum, row) => sum + (row.analysis.discovery || 0), 0);
         const totalDevices = rowsWithRisk.reduce((sum, row) => sum + row.totalDevices, 0);
@@ -1769,7 +1850,7 @@ function updateSystemHealthAnalysisHeader(meta) {
         if (meta.offlineRows.length) parts.push(`${meta.offlineRows.length} offline`);
         if (advancedHot) parts.push(`${advancedHot} at Adv cap`);
         if (standardHot) parts.push(`${standardHot} at Std cap`);
-        if (discoveryHot) parts.push(`${discoveryHot} with Discovery overflow`);
+        if (discoveryHot) parts.push(`${discoveryHot} with devices in Discovery`);
         statsEl.textContent = parts.join(' | ');
     }
     if (pagerLabel) {
@@ -1814,12 +1895,19 @@ function updateSystemHealthUtilizationLegend() {
     });
 }
 
+function systemHealthCanvasCssWidth(canvas) {
+    const parent = canvas ? canvas.parentElement : null;
+    return parent
+        ? Math.max(320, Math.round(parent.getBoundingClientRect().width || parent.clientWidth || 960))
+        : 960;
+}
+
 function setupSystemHealthCanvas(canvas, desiredHeight) {
     const colors = systemHealthStyleColors();
     const parent = canvas ? canvas.parentElement : null;
     if (!canvas || !parent) return null;
     canvas.style.height = `${desiredHeight}px`;
-    const width = Math.max(320, Math.round(parent.getBoundingClientRect().width || parent.clientWidth || 960));
+    const width = systemHealthCanvasCssWidth(canvas);
     const exportScale = Math.max(1, Number(canvas.dataset.systemHealthExportScale || 1));
     const dpr = (window.devicePixelRatio || 1) * exportScale;
     canvas.width = Math.round(width * dpr);
@@ -1902,8 +1990,9 @@ function drawSystemHealthUtilizationCanvas(canvas, rows, options, meta) {
     const top = 22;
     const bottom = 38;
     const offlineRows = meta && meta.offlineRows || [];
-    const offlineHeight = offlineRows.length ? 30 : 0;
-    const desiredHeight = top + bottom + Math.max(offlineRows.length ? 0 : 1, rows.length) * rowHeight + offlineHeight;
+    const chartHeight = top + bottom + Math.max(offlineRows.length ? 0 : 1, rows.length) * rowHeight;
+    const offlineLayout = systemHealthOfflineSummaryLayout(canvas, offlineRows);
+    const desiredHeight = chartHeight + offlineLayout.height;
     const canvasState = setupSystemHealthCanvas(canvas, desiredHeight);
     if (!canvasState) return;
     const { ctx, width, height } = canvasState;
@@ -1967,21 +2056,79 @@ function drawSystemHealthUtilizationCanvas(canvas, rows, options, meta) {
             ctx.fillText(indicator, left + plotWidth + 10, labelY + 11);
         }
     });
-    drawSystemHealthOfflineSummary(ctx, width, top + rows.length * rowHeight + 15, offlineRows);
+    drawSystemHealthOfflineSummary(ctx, width, chartHeight, offlineLayout);
 }
 
-function drawSystemHealthOfflineSummary(ctx, width, y, rows) {
-    if (!rows || !rows.length) return;
-    const colors = systemHealthStyleColors();
+function systemHealthWrapCanvasList(ctx, values, maxWidth) {
+    const lines = [];
+    let current = '';
+    values.forEach(value => {
+        const raw = String(value || 'Unknown sensor');
+        const candidate = current ? `${current}, ${raw}` : raw;
+        if (ctx.measureText(candidate).width <= maxWidth) {
+            current = candidate;
+            return;
+        }
+        if (current) {
+            lines.push(current);
+            current = '';
+        }
+        if (ctx.measureText(raw).width <= maxWidth) {
+            current = raw;
+            return;
+        }
+        let chunk = '';
+        Array.from(raw).forEach(character => {
+            if (chunk && ctx.measureText(`${chunk}${character}`).width > maxWidth) {
+                lines.push(chunk);
+                chunk = character;
+            } else {
+                chunk += character;
+            }
+        });
+        current = chunk;
+    });
+    if (current) lines.push(current);
+    return lines;
+}
+
+function systemHealthOfflineSummaryLayout(canvas, rows) {
+    if (!rows || !rows.length || !canvas) return { height: 0, count: 0, lines: [] };
+    const ctx = canvas.getContext('2d');
     const names = rows
         .map(row => String(row.name || row.hostname || row.id || 'Unknown sensor'))
         .sort((a, b) => a.localeCompare(b));
-    const text = truncateSystemHealthCanvasText(ctx, `OFFLINE: ${names.join(', ')}`, width - 40);
+    const width = systemHealthCanvasCssWidth(canvas);
+    ctx.font = '10px Arial';
+    const lines = systemHealthWrapCanvasList(ctx, names, Math.max(100, width - SYSTEM_HEALTH_OFFLINE_PAD_X * 2));
+    const height = SYSTEM_HEALTH_OFFLINE_TOP_PAD
+        + SYSTEM_HEALTH_OFFLINE_LABEL_HEIGHT
+        + SYSTEM_HEALTH_OFFLINE_LABEL_GAP
+        + lines.length * SYSTEM_HEALTH_OFFLINE_LINE_HEIGHT
+        + SYSTEM_HEALTH_OFFLINE_BOTTOM_PAD;
+    return { height, count: names.length, lines };
+}
+
+function drawSystemHealthOfflineSummary(ctx, width, y, layout) {
+    if (!layout || !layout.count) return;
+    const colors = systemHealthStyleColors();
+    const separatorY = y + Math.floor(SYSTEM_HEALTH_OFFLINE_TOP_PAD / 2);
+    ctx.strokeStyle = colors.grid;
+    ctx.beginPath();
+    ctx.moveTo(SYSTEM_HEALTH_OFFLINE_PAD_X, separatorY);
+    ctx.lineTo(width - SYSTEM_HEALTH_OFFLINE_PAD_X, separatorY);
+    ctx.stroke();
     ctx.fillStyle = colors.high;
-    ctx.font = '700 10px Arial';
+    ctx.font = '700 11px Arial';
     ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, 20, y);
+    ctx.textBaseline = 'top';
+    ctx.fillText(`${layout.count.toLocaleString()} OFFLINE`, SYSTEM_HEALTH_OFFLINE_PAD_X, y + SYSTEM_HEALTH_OFFLINE_TOP_PAD);
+    ctx.fillStyle = colors.muted;
+    ctx.font = '10px Arial';
+    const namesY = y + SYSTEM_HEALTH_OFFLINE_TOP_PAD + SYSTEM_HEALTH_OFFLINE_LABEL_HEIGHT + SYSTEM_HEALTH_OFFLINE_LABEL_GAP;
+    layout.lines.forEach((line, index) => {
+        ctx.fillText(line, SYSTEM_HEALTH_OFFLINE_PAD_X, namesY + index * SYSTEM_HEALTH_OFFLINE_LINE_HEIGHT);
+    });
 }
 
 function drawSystemHealthTierBar(ctx, x, y, width, height, value, capacity) {
@@ -2064,8 +2211,9 @@ function drawSystemHealthAnalysisCanvas(canvas, rows, meta) {
     const bottom = 22;
     const rowHeight = 32;
     const offlineRows = meta && meta.offlineRows || [];
-    const offlineHeight = offlineRows.length ? 30 : 0;
-    const desiredHeight = top + bottom + Math.max(offlineRows.length ? 0 : 1, rows.length) * rowHeight + offlineHeight;
+    const chartHeight = top + bottom + Math.max(offlineRows.length ? 0 : 1, rows.length) * rowHeight;
+    const offlineLayout = systemHealthOfflineSummaryLayout(canvas, offlineRows);
+    const desiredHeight = chartHeight + offlineLayout.height;
     const canvasState = setupSystemHealthCanvas(canvas, desiredHeight);
     if (!canvasState) return;
     const { ctx, width, height } = canvasState;
@@ -2114,7 +2262,7 @@ function drawSystemHealthAnalysisCanvas(canvas, rows, meta) {
         drawSystemHealthTierBar(ctx, standardX, barY, barWidth, barHeight, row.analysis.standard || 0, meta.standardCapacity || 0);
         drawSystemHealthDiscoveryChip(ctx, discoveryX, barY, barHeight, row.analysis.discovery || 0);
     });
-    drawSystemHealthOfflineSummary(ctx, width, top + rows.length * rowHeight + 15, offlineRows);
+    drawSystemHealthOfflineSummary(ctx, width, chartHeight, offlineLayout);
 }
 
 function setupSystemHealthExportButtons() {
@@ -2704,8 +2852,7 @@ async function exportSystemHealthPptx(event) {
             options: systemHealthPptxOptionsFromForm(),
             rows: systemHealthRows(report),
             packetstore_rows: systemHealthPacketstoreRows(report),
-            palette: systemHealthStyleColors(),
-            collector_notes: systemHealthCollectorNotes(report)
+            palette: systemHealthStyleColors()
         });
         setSystemHealthCsvStatus(`Exported ${result.filename}. Charts are drawn as native shapes, so every slide stays editable.`);
     } catch (error) {

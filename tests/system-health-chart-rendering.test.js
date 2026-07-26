@@ -7,14 +7,16 @@ const vm = require('node:vm');
 function chartContext(width = 1000) {
     const rectangles = [];
     const texts = [];
+    const textDraws = [];
     const context2d = {
         setTransform() {},
         clearRect() {},
         fillRect(x, y, rectWidth, height) {
             rectangles.push({ x, y, width: rectWidth, height });
         },
-        fillText(value) {
+        fillText(value, x, y) {
             texts.push(String(value));
+            textDraws.push({ text: String(value), x, y });
         },
         measureText(value) {
             return { width: String(value).length * 6 };
@@ -37,7 +39,7 @@ function chartContext(width = 1000) {
             return context2d;
         }
     };
-    return { canvas, rectangles, texts };
+    return { canvas, rectangles, texts, textDraws };
 }
 
 function loadSystemHealthRenderer() {
@@ -171,10 +173,43 @@ test('offline sensors are listed once below charts instead of receiving empty ba
 
     assert.equal(utilization.rectangles.length, 2, 'only the reporting sensor gets a track and fill');
     assert.equal(analysis.rectangles.length, 4, 'only the reporting sensor gets Advanced and Standard tracks and fills');
-    assert.equal(utilization.texts.filter(text => text.startsWith('OFFLINE:')).length, 1);
-    assert.equal(analysis.texts.filter(text => text.startsWith('OFFLINE:')).length, 1);
-    assert.ok(utilization.texts.includes('OFFLINE: Alpha sensor, Zulu sensor'));
-    assert.ok(analysis.texts.includes('OFFLINE: Alpha sensor, Zulu sensor'));
+    assert.ok(utilization.texts.includes('2 OFFLINE'));
+    assert.ok(analysis.texts.includes('2 OFFLINE'));
+    assert.ok(utilization.texts.includes('Alpha sensor, Zulu sensor'));
+    assert.ok(analysis.texts.includes('Alpha sensor, Zulu sensor'));
+    assert.ok(parseInt(utilization.canvas.style.height, 10) > 130, 'footer receives dedicated vertical space');
+    assert.ok(parseInt(analysis.canvas.style.height, 10) > 150, 'analysis footer receives dedicated vertical space');
+});
+
+test('offline footer wraps every appliance name within the canvas and expands its height', () => {
+    const context = loadSystemHealthRenderer();
+    const utilization = chartContext(720);
+    context.utilizationCanvas = utilization.canvas;
+    context.reportingRows = [{
+        id: 'online', name: 'Reporting sensor', packetPeak: 50, packetCapacity: 100,
+        collectionStatus: { pkts: 'complete' }
+    }];
+    context.offlineRows = Array.from({ length: 37 }, (_, index) => ({
+        id: `offline-${index}`,
+        name: `offline-sensor-${String(index + 1).padStart(2, '0')}`,
+        offline: true
+    }));
+
+    vm.runInContext(`
+        drawSystemHealthUtilizationCanvas(utilizationCanvas, reportingRows, {
+            key: 'packet', valueKey: 'packetPeak', capacityKey: 'packetCapacity',
+            formatter: value => String(value)
+        }, { offlineRows });
+    `, context);
+
+    const nameLines = utilization.textDraws.filter(draw => draw.text.startsWith('offline-sensor-'));
+    const canvasHeight = parseInt(utilization.canvas.style.height, 10);
+    assert.ok(utilization.texts.includes('37 OFFLINE'));
+    assert.ok(nameLines.length >= 5, 'many offline names wrap across multiple lines');
+    assert.equal(nameLines.map(draw => draw.text).join(', ').includes('offline-sensor-37'), true, 'the full list remains visible');
+    assert.equal(nameLines.every(draw => draw.text.length * 6 <= 680), true, 'wrapped lines stay inside horizontal padding');
+    assert.ok(canvasHeight > 180, 'canvas grows to reserve the wrapped footer');
+    assert.ok(Math.max(...nameLines.map(draw => draw.y)) < canvasHeight - 10, 'the final line stays above bottom padding');
 });
 
 test('offline Packetstores use the same compact footer in all three charts', () => {
@@ -198,9 +233,7 @@ test('offline Packetstores use the same compact footer in all three charts', () 
 
     [lookback, fidelity, load].forEach(chart => {
         assert.equal(chart.rectangles.length, 0);
-        assert.deepEqual(
-            chart.texts.filter(text => text.startsWith('OFFLINE:')),
-            ['OFFLINE: Alpha Packetstore, Zulu Packetstore']
-        );
+        assert.ok(chart.texts.includes('2 OFFLINE'));
+        assert.ok(chart.texts.includes('Alpha Packetstore, Zulu Packetstore'));
     });
 });

@@ -832,15 +832,20 @@
                 </div>
 
                 <div id="systemHealthResults" style="display: none;">
-                    <div id="systemHealthSummary" class="stats system-health-summary" style="margin-bottom: 16px;"></div>
+                    <div id="systemHealthSummary" class="system-health-summary"></div>
 
                     <div class="stack">
-                        <!-- Packet rate -->
+                        <header class="system-health-section-head">
+                            <div class="system-health-section-kicker">Packet Sensors</div>
+                            <h2 class="system-health-section-title">Processing and analysis capacity</h2>
+                            <p class="system-health-section-desc">Packet, throughput, trigger, and licensed analysis pressure are evaluated independently so a constraint remains attributable to the resource that caused it.</p>
+                        </header>
+
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Packet Rate vs Model Capacity</h2>
-                                    <p class="card-desc">Peak bucket-average packet rate by sensor; catalog matches add capacity context when available.</p>
+                                    <h2 class="card-title">Sensor Packet Rate Headroom</h2>
+                                    <p class="card-desc">Highest bucket-average packet rate for each sensor, compared with its model's rated packet-processing capacity.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketChart">Export PNG</button>
@@ -872,12 +877,11 @@
                             </div>
                         </div>
 
-                        <!-- Throughput -->
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Throughput vs Model Capacity</h2>
-                                    <p class="card-desc">Peak bucket-average throughput by sensor; catalog matches add capacity context when available.</p>
+                                    <h2 class="card-title">Sensor Throughput Headroom</h2>
+                                    <p class="card-desc">Highest bucket-average throughput for each sensor, compared with its model's rated throughput capacity.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthThroughputChart">Export PNG</button>
@@ -909,57 +913,11 @@
                             </div>
                         </div>
 
-                        <!-- Trigger cycles -->
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Packetstore Retention Lookback</h2>
-                                    <p class="card-desc">Latest estimated PCAP lookback with the minimum observed during the report window marked in red.</p>
-                                </div>
-                                <div class="spacer"></div>
-                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreLookbackChart">Export PNG</button>
-                            </div>
-                            <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreLookbackChart"></canvas></div>
-                        </div>
-
-                        <div class="card">
-                            <div class="row row-top" style="margin-bottom: 14px;">
-                                <div>
-                                    <h2 class="card-title">Packetstore Capture &amp; Secret Fidelity</h2>
-                                    <p class="card-desc">Lookback-total packet and TLS-secret loss ratios on a fixed 0–100% scale. Secret labels include dropped and total secret counts; slow-write drops are a subset of packet drops, while interface drops remain a raw count.</p>
-                                </div>
-                                <div class="spacer"></div>
-                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreFidelityChart">Export PNG</button>
-                            </div>
-                            <div class="system-health-tier-legend">
-                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>Packet drops</span>
-                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>Secret drops</span>
-                            </div>
-                            <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreFidelityChart"></canvas></div>
-                        </div>
-
-                        <div class="card">
-                            <div class="row row-top" style="margin-bottom: 14px;">
-                                <div>
-                                    <h2 class="card-title">Packetstore Processing Load</h2>
-                                    <p class="card-desc" id="systemHealthPacketstoreCycleLabel">Peak sampled 30-second input, header-compression, and disk-write CPU load by appliance. The three loads are separate and are not summed.</p>
-                                </div>
-                                <div class="spacer"></div>
-                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreLoadChart">Export PNG</button>
-                            </div>
-                            <div class="system-health-tier-legend">
-                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="low"></span>&lt;80%</span>
-                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
-                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>100%+</span>
-                            </div>
-                            <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreLoadChart"></canvas></div>
-                        </div>
-
-                        <div class="card">
-                            <div class="row row-top" style="margin-bottom: 14px;">
-                                <div>
-                                    <h2 class="card-title">Trigger Cycles vs Available Capacity</h2>
-                                    <p class="card-desc">Maximum aligned per-bucket trigger utilization; total trigger drops are called out inline.</p>
+                                    <h2 class="card-title">Sensor Trigger Processing Headroom</h2>
+                                    <p class="card-desc">Maximum per-bucket trigger utilization using cycles consumed and available from the same interval; drop counts cover the full report window.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthTriggersChart">Export PNG</button>
@@ -991,31 +949,11 @@
                             </div>
                         </div>
 
-                        <!-- Analysis tier -->
-                        <div class="card">
-                            <div class="card-head">
-                                <h2 class="card-title">Packetstore detail</h2>
-                                <p class="card-desc">A compact audit table for sensors that expose Packetstore metrics; counters are lookback totals and loads are time-series peaks.</p>
-                            </div>
-                            <div class="table-container table-scroll">
-                                <table>
-                                    <thead><tr>
-                                        <th>Appliance</th><th>Role</th><th>Model</th><th>Status</th>
-                                        <th class="num">Latest lookback</th><th class="num">Min lookback</th><th class="num">Packets</th>
-                                        <th class="num">Packet drops</th><th class="num">Slow-write</th><th class="num">Interface drops</th>
-                                        <th class="num">Secrets</th><th class="num">Secret drops</th><th class="num">Input load</th>
-                                        <th class="num">Compress load</th><th class="num">Write load</th>
-                                    </tr></thead>
-                                    <tbody id="systemHealthPacketstoreTableBody"></tbody>
-                                </table>
-                            </div>
-                        </div>
-
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Analysis Tier Pressure</h2>
-                                    <p class="card-desc">Advanced and Standard utilization by sensor, with Discovery shown as overflow. Sensors are sorted by total device count.</p>
+                                    <h2 class="card-title">Licensed Analysis Capacity by Tier</h2>
+                                    <p class="card-desc">Advanced and Standard device counts are compared with each sensor's licensed capacity. Discovery devices are shown separately and do not imply a capacity overrun on their own.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthAnalysisChart">Export PNG</button>
@@ -1036,7 +974,7 @@
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="low"></span>Under 80%</span>
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
                                 <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>At or over 100%</span>
-                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="discovery"></span>Discovery overflow</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="discovery"></span>Discovery devices</span>
                             </div>
                             <div class="system-health-pager" id="systemHealthAnalysisRowPager" style="display: none;">
                                 <button type="button" class="btn btn-sm" data-system-health-row-pager-prev>Prev page</button>
@@ -1048,11 +986,81 @@
                             </div>
                         </div>
 
+                        <header class="system-health-section-head">
+                            <div class="system-health-section-kicker">Packetstore</div>
+                            <h2 class="system-health-section-title">Retention, capture fidelity, and processing headroom</h2>
+                            <p class="system-health-section-desc">Packetstore evidence is reported separately from Packet Sensor processing because Packetstores receive and retain their own packet feed.</p>
+                        </header>
+
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
+                                <div>
+                                    <h2 class="card-title">Packetstore Retention</h2>
+                                    <p class="card-desc">Latest estimated PCAP lookback for each reporting source; the neutral marker shows the shortest lookback observed during the report window.</p>
+                                </div>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreLookbackChart">Export PNG</button>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreLookbackChart"></canvas></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
+                                <div>
+                                    <h2 class="card-title">Packetstore Capture and Secret Fidelity</h2>
+                                    <p class="card-desc">Share of offered packets and TLS secrets dropped over the report window. Slow-write drops are a subset of packet drops; interface drops remain a separate raw count.</p>
+                                </div>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreFidelityChart">Export PNG</button>
+                            </div>
+                            <div class="system-health-tier-legend">
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>Packet drops</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>Secret drops</span>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreFidelityChart"></canvas></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="row row-top" style="margin-bottom: 14px;">
+                                <div>
+                                    <h2 class="card-title">Packetstore Processing Headroom</h2>
+                                    <p class="card-desc" id="systemHealthPacketstoreCycleLabel">Highest sampled input, header-compression, and disk-write load by source. The three percentages are separate and are not summed.</p>
+                                </div>
+                                <div class="spacer"></div>
+                                <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreLoadChart">Export PNG</button>
+                            </div>
+                            <div class="system-health-tier-legend">
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="low"></span>&lt;80%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="mid"></span>80-99%</span>
+                                <span class="system-health-legend-item"><span class="system-health-legend-swatch" data-system-health-util-swatch="high"></span>100%+</span>
+                            </div>
+                            <div class="system-health-chart-frame system-health-chart-frame-adaptive"><canvas id="systemHealthPacketstoreLoadChart"></canvas></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-head">
+                                <h2 class="card-title">Packetstore detail</h2>
+                                <p class="card-desc">Source-level retention, report-window loss counters, and peak sampled processing loads for every sensor that exposed Packetstore metrics.</p>
+                            </div>
+                            <div class="table-container table-scroll">
+                                <table>
+                                    <thead><tr>
+                                        <th>Appliance</th><th>Role</th><th>Model</th><th>Status</th>
+                                        <th class="num">Latest lookback</th><th class="num">Min lookback</th><th class="num">Packets</th>
+                                        <th class="num">Packet drops</th><th class="num">Slow-write</th><th class="num">Interface drops</th>
+                                        <th class="num">Secrets</th><th class="num">Secret drops</th><th class="num">Input load</th>
+                                        <th class="num">Compress load</th><th class="num">Write load</th>
+                                    </tr></thead>
+                                    <tbody id="systemHealthPacketstoreTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+
                         <div class="card">
                             <div class="card-head row row-top">
                                 <div>
                                     <h2 class="card-title">Sensor detail</h2>
-                                    <p class="card-desc">This unified per-sensor view is the source for chart rendering and summary CSV round trips.</p>
+                                    <p class="card-desc">Measured peaks, aligned trigger utilization, licensed analysis capacity, and collection status for each sensor.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" id="systemHealthExportTableCsvButton" class="btn btn-sm" disabled>Export CSV</button>

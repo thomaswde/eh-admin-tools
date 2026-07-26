@@ -285,7 +285,8 @@ function recommendationsFromFindings(findings, overview = {}) {
     const recommendations = [];
     const has = pattern => findings.some(item => pattern.test(item.finding_text));
     if (overview.absent) {
-        recommendations.push(`Restore connectivity for the ${formatInteger(overview.absent)} sensors that returned no data, then rerun the report to close the collection gap.`);
+        const noun = overview.absent === 1 ? 'sensor' : 'sensors';
+        recommendations.push(`Restore connectivity for the ${formatInteger(overview.absent)} ${noun} that returned no data, then rerun the report to close the collection gap.`);
     }
     // Capture loss outranks capacity pressure: a dropped packet cannot be
     // recovered later, whereas a loaded sensor can still be rebalanced.
@@ -350,6 +351,24 @@ function hasProcessingPressure(row) {
     return load !== null && load >= PROCESSING_LOAD_GUIDE;
 }
 
+function hasReportedPacketstoreLookback(row) {
+    if (!row || row.offline) return false;
+    const value = finiteNumber(row.lookbackLatestSec);
+    if (value === null || value < 0) return false;
+    const status = row.collectionStatus && row.collectionStatus.est_lookback_sec;
+    return value > 0 || ['complete', 'zero_valued'].includes(status);
+}
+
+function averagePacketstoreLookback(rows) {
+    const measured = (rows || []).filter(hasReportedPacketstoreLookback);
+    return {
+        average_seconds: measured.length
+            ? measured.reduce((sum, row) => sum + finiteNumber(row.lookbackLatestSec), 0) / measured.length
+            : null,
+        reporting_sources: measured.length
+    };
+}
+
 function buildDeckModel(input) {
     const meta = { ...(input && input.meta || {}) };
     const options = resolveOptions(meta, input && input.options || {});
@@ -383,6 +402,7 @@ function buildDeckModel(input) {
     const atCapacity = findings.filter(item => item.at_capacity).length;
     const allInOne = packetstoreRows.filter(row => !isPairedPacketstoreSource(row)).length;
     const paired = packetstoreRows.length - allInOne;
+    const retention = averagePacketstoreLookback(packetstoreRows);
     const overview = {
         sensors: rows.length,
         reporting,
@@ -398,6 +418,8 @@ function buildDeckModel(input) {
         packetstores_paired: paired,
         packetstores_with_loss: packetstoreRows.filter(hasCaptureLoss).length,
         packetstores_loaded: packetstoreRows.filter(hasProcessingPressure).length,
+        packetstore_lookback_average_sec: retention.average_seconds,
+        packetstore_lookback_reporting_sources: retention.reporting_sources,
         model_counts: Object.entries(modelCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     };
     return {
@@ -411,51 +433,8 @@ function buildDeckModel(input) {
         overview,
         verdict: verdictFor(overview),
         recommendations: recommendationsFromFindings(findings, overview),
-        collector_notes: Array.isArray(input && input.collector_notes)
-            ? input.collector_notes.map(note => cleanText(note, 300)).filter(Boolean)
-            : [],
         filename: deckFilename(meta, options)
     };
-}
-
-function addPacketstoreSlides(model, assets) {
-    if (!model.packetstore_rows.length) return;
-    chunk(model.packetstore_rows, 8).forEach((rows, pageIndex, pages) => {
-        const slide = addContentSlide(
-            model,
-            'Packetstore health',
-            `Retention, capture and secret fidelity, and peak sampled 30-second processing load at ${cleanText(model.meta.cycle_label || 'report', 24)} cadence`,
-            assets,
-            pages.length > 1 ? `PAGE ${pageIndex + 1} OF ${pages.length}` : 'PACKET FORENSICS'
-        );
-        const tableRows = [[
-            tableCell('Appliance', { bold: true }), tableCell('Retention', { bold: true }),
-            tableCell('Capture & secret fidelity', { bold: true }), tableCell('Peak processing load', { bold: true })
-        ]];
-        rows.forEach(row => {
-            const latest = finiteNumber(row.lookbackLatestSec);
-            const minimum = finiteNumber(row.lookbackMinSec);
-            const packetRatio = finiteNumber(row.packetDropRatio);
-            const secretRatio = finiteNumber(row.secretDropRatio);
-            const loadLabel = value => {
-                const number = finiteNumber(value);
-                return number === null ? 'unavailable' : formatPercent(number / 100);
-            };
-            tableRows.push([
-                tableCell(`${cleanText(row.name || row.id, 42)}\n${packetstoreRoleLabel(row)}`),
-                tableCell(latest === null || minimum === null ? 'Unavailable' : `${(latest / 86400).toFixed(1)}d latest\n${(minimum / 86400).toFixed(1)}d minimum`),
-                tableCell(`Packets ${packetRatio === null ? 'unavailable' : formatLossPercent(packetRatio)} (${formatInteger(row.packetDropsTotal || 0)} dropped)\nSecrets ${secretRatio === null ? 'unavailable' : formatLossPercent(secretRatio)} (${formatInteger(row.secretDropsTotal || 0)} of ${formatInteger(row.secretsTotal || 0)} dropped)\nSlow-write ${formatInteger(row.slowWriteDropsTotal || 0)} · interface ${formatInteger(row.interfaceDropsTotal || 0)}`),
-                tableCell(`Input ${loadLabel(row.inputLoadPeak)}\nCompress ${loadLabel(row.compressionLoadPeak)}\nWrite ${loadLabel(row.diskWriteLoadPeak)}`)
-            ]);
-        });
-        slide.addTable(tableRows, {
-            x: MARGIN, y: slide.contentTop + 0.08, w: 12.0, h: Math.min(5.45, 0.52 + rows.length * 0.62),
-            colW: [2.35, 2.25, 4.25, 3.15], border: { color: pptColor(model.palette.grid), width: 0.7 },
-            fill: pptColor(model.palette.bg), color: pptColor(model.palette.text), fontFace: FONT,
-            fontSize: 9.5, margin: 0.08, valign: 'middle', breakLine: false
-        });
-        addNotes(slide, model, 'Packetstore cpc metrics. Counter values are report-window totals; lookback and processing loads are time-series summaries.');
-    });
 }
 
 // One deterministic sentence naming the dominant condition. A reader who stops
@@ -533,6 +512,21 @@ function sentenceCase(value) {
 function formatInteger(value) {
     const number = finiteNumber(value);
     return number === null ? '—' : Math.round(number).toLocaleString();
+}
+
+function offlineSummaryText(names, maxNameCharacters = 220) {
+    const values = (names || []).map(name => cleanText(name, 120)).filter(Boolean);
+    if (!values.length) return '';
+    const shown = [];
+    let length = 0;
+    for (const name of values) {
+        if (shown.length && length + name.length + 2 > maxNameCharacters) break;
+        shown.push(name);
+        length += name.length + (shown.length > 1 ? 2 : 0);
+    }
+    const remaining = values.length - shown.length;
+    const list = `${shown.join(', ')}${remaining ? `, … and ${formatInteger(remaining)} more` : ''}`;
+    return `${formatInteger(values.length)} OFFLINE\n${list}`;
 }
 
 function formatPercent(value) {
@@ -1004,7 +998,7 @@ function addAbsentRollup(model, slide, y) {
         x: MARGIN, y, w: 0.055, h: 0.84,
         fill: { color: pptColor(palette.absent) }, line: { type: 'none' }
     });
-    slide.addText(`${formatInteger(overview.absent)} sensors returned no data`, {
+    slide.addText(`${formatInteger(overview.absent)} ${overview.absent === 1 ? 'sensor' : 'sensors'} returned no data`, {
         x: MARGIN + 0.34, y: y + 0.15, w: 8.6, h: 0.26, fontFace: FONT, fontSize: 13,
         bold: true, color: pptColor(palette.text), margin: 0
     });
@@ -1027,24 +1021,24 @@ function chartSpecs(model) {
     return [
         {
             key: 'packet',
-            title: 'Packet rate headroom',
-            subtitle: `Peak ${cycle} average against model capacity`,
+            title: 'Sensor packet rate headroom',
+            subtitle: `Highest ${cycle} bucket average against rated model capacity`,
             value: row => finiteNumber(row.packetPeak),
             capacity: row => finiteNumber(row.packetCapacity),
             format: formatRate
         },
         {
             key: 'throughput',
-            title: 'Throughput headroom',
-            subtitle: `Peak ${cycle} average against model capacity`,
+            title: 'Sensor throughput headroom',
+            subtitle: `Highest ${cycle} bucket average against rated model capacity`,
             value: row => finiteNumber(row.throughputGbps),
             capacity: row => finiteNumber(row.throughputCapacity),
             format: formatGbps
         },
         {
             key: 'triggers',
-            title: 'Trigger cycle utilization',
-            subtitle: `Maximum aligned ${cycle} utilization · drops are totals for the window`,
+            title: 'Sensor trigger processing headroom',
+            subtitle: `Maximum aligned ${cycle} utilization · cycles used and available share one bucket · drops are report-window totals`,
             value: row => finiteNumber(row.triggerCyclesPeak),
             capacity: row => finiteNumber(row.triggerCyclesAvail),
             format: value => formatCompact(value),
@@ -1053,7 +1047,7 @@ function chartSpecs(model) {
         },
         {
             key: 'advanced',
-            title: 'Advanced analysis pressure',
+            title: 'Advanced Analysis capacity',
             subtitle: 'Devices in Advanced Analysis against licensed capacity',
             value: row => finiteNumber(row.analysis && row.analysis.advanced),
             capacity: row => finiteNumber(row.advancedCapacity),
@@ -1066,7 +1060,7 @@ function chartSpecs(model) {
         },
         {
             key: 'standard',
-            title: 'Standard analysis pressure',
+            title: 'Standard Analysis capacity',
             subtitle: 'Devices in Standard Analysis against licensed capacity',
             value: row => finiteNumber(row.analysis && row.analysis.standard),
             capacity: row => finiteNumber(row.standardCapacity),
@@ -1193,15 +1187,13 @@ function addChartSlide(model, assets, spec, page, title, subtitle) {
         line: { color: pptColor(palette.grid), width: 0.75 }
     });
     const caption = [
-        page.offline_names.length
-            ? `OFFLINE: ${page.offline_names.join(', ')}`
-            : '',
+        offlineSummaryText(page.offline_names),
         page.withheld > 0 ? `${formatInteger(page.withheld)} lower-ranked sensors continue in the appendix` : ''
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join('\n');
     if (caption) {
         slide.addText(caption, {
-            x: MARGIN, y: y + 0.36, w: 8.8, h: 0.22, fontFace: FONT, fontSize: 10,
-            color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
+            x: MARGIN, y: y + 0.36, w: 8.8, h: 0.52, fontFace: FONT, fontSize: 9,
+            color: pptColor(palette.muted), margin: 0, breakLine: true, fit: 'shrink'
         });
     }
     slide.addText('Sorted by percent of model capacity', {
@@ -1232,7 +1224,7 @@ function packetstoreChartSpecs(model) {
             key: 'retention',
             title: 'Packetstore retention',
             kicker: 'RETENTION',
-            subtitle: 'Latest estimated PCAP lookback · minimum observed in the window marked',
+            subtitle: 'Latest estimated PCAP lookback by reporting source · neutral marker shows the minimum observed in the window',
             axis: 'LONGEST LOOKBACK ON PAGE',
             // No customer retention target is collected, so a short lookback is
             // reported as an observation and never colored as a finding.
@@ -1250,9 +1242,9 @@ function packetstoreChartSpecs(model) {
         },
         {
             key: 'fidelity',
-            title: 'Capture and secret fidelity',
+            title: 'Packetstore capture and secret fidelity',
             kicker: 'DATA LOSS',
-            subtitle: 'Share of offered packets and secrets that were dropped · totals for the window',
+            subtitle: 'Share of offered packets and TLS secrets dropped · report-window totals',
             axis: '100% OF OFFERED TOTAL',
             series: [
                 { value: row => finiteNumber(row.packetDropRatio), color: palette => palette.high },
@@ -1278,9 +1270,9 @@ function packetstoreChartSpecs(model) {
         },
         {
             key: 'load',
-            title: 'Packetstore processing load',
+            title: 'Packetstore processing headroom',
             kicker: 'HEADROOM',
-            subtitle: `Peak sampled ${cycle} input, header-compression, and disk-write CPU load · the three are separate and are not summed`,
+            subtitle: `Highest sampled ${cycle} bucket-average input, header-compression, and disk-write load · the three are separate and are not summed`,
             axis: 'FULL LOAD',
             guide: PROCESSING_LOAD_GUIDE,
             series: [
@@ -1332,7 +1324,8 @@ function addPacketstoreChartSlides(model, assets) {
             const suffix = pages.length > 1 ? ` · ${index + 1} of ${pages.length}` : '';
             addPacketstoreChartSlide(model, assets, spec, entries, `${spec.title}${suffix}`, {
                 withheld: index === pages.length - 1 ? measured.length - shown.length : 0,
-                offline_names: offlineNames
+                offline_names: offlineNames,
+                show_retention_average: spec.key === 'retention' && index === 0
             });
         });
     });
@@ -1348,6 +1341,23 @@ function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
     const rowHeight = 0.56;
     const bottom = top + rowHeight * entries.length;
     const scaleMax = spec.scaleMax(entries) || 1;
+
+    if (page.show_retention_average && model.overview.packetstore_lookback_average_sec !== null) {
+        const count = model.overview.packetstore_lookback_reporting_sources;
+        slide.addText('AVERAGE LOOKBACK', {
+            x: 10.02, y: 1.60, w: 2.58, h: 0.16, fontFace: FONT, fontSize: 7.5,
+            bold: true, color: pptColor(palette.muted), margin: 0, charSpacing: 1.2,
+            align: 'right'
+        });
+        slide.addText(formatDays(model.overview.packetstore_lookback_average_sec), {
+            x: 10.02, y: 1.77, w: 1.18, h: 0.30, fontFace: FONT, fontSize: 21,
+            bold: true, color: pptColor(palette.text), margin: 0, align: 'right', fit: 'shrink'
+        });
+        slide.addText(`${formatInteger(count)} reporting ${count === 1 ? 'source' : 'sources'}`, {
+            x: 11.30, y: 1.86, w: 1.30, h: 0.16, fontFace: FONT, fontSize: 8,
+            color: pptColor(palette.muted), margin: 0, align: 'right', fit: 'shrink'
+        });
+    }
 
     if (spec.guide) {
         const guideX = plotLeft + span * spec.guide;
@@ -1443,14 +1453,14 @@ function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
             ? 'Bars use a fixed 0–100% scale of the offered packet or secret total.'
             : 'Bars are scaled to the longest lookback on this page. Retention is reported, not scored: no customer retention target is collected.';
     slide.addText([
-        page.offline_names.length ? `OFFLINE: ${page.offline_names.join(', ')}` : '',
+        offlineSummaryText(page.offline_names, 300),
         caption,
         page.withheld > 0
-        ? `${formatInteger(page.withheld)} lower-ranked packetstores continue in the Packetstore health table`
+        ? `${formatInteger(page.withheld)} lower-ranked Packetstore sources continue in the appendix`
         : ''
-    ].filter(Boolean).join(' · '), {
-        x: MARGIN, y: y + 0.34, w: SLIDE_WIDTH - MARGIN * 2, h: 0.22, fontFace: FONT, fontSize: 9.5,
-        color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
+    ].filter(Boolean).join('\n'), {
+        x: MARGIN, y: y + 0.34, w: SLIDE_WIDTH - MARGIN * 2, h: 0.56, fontFace: FONT, fontSize: 8.5,
+        color: pptColor(palette.muted), margin: 0, breakLine: true, fit: 'shrink'
     });
     addNotes(slide, model, 'Packetstore cpc metrics. Counters are report-window totals; lookback and processing loads are time-series summaries.');
 }
@@ -1580,9 +1590,8 @@ function createPresentation(deckModel, PptxGenJS, assets = {}) {
     // layout they landed on slide 46, after the reader had already left.
     addRecommendationSlide(model, assets);
     addAttentionSlides(model, assets);
-    addPacketstoreSlides(model, assets);
-    addPacketstoreChartSlides(model, assets);
     addChartSlides(model, assets);
+    addPacketstoreChartSlides(model, assets);
     addAppendixSlides(model, assets);
     return pptx;
 }

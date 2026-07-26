@@ -222,7 +222,8 @@ test('offline hero, chart caption, recommendation colors, and Source Sans 3 are 
     assert.equal(pptx.theme.headFontFace, 'Source Sans 3');
     assert.equal(pptx.theme.bodyFontFace, 'Source Sans 3');
     assert.match(allText, /Offline appliance/);
-    assert.match(allText, /OFFLINE: Offline sensor/);
+    assert.match(allText, /1 OFFLINE/);
+    assert.match(allText, /Offline sensor/);
     assert.doesNotMatch(allText, /supplied a usable value|excluded rather than shown as zero/);
 
     const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet health at a glance'));
@@ -337,7 +338,7 @@ test('deck findings use the System Health 80 and 100 percent thresholds', () => 
     assert.match(model.findings[1].finding_text, /80% of capacity/);
 });
 
-test('PowerPoint adds one consolidated Packetstore health slide instead of per-metric slides', () => {
+test('PowerPoint omits the redundant Packetstore health table slide', () => {
     const model = pptxApi.buildDeckModel({
         meta,
         rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
@@ -354,10 +355,7 @@ test('PowerPoint adds one consolidated Packetstore health slide instead of per-m
     const packetstoreSlides = pptx._slides.filter(slide => slide.texts.some(item => item.text === 'Packetstore health'));
     assert.equal(model.overview.packetstores, 1);
     assert.equal(model.overview.packetstores_with_loss, 1);
-    assert.equal(packetstoreSlides.length, 1);
-    assert.equal(packetstoreSlides[0].tables.length, 1);
-    assert.equal(packetstoreSlides[0].tables[0].rows.length, 2);
-    assert.equal(packetstoreSlides[0].tables[0].options.valign, 'middle');
+    assert.equal(packetstoreSlides.length, 0);
 });
 
 /* --------------------------------------------------------- packetstores */
@@ -470,7 +468,7 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     const pptx = pptxApi.createPresentation(model, FakePptx);
     const titleOf = title => pptx._slides.find(slide => slide.texts.some(item => item.text === title));
 
-    ['Packetstore retention', 'Capture and secret fidelity', 'Packetstore processing load']
+    ['Packetstore retention', 'Packetstore capture and secret fidelity', 'Packetstore processing headroom']
         .forEach(title => assert.ok(titleOf(title), `missing chart slide: ${title}`));
 
     // Charts stay vector: bars are shapes, never images.
@@ -482,7 +480,7 @@ test('the three packetstore charts are drawn as native shapes and label their ow
 
     // Load is the only packetstore chart with a capacity, so it is the only one
     // that draws the 80% guide.
-    const load = titleOf('Packetstore processing load');
+    const load = titleOf('Packetstore processing headroom');
     assert.ok(load.texts.some(item => item.text === '80%'));
     assert.ok(!retention.texts.some(item => item.text === '80%'));
 
@@ -491,7 +489,7 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     assert.match(loadText, /All in One/);
     assert.match(loadText, /Packetstore/);
 
-    const fidelity = titleOf('Capture and secret fidelity');
+    const fidelity = titleOf('Packetstore capture and secret fidelity');
     const fidelityText = fidelity.texts.map(item => item.text).join(' | ');
     assert.match(fidelityText, /100% OF OFFERED TOTAL/);
     assert.match(fidelityText, /fixed 0–100% scale/);
@@ -518,6 +516,62 @@ test('retention charts rank shortest positive lookback first and omit zero lookb
     assert.equal(labels.includes('Missing retention'), false);
 });
 
+test('Packetstore retention shows the average lookback on the first retention slide only', () => {
+    const packetstores = Array.from({ length: 9 }, (_, index) => packetstoreRow({
+        id: `store-${index}`,
+        name: `Store ${index}`,
+        lookbackLatestSec: (index + 1) * 86400,
+        collectionStatus: { est_lookback_sec: 'complete' }
+    }));
+    packetstores.push(packetstoreRow({
+        id: 'missing', name: 'Missing lookback', lookbackLatestSec: null,
+        collectionStatus: { est_lookback_sec: 'empty' }
+    }));
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        packetstore_rows: packetstores
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const retentionSlides = pptx._slides.filter(slide => slide.texts.some(item => /^Packetstore retention/.test(item.text)));
+
+    assert.equal(model.overview.packetstore_lookback_reporting_sources, 9);
+    assert.equal(model.overview.packetstore_lookback_average_sec, 5 * 86400);
+    assert.equal(retentionSlides.length, 2);
+    assert.match(retentionSlides[0].texts.map(item => item.text).join(' | '), /AVERAGE LOOKBACK/);
+    assert.match(retentionSlides[0].texts.map(item => item.text).join(' | '), /5\.0d/);
+    assert.match(retentionSlides[0].texts.map(item => item.text).join(' | '), /9 reporting sources/);
+    assert.doesNotMatch(retentionSlides[1].texts.map(item => item.text).join(' | '), /AVERAGE LOOKBACK/);
+});
+
+test('collector notes never enter the PowerPoint model or slide content', () => {
+    const sentinel = 'COLLECTOR-NOTE-SENTINEL';
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        collector_notes: [sentinel]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const serialized = JSON.stringify(pptx._slides);
+
+    assert.equal(Object.prototype.hasOwnProperty.call(model, 'collector_notes'), false);
+    assert.doesNotMatch(serialized, new RegExp(sentinel));
+});
+
+test('PowerPoint presents sensor capacity evidence before Packetstore evidence', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        packetstore_rows: [packetstoreRow()]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const sensorIndex = pptx._slides.findIndex(slide => slide.texts.some(item => item.text === 'Sensor packet rate headroom'));
+    const packetstoreIndex = pptx._slides.findIndex(slide => slide.texts.some(item => item.text === 'Packetstore retention'));
+
+    assert.ok(sensorIndex >= 0);
+    assert.ok(packetstoreIndex > sensorIndex);
+});
+
 test('small drop rates never round to zero, and the highlight follows the actual loss', () => {
     const model = pptxApi.buildDeckModel({
         meta,
@@ -531,7 +585,7 @@ test('small drop rates never round to zero, and the highlight follows the actual
         ]
     });
     const pptx = pptxApi.createPresentation(model, FakePptx);
-    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Capture and secret fidelity'));
+    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore capture and secret fidelity'));
     const find = pattern => slide.texts.find(item => pattern.test(item.text));
 
     assert.match(find(/^packets/).text, /packets 0\.02%/);
@@ -544,9 +598,7 @@ test('small drop rates never round to zero, and the highlight follows the actual
     const noteLine = slide.texts.find(item => /interface 3,100/.test(item.text));
     assert.equal(noteLine.options.color, 'EF4444');
 
-    const healthTable = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore health'));
-    const fidelityCells = healthTable.tables[0].rows.slice(1).map(row => row[2].text);
-    assert.ok(fidelityCells.some(text => /Packets 0\.02%/.test(text)));
+    assert.equal(pptx._slides.some(s => s.texts.some(item => item.text === 'Packetstore health')), false);
 
     const actions = pptx._slides.find(s => s.texts.some(item => item.text === 'Recommended next steps'));
     assert.equal(actions.shapes.find(shape => shape.type === 'ellipse').options.fill.color, 'EF4444');
@@ -564,7 +616,7 @@ test('counter-only loss remains visible when fidelity denominators are unavailab
         })]
     });
     const pptx = pptxApi.createPresentation(model, FakePptx);
-    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Capture and secret fidelity'));
+    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore capture and secret fidelity'));
 
     assert.ok(slide, 'counter-only loss should create a fidelity chart');
     assert.match(slide.texts.map(item => item.text).join(' | '), /interface 42/);
@@ -582,7 +634,7 @@ test('measured zero packetstore values do not draw non-zero colored bars', () =>
     });
     const pptx = pptxApi.createPresentation(model, FakePptx);
     assert.equal(pptx._slides.some(slide => slide.texts.some(item => item.text === 'Packetstore retention')), false);
-    const chartTitles = ['Capture and secret fidelity', 'Packetstore processing load'];
+    const chartTitles = ['Packetstore capture and secret fidelity', 'Packetstore processing headroom'];
 
     chartTitles.forEach(title => {
         const slide = pptx._slides.find(s => s.texts.some(item => item.text === title));

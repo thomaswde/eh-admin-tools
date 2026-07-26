@@ -2332,13 +2332,131 @@ td.actions .btn-danger { margin-left: 6px; }
 #chartThemeStatus.is-error { color: var(--danger-text); }
 
 .system-health-summary {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: grid;
+    grid-template-columns: minmax(0, .9fr) minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1.15fr);
+    margin-bottom: 20px;
+    overflow: hidden;
+    background-color: var(--raised);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
 }
 
-@media (min-width: 1660px) {
-    .system-health-summary {
-        grid-template-columns: repeat(8, minmax(0, 1fr));
+.system-health-summary-group {
+    min-width: 0;
+    padding: 18px 20px 17px;
+}
+
+.system-health-summary-group + .system-health-summary-group {
+    border-left: 1px solid var(--hairline);
+}
+
+.system-health-summary-kicker {
+    margin-bottom: 11px;
+    color: var(--gray);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+}
+
+.system-health-summary-hero {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    min-height: 38px;
+}
+
+.system-health-summary-value {
+    flex: 0 0 auto;
+    color: var(--ink);
+    font-size: 30px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.025em;
+    line-height: 1;
+}
+
+.system-health-summary-qualifier {
+    max-width: 150px;
+    color: var(--text-2);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+.system-health-summary-note {
+    min-height: 34px;
+    margin: 9px 0 12px;
+    color: var(--gray);
+    font-size: 11.5px;
+    line-height: 1.45;
+}
+
+.system-health-summary-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--hairline);
+    color: var(--gray);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.system-health-summary-facts b {
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+}
+
+.system-health-summary-group.is-alert .system-health-summary-value,
+.system-health-summary-group.is-alert .system-health-summary-facts b {
+    color: var(--danger-text);
+}
+
+.system-health-summary-group.is-watch .system-health-summary-value {
+    color: var(--warn);
+}
+
+.system-health-section-head {
+    padding: 6px 2px 0;
+}
+
+.system-health-section-kicker {
+    margin-bottom: 4px;
+    color: var(--gray);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+}
+
+.system-health-section-title {
+    margin: 0 0 3px;
+    color: var(--ink);
+    font-size: 20px;
+    line-height: 1.25;
+}
+
+.system-health-section-desc {
+    margin: 0;
+    color: var(--gray);
+    font-size: 12.5px;
+    line-height: 1.45;
+}
+
+@media (max-width: 1100px) {
+    .system-health-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .system-health-summary-group:nth-child(3) { border-left: 0; }
+    .system-health-summary-group:nth-child(n + 3) { border-top: 1px solid var(--hairline); }
+}
+
+@media (max-width: 680px) {
+    .system-health-summary { grid-template-columns: 1fr; }
+    .system-health-summary-group + .system-health-summary-group {
+        border-top: 1px solid var(--hairline);
+        border-left: 0;
     }
+    .system-health-summary-note { min-height: 0; }
 }
 
 .system-health-chart-frame {
