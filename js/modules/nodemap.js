@@ -511,7 +511,7 @@ function renderGraph(records) {
     svg.on('contextmenu', event => event.preventDefault());
 
     svg.append('defs').append('style').text(`
-        .trunk { fill: none; stroke: var(--text-muted); stroke-width: 2; stroke-opacity: .7; }
+        .trunk, .branch { fill: none; stroke: var(--text-muted); stroke-width: 2; stroke-opacity: .7; }
         .tier-rule { stroke: var(--hairline); stroke-width: 1; }
         .tier-label { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
         .node-rect { stroke-width: 2; cursor: pointer; }
@@ -525,10 +525,12 @@ function renderGraph(records) {
     const nodeHeight = 60;
     const gap = 20;
     const rowGap = 78;
-    const marginX = 24;
-    const tierGap = 64;
+    const trunkX = 18;
+    const nodeStartX = 52;
+    const rightMargin = 24;
+    const tierHeaderGap = 34;
 
-    const perRow = Math.max(1, Math.floor((width - marginX * 2 + gap) / (nodeWidth + gap)));
+    const perRow = Math.max(1, Math.floor((width - nodeStartX - rightMargin + gap) / (nodeWidth + gap)));
 
     const consoles = sortTier(records.filter(r => r.role === 'command'));
     const tiers = ['discover', 'trace', 'efc', 'other']
@@ -539,7 +541,7 @@ function renderGraph(records) {
     function layout(tierRecords, startY) {
         return tierRecords.map((record, i) => ({
             record,
-            x: marginX + (i % perRow) * (nodeWidth + gap),
+            x: nodeStartX + (i % perRow) * (nodeWidth + gap),
             y: startY + Math.floor(i / perRow) * rowGap
         }));
     }
@@ -553,41 +555,57 @@ function renderGraph(records) {
     const consolePositions = layout(consoles, cursorY);
     cursorY = tierBottom(consolePositions, cursorY);
 
-    const consoleX = consolePositions.length > 0
-        ? consolePositions[0].x + nodeWidth / 2
-        : marginX + nodeWidth / 2;
-
-    // One trunk per tier instead of one edge per node. Every sensor connects to
-    // the console, so a rule and a count say it without 40 crossing curves.
+    // Section labels sit in their own gap. The topology trunk stays in the far
+    // left gutter, while right-angle branches connect each appliance row.
     const drawnTiers = tiers.map(tier => {
-        const ruleY = cursorY + tierGap / 2;
-        const positions = layout(tier.records, ruleY + tierGap / 2);
-        cursorY = tierBottom(positions, ruleY);
-        return { ...tier, ruleY, positions };
+        const headerY = cursorY + tierHeaderGap;
+        const positions = layout(tier.records, headerY + 24);
+        cursorY = tierBottom(positions, headerY) + 10;
+        return { ...tier, headerY, positions };
     });
 
     const height = Math.max(400, cursorY + 32);
     svg.attr('height', height);
 
-    if (drawnTiers.length > 0 && consolePositions.length > 0) {
-        const lastRuleY = drawnTiers[drawnTiers.length - 1].ruleY;
+    const allPositions = [
+        ...consolePositions,
+        ...drawnTiers.flatMap(tier => tier.positions)
+    ];
+    const rowCenters = [...new Set(allPositions.map(position => position.y + nodeHeight / 2))]
+        .sort((a, b) => a - b);
+    const rowConnections = rowCenters.map(centerY => ({
+        centerY,
+        endX: Math.max(...allPositions
+            .filter(position => position.y + nodeHeight / 2 === centerY)
+            .map(position => position.x))
+    }));
+
+    if (rowCenters.length > 0) {
+        const trunkStart = rowCenters.length === 1 ? rowCenters[0] - 12 : rowCenters[0];
+        const trunkEnd = rowCenters.length === 1 ? rowCenters[0] + 12 : rowCenters[rowCenters.length - 1];
         g.append('path')
             .attr('class', 'trunk')
-            .attr('d', `M ${consoleX} ${tierBottom(consolePositions, 0)} L ${consoleX} ${lastRuleY}`);
+            .attr('d', `M ${trunkX} ${trunkStart} V ${trunkEnd}`);
     }
+
+    rowConnections.forEach(row => {
+        g.append('path')
+            .attr('class', 'branch')
+            .attr('d', `M ${trunkX} ${row.centerY} H ${row.endX}`);
+    });
 
     drawnTiers.forEach(tier => {
         g.append('line')
             .attr('class', 'tier-rule')
-            .attr('x1', marginX)
-            .attr('y1', tier.ruleY)
-            .attr('x2', width - marginX)
-            .attr('y2', tier.ruleY);
+            .attr('x1', nodeStartX)
+            .attr('y1', tier.headerY)
+            .attr('x2', width - rightMargin)
+            .attr('y2', tier.headerY);
 
         g.append('text')
             .attr('class', 'tier-label')
-            .attr('x', marginX)
-            .attr('y', tier.ruleY - 8)
+            .attr('x', nodeStartX)
+            .attr('y', tier.headerY - 8)
             .attr('fill', 'currentColor')
             .attr('opacity', 0.65)
             .text(`${roleLabels[tier.role] || tier.role} · ${tier.records.length}`);
@@ -806,16 +824,48 @@ function updateFilterCheckboxes() {
         const checkbox = document.getElementById(elementId);
         if (checkbox) checkbox.checked = nodemapState.filters[filterKey];
     }
+    updateNodemapFilterCount();
+}
+
+function updateNodemapFilterCount() {
+    const inactiveCount = Object.values(nodemapState.filters).filter(value => !value).length;
+    const count = document.getElementById('nodemapFilterCount');
+    if (!count) return;
+    count.textContent = inactiveCount.toString();
+    count.hidden = inactiveCount === 0;
+}
+
+function setNodemapFilterMenuOpen(open) {
+    const button = document.getElementById('showNodemapFilters');
+    const menu = document.getElementById('nodemapFiltersMenu');
+    if (!button || !menu) return;
+    menu.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
 }
 
 function setupNodemapFilterEventListeners() {
     const showFiltersBtn = document.getElementById('showNodemapFilters');
     if (showFiltersBtn) {
-        showFiltersBtn.addEventListener('click', () => {
-            updateFilterCheckboxes();
-            showModal('nodemapFiltersModal');
+        showFiltersBtn.addEventListener('click', event => {
+            event.stopPropagation();
+            const isOpen = showFiltersBtn.getAttribute('aria-expanded') === 'true';
+            if (!isOpen) updateFilterCheckboxes();
+            setNodemapFilterMenuOpen(!isOpen);
         });
     }
+
+    const filterMenu = document.getElementById('nodemapFiltersMenu');
+    if (filterMenu) {
+        filterMenu.addEventListener('click', event => event.stopPropagation());
+        filterMenu.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                setNodemapFilterMenuOpen(false);
+                showFiltersBtn?.focus();
+            }
+        });
+    }
+
+    document.addEventListener('click', () => setNodemapFilterMenuOpen(false));
 
     const searchInput = document.getElementById('nodemapSearch');
     if (searchInput) {
@@ -838,22 +888,15 @@ function setupNodemapFilterEventListeners() {
         });
     }
 
-    const closeFiltersBtn = document.getElementById('closeNodemapFilters');
-    if (closeFiltersBtn) {
-        closeFiltersBtn.addEventListener('click', () => hideModal('nodemapFiltersModal'));
-    }
-
-    const applyFiltersBtn = document.getElementById('applyNodemapFilters');
-    if (applyFiltersBtn) {
-        applyFiltersBtn.addEventListener('click', () => {
-            for (const [elementId, filterKey] of Object.entries(nodemapFilterMap)) {
-                const checkbox = document.getElementById(elementId);
-                if (checkbox) nodemapState.filters[filterKey] = checkbox.checked;
-            }
-
-            if (nodemapState.appliances.length > 0) renderNodemap();
-            hideModal('nodemapFiltersModal');
-        });
+    for (const [elementId, filterKey] of Object.entries(nodemapFilterMap)) {
+        const checkbox = document.getElementById(elementId);
+        if (checkbox) {
+            checkbox.addEventListener('change', () => {
+                nodemapState.filters[filterKey] = checkbox.checked;
+                updateNodemapFilterCount();
+                if (nodemapState.appliances.length > 0) renderNodemap();
+            });
+        }
     }
 
     const resetFiltersBtn = document.getElementById('resetNodemapFilters');
@@ -863,6 +906,7 @@ function setupNodemapFilterEventListeners() {
                 nodemapState.filters[key] = true;
             });
             updateFilterCheckboxes();
+            if (nodemapState.appliances.length > 0) renderNodemap();
         });
     }
 
@@ -871,12 +915,7 @@ function setupNodemapFilterEventListeners() {
         closeNodeDetailsPanelBtn.addEventListener('click', hideNodeDetailsPanel);
     }
 
-    const modal = document.getElementById('nodemapFiltersModal');
-    if (modal) {
-        modal.addEventListener('click', e => {
-            if (e.target === modal) hideModal('nodemapFiltersModal');
-        });
-    }
+    updateNodemapFilterCount();
 }
 
 /* ------------------------------- Lifecycle ------------------------------- */

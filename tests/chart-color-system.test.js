@@ -53,7 +53,10 @@ test('generic chart modules use cyan for single series and the shared palette fo
     assert.match(records, /backgroundColor:\s*genericChartPrimaryColor\(\)/);
     assert.match(records, /backgroundColor:\s*genericChartPaletteColor\(i\)/);
     assert.doesNotMatch([audit, records, discovery, nodemap].join('\n'), /#(?:261f63|7f2854|ec0089)/i);
-    assert.match(discovery, /genericChartPaletteColor\(3\)/);
+    assert.match(discovery, /advanced:.*genericChartPrimaryColor\(\)/);
+    assert.match(discovery, /standard:.*stateIndicatorColor\('warning'\)/);
+    assert.match(discovery, /discovery:.*stateIndicatorColor\('error'\)/);
+    assert.match(discovery, /flow_log:.*genericChartPaletteColor\(1\)/);
     assert.match(nodemap, /stateIndicatorColor\('warning'\)/);
     assert.match(nodemap, /stateIndicatorColor\('error'\)/);
 });

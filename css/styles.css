@@ -76,7 +76,7 @@
     /* Lines */
     --hairline: #e9e9ef;
     --border-strong: #d9d7e8;
-    --focus-ring: rgba(0, 170, 239, 0.28);
+    --focus-ring: rgba(22, 21, 31, 0.16);
 
     /* Controls */
     --btn-bg: #ffffff;
@@ -143,7 +143,7 @@
 
     --hairline: #2e2d3a;
     --border-strong: #3a3947;
-    --focus-ring: rgba(0, 170, 239, 0.35);
+    --focus-ring: rgba(236, 236, 242, 0.18);
 
     --btn-bg: #232230;
     --btn-fg: #ececf2;
@@ -226,7 +226,7 @@ a { color: var(--cyan); }
 }
 
 :focus-visible {
-    outline: 2px solid var(--cyan);
+    outline: 2px solid var(--text-2);
     outline-offset: 2px;
     border-radius: 4px;
 }
@@ -743,7 +743,7 @@ input:focus,
 select:focus,
 textarea:focus {
     outline: none;
-    border-color: var(--cyan);
+    border-color: var(--border-strong);
     box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
@@ -803,7 +803,7 @@ select[multiple] {
 .custom-select-trigger:focus-visible,
 .custom-select.is-open .custom-select-trigger {
     outline: none;
-    border-color: var(--cyan);
+    border-color: var(--border-strong);
     box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
@@ -902,7 +902,7 @@ select[multiple] {
 .custom-select-check {
     width: 14px;
     flex: 0 0 14px;
-    color: var(--cyan);
+    color: var(--ink);
     visibility: hidden;
 }
 
@@ -1030,8 +1030,8 @@ input[type="color"] {
     font-weight: 600;
     line-height: 1;
     color: var(--btn-fg);
-    background-color: var(--btn-bg);
-    border: 1px solid var(--hairline);
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
     white-space: nowrap;
     cursor: pointer;
@@ -1041,7 +1041,7 @@ input[type="color"] {
 .btn:hover,
 .btn-secondary:hover {
     background-color: var(--surface-hover);
-    border-color: var(--border-strong);
+    border-color: transparent;
 }
 
 .btn-primary {
@@ -1058,12 +1058,12 @@ input[type="color"] {
 .btn-danger {
     background-color: transparent;
     color: var(--danger-text);
-    border-color: var(--danger-border);
+    border-color: transparent;
 }
 
 .btn-danger:hover {
     background-color: var(--danger-bg);
-    border-color: var(--danger);
+    border-color: transparent;
 }
 
 .btn-ghost {
@@ -1640,8 +1640,8 @@ td.actions .btn-danger { margin-left: 6px; }
     width: 100%;
     padding: 10px 13px;
     text-align: left;
-    background-color: var(--raised);
-    border: 1px solid var(--hairline);
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
     color: var(--text-2);
     cursor: pointer;
@@ -1653,7 +1653,7 @@ td.actions .btn-danger { margin-left: 6px; }
 .capacity-input-btn:hover,
 .device-period-btn:hover {
     background-color: var(--surface-hover);
-    border-color: var(--border-strong);
+    border-color: transparent;
 }
 
 .option-btn.active,
@@ -1661,7 +1661,7 @@ td.actions .btn-danger { margin-left: 6px; }
 .capacity-input-btn.active,
 .device-period-btn.active {
     background-color: var(--chip-bg);
-    border-color: var(--cyan);
+    border-color: transparent;
     color: var(--ink);
 }
 
@@ -1817,6 +1817,96 @@ td.actions .btn-danger { margin-left: 6px; }
     gap: 6px;
     font-size: 13px;
     color: var(--gray);
+}
+
+.nodemap-group .custom-select {
+    width: 176px;
+}
+
+.nodemap-filter-control {
+    position: relative;
+}
+
+.nodemap-filter-control > .btn[aria-expanded="true"] {
+    background-color: var(--surface-hover);
+}
+
+.nodemap-filter-count {
+    min-width: 18px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background-color: var(--track);
+    color: var(--text-2);
+    font-size: 10.5px;
+    line-height: 1.4;
+    text-align: center;
+}
+
+.nodemap-filter-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    width: 260px;
+    max-height: min(420px, 65vh);
+    padding: 5px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background-color: var(--raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-pop);
+    z-index: 90;
+}
+
+.nodemap-filter-menu[hidden] {
+    display: none;
+}
+
+.nodemap-filter-option {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 6px 9px;
+    border-radius: 6px;
+    color: var(--text-2);
+    cursor: pointer;
+}
+
+.nodemap-filter-option:hover,
+.nodemap-filter-option:has(input:focus-visible) {
+    color: var(--ink);
+    background-color: var(--surface-hover);
+}
+
+.nodemap-filter-option::before {
+    content: "✓";
+    width: 14px;
+    flex: 0 0 14px;
+    color: var(--ink);
+    visibility: hidden;
+}
+
+.nodemap-filter-option:has(input:checked)::before {
+    visibility: visible;
+}
+
+.nodemap-filter-option input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.nodemap-filter-menu-foot {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
+    padding: 5px 4px 2px;
+    border-top: 1px solid var(--hairline);
 }
 
 .segmented {
@@ -2002,6 +2092,91 @@ td.actions .btn-danger { margin-left: 6px; }
     overflow-wrap: anywhere;
 }
 
+.system-health-run-button {
+    margin-top: 16px;
+}
+
+.system-health-transfer-grid {
+    display: grid;
+    grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+    gap: 0;
+    border-top: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--hairline);
+}
+
+.system-health-transfer-column {
+    min-width: 0;
+    padding: 14px 0;
+}
+
+.system-health-transfer-column + .system-health-transfer-column {
+    padding-left: 16px;
+    margin-left: 16px;
+    border-left: 1px solid var(--hairline);
+}
+
+.system-health-transfer-column h3 {
+    margin-bottom: 6px;
+    color: var(--gray);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+}
+
+.system-health-action-list {
+    display: grid;
+    gap: 2px;
+}
+
+.system-health-action-tile {
+    display: grid;
+    gap: 1px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background-color: transparent;
+    color: var(--text-2);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color .13s, color .13s;
+}
+
+.system-health-action-tile:hover {
+    background-color: var(--surface-hover);
+    color: var(--ink);
+}
+
+.system-health-action-tile:disabled {
+    opacity: .42;
+    cursor: not-allowed;
+}
+
+.system-health-action-title {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.system-health-action-desc {
+    color: var(--gray);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+@media (max-width: 720px) {
+    .system-health-transfer-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .system-health-transfer-column + .system-health-transfer-column {
+        padding: 14px 0;
+        margin: 0;
+        border-top: 1px solid var(--hairline);
+        border-left: 0;
+    }
+}
+
 /* ---------- Chart theme picker ---------- */
 .theme-panel {
     display: grid;
@@ -2032,9 +2207,9 @@ td.actions .btn-danger { margin-left: 6px; }
 }
 
 .theme-card.is-active {
-    background-color: var(--raised);
-    border-color: var(--cyan);
-    box-shadow: 0 0 0 3px var(--focus-ring);
+    background-color: var(--chip-bg);
+    border-color: var(--chip-border);
+    box-shadow: none;
 }
 
 /* Miniature of the exported chart: three ramp bars over the theme background. */

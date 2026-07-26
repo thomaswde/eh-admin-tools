@@ -617,7 +617,7 @@
 
                     <div class="card">
                         <div class="card-head">
-                            <h2 class="card-title">Capacity data</h2>
+                            <h2 class="card-title">Import capacity data</h2>
                             <p class="card-desc">Optional. Provide capacity data to calculate compression ratios, or leave blank to view raw record bytes only.</p>
                         </div>
 
@@ -630,11 +630,11 @@
 
                         <div id="manualCapacityInput" class="stack-sm">
                             <div class="field">
-                                <label for="reservedCapacity">Reserved capacity (GB)</label>
+                                <label for="reservedCapacity">Reserved daily capacity (GB)</label>
                                 <input type="number" id="reservedCapacity" placeholder="e.g. 1500">
                             </div>
                             <div class="field">
-                                <label for="utilizedCapacity">Utilized capacity (GB)</label>
+                                <label for="utilizedCapacity">Utilized daily capacity (GB)</label>
                                 <input type="number" id="utilizedCapacity" placeholder="e.g. 817">
                                 <span class="field-hint">From your data lake: BigQuery, LogScale, or Elastic.</span>
                                 <span id="manualCapacityTip360" class="field-hint" style="display: none;">For RevealX 360, reserved and utilized capacity are on the Administration page of your RevealX 360 Cloud Console.</span>
@@ -682,7 +682,7 @@
                             <div id="compressionRatioSubtext" class="stat-sub">1 GB stored : X GB ingested</div>
                         </div>
                         <div class="stat">
-                            <div class="stat-label">Total record bytes</div>
+                            <div class="stat-label">Total uncompressed record bytes</div>
                             <div id="totalRecordBytes" class="stat-value">-</div>
                             <div class="stat-sub">From all discover appliances</div>
                         </div>
@@ -744,7 +744,7 @@
                 <div class="grid-2">
                     <div class="card">
                         <div class="card-head">
-                            <h2 class="card-title">Report defaults</h2>
+                            <h2 class="card-title">Report</h2>
                             <p class="card-desc">Rates are peak bucket averages over one bounded, aligned report window.</p>
                         </div>
                         <div class="grid-fields">
@@ -764,31 +764,56 @@
                                 </select>
                             </div>
                         </div>
+                        <button type="button" id="runSystemHealthReport" class="btn-primary system-health-run-button">Run report</button>
                     </div>
 
                     <div class="card">
                         <div class="card-head">
-                            <h2 class="card-title">Collection</h2>
+                            <h2 class="card-title">Import Export</h2>
                             <p class="card-desc">Uses the product catalog bundled with this package.</p>
                         </div>
                         <div id="systemHealthCatalogStatus" class="system-health-catalog-status hidden">
                             <span class="system-health-catalog-badge">Catalog not loaded</span>
                             <span>Capacity comparisons will show observed values only until the catalog loads.</span>
                         </div>
-                        <div class="row-tight">
-                            <button type="button" id="runSystemHealthReport" class="btn-primary">Run report</button>
-                            <button type="button" id="systemHealthLoadCsvButton" class="btn">Load CSV</button>
-                            <button type="button" id="systemHealthExportCsvButton" class="btn" disabled>Export CSV</button>
-                            <button type="button" id="systemHealthExportApiCsvButton" class="btn" disabled>Export All API Response Data as CSVs</button>
-                            <button type="button" id="systemHealthExportPdfButton" class="btn" disabled>Export PDF</button>
-                            <button type="button" id="systemHealthExportPptxButton" class="btn" disabled>Export PowerPoint</button>
+                        <div class="system-health-transfer-grid">
+                            <section class="system-health-transfer-column" aria-labelledby="systemHealthImportHeading">
+                                <h3 id="systemHealthImportHeading">Import</h3>
+                                <div class="system-health-action-list">
+                                    <button type="button" id="systemHealthLoadCsvButton" class="system-health-action-tile">
+                                        <span class="system-health-action-title">Load CSV</span>
+                                        <span class="system-health-action-desc">Restore a unified per-sensor summary.</span>
+                                    </button>
+                                </div>
+                            </section>
+                            <section class="system-health-transfer-column" aria-labelledby="systemHealthExportHeading">
+                                <h3 id="systemHealthExportHeading">Export</h3>
+                                <div class="system-health-action-list">
+                                    <button type="button" id="systemHealthExportCsvButton" class="system-health-action-tile" disabled>
+                                        <span class="system-health-action-title">Summary CSV</span>
+                                        <span class="system-health-action-desc">Save the unified per-sensor summary.</span>
+                                    </button>
+                                    <button type="button" id="systemHealthExportApiCsvButton" class="system-health-action-tile" disabled>
+                                        <span class="system-health-action-title">All API data</span>
+                                        <span class="system-health-action-desc">Export detailed response data as CSVs.</span>
+                                    </button>
+                                    <button type="button" id="systemHealthExportPdfButton" class="system-health-action-tile" disabled>
+                                        <span class="system-health-action-title">PDF</span>
+                                        <span class="system-health-action-desc">Create a shareable report.</span>
+                                    </button>
+                                    <button type="button" id="systemHealthExportPptxButton" class="system-health-action-tile" disabled>
+                                        <span class="system-health-action-title">PowerPoint</span>
+                                        <span class="system-health-action-desc">Create an editable presentation.</span>
+                                    </button>
+                                </div>
+                            </section>
                             <input id="systemHealthCsvInput" type="file" accept=".csv,text/csv" class="hidden">
                         </div>
                         <p id="systemHealthCsvStatus" class="field-hint" style="margin-top: 10px;">Load or export one unified per-sensor summary CSV. The API-data export preserves the detailed multi-file export.</p>
                     </div>
                 </div>
 
-                <details class="disclosure" id="chartThemePanel">
+                <details class="disclosure" id="chartThemePanel" open>
                     <summary>
                         Chart theme
                         <span id="chartThemeHint" class="disclosure-hint">Auto</span>
@@ -1208,16 +1233,41 @@
                         <button type="button" data-view="topology" role="tab" aria-selected="false">Topology</button>
                     </div>
 
-                    <button type="button" id="showNodemapFilters" class="btn btn-sm">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path>
-                        </svg>
-                        Filters
-                    </button>
+                    <div class="nodemap-filter-control">
+                        <button type="button" id="showNodemapFilters" class="btn btn-sm" aria-expanded="false" aria-controls="nodemapFiltersMenu">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path>
+                            </svg>
+                            <span>Filters</span>
+                            <span id="nodemapFilterCount" class="nodemap-filter-count" hidden></span>
+                        </button>
+                        <div id="nodemapFiltersMenu" class="nodemap-filter-menu" role="group" aria-label="Appliance filters" hidden>
+                            <div class="custom-select-group">
+                                <div class="custom-select-group-label">Platform types</div>
+                                <label class="nodemap-filter-option"><input type="checkbox" id="filter-discover" checked><span class="filter-swatch" style="background-color: var(--chart-1);"></span><span>Packet Sensor</span></label>
+                                <label class="nodemap-filter-option"><input type="checkbox" id="filter-efc" checked><span class="filter-swatch" style="background-color: var(--chart-3);"></span><span>Flow Collector</span></label>
+                                <label class="nodemap-filter-option"><input type="checkbox" id="filter-trace" checked><span class="filter-swatch" style="background-color: var(--chart-2);"></span><span>Packetstore</span></label>
+                                <label class="nodemap-filter-option"><input type="checkbox" id="filter-other" checked><span class="filter-swatch" style="background-color: var(--gray);"></span><span>Other</span></label>
+                            </div>
+                            <div class="custom-select-group">
+                                <div class="custom-select-group-label">Deployment types</div>
+                                <label class="nodemap-filter-option"><input type="checkbox" id="filter-physical" checked><span>Physical</span></label>
+                                <label class="nodemap-filter-option"><input type="checkbox" id="filter-virtual" checked><span>Virtual and cloud</span></label>
+                            </div>
+                            <div class="custom-select-group">
+                                <div class="custom-select-group-label">Connection status</div>
+                                <label class="nodemap-filter-option"><input type="checkbox" id="filter-online" checked><span class="filter-swatch" style="background-color: var(--ok);"></span><span>Online</span></label>
+                                <label class="nodemap-filter-option"><input type="checkbox" id="filter-offline" checked><span class="filter-swatch" style="background-color: var(--danger-indicator);"></span><span>Offline</span></label>
+                            </div>
+                            <div class="nodemap-filter-menu-foot">
+                                <button type="button" id="resetNodemapFilters" class="btn btn-sm">Reset all</button>
+                            </div>
+                        </div>
+                    </div>
 
                     <label id="nodemapGroupControl" class="nodemap-group">
                         <span>Group</span>
-                        <select id="nodemapGroupBy">
+                        <select id="nodemapGroupBy" data-custom-select-min-width="176">
                             <option value="status">Status</option>
                             <option value="role">Role</option>
                             <option value="model">Model</option>
@@ -1557,53 +1607,6 @@
 </div>
 
 <!-- Nodemap filters -->
-<div id="nodemapFiltersModal" class="modal">
-    <div class="modal-content">
-        <div class="row">
-            <h2 class="modal-title">Appliance filters</h2>
-            <div class="spacer"></div>
-            <button type="button" id="closeNodemapFilters" class="icon-btn" aria-label="Close filters">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                    <path d="M6 18L18 6M6 6l12 12"></path>
-                </svg>
-            </button>
-        </div>
-
-        <div class="modal-body">
-            <div class="filter-group">
-                <div class="filter-group-title">Platform types</div>
-                <div class="filter-list">
-                    <label class="check"><input type="checkbox" id="filter-discover" checked><span class="filter-swatch" style="background-color: var(--chart-1);"></span><span>Packet Sensor</span></label>
-                    <label class="check"><input type="checkbox" id="filter-efc" checked><span class="filter-swatch" style="background-color: var(--chart-3);"></span><span>Flow Collector</span></label>
-                    <label class="check"><input type="checkbox" id="filter-trace" checked><span class="filter-swatch" style="background-color: var(--chart-2);"></span><span>Packetstore</span></label>
-                    <label class="check"><input type="checkbox" id="filter-other" checked><span class="filter-swatch" style="background-color: var(--gray);"></span><span>Other</span></label>
-                </div>
-            </div>
-
-            <div class="filter-group">
-                <div class="filter-group-title">Deployment types</div>
-                <div class="filter-list">
-                    <label class="check"><input type="checkbox" id="filter-physical" checked><span>Physical</span></label>
-                    <label class="check"><input type="checkbox" id="filter-virtual" checked><span>Virtual and cloud</span></label>
-                </div>
-            </div>
-
-            <div class="filter-group">
-                <div class="filter-group-title">Connection status</div>
-                <div class="filter-list">
-                    <label class="check"><input type="checkbox" id="filter-online" checked><span class="filter-swatch" style="background-color: var(--ok);"></span><span>Online</span></label>
-                    <label class="check"><input type="checkbox" id="filter-offline" checked><span class="filter-swatch" style="background-color: var(--danger-indicator);"></span><span>Offline</span></label>
-                </div>
-            </div>
-        </div>
-
-        <div class="modal-foot">
-            <button type="button" id="resetNodemapFilters" class="btn">Reset all</button>
-            <button type="button" id="applyNodemapFilters" class="btn-primary">Apply filters</button>
-        </div>
-    </div>
-</div>
-
 <!-- Load JavaScript modules -->
 <script src="js/theme.js?v=20260726-color-system"></script>
 <script src="js/ui/custom-select.js?v=20260726-auth-actions"></script>

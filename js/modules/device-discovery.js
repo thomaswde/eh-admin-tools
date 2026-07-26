@@ -11,10 +11,10 @@ const deviceDiscoveryState = {
 };
 
 const DEVICE_ANALYSIS = {
-    advanced: { key: 'advanced', label: 'Advanced', color: genericChartPaletteColor(0) },
-    standard: { key: 'standard', label: 'Standard', color: genericChartPaletteColor(1) },
-    discovery: { key: 'discovery', label: 'Discovery', color: genericChartPaletteColor(2) },
-    flow_log: { key: 'flow_log', label: 'Flow Log', color: genericChartPaletteColor(3) }
+    advanced: { key: 'advanced', label: 'Advanced', color: genericChartPrimaryColor() },
+    standard: { key: 'standard', label: 'Standard', color: stateIndicatorColor('warning') },
+    discovery: { key: 'discovery', label: 'Discovery', color: stateIndicatorColor('error') },
+    flow_log: { key: 'flow_log', label: 'Flow Log', color: genericChartPaletteColor(1) }
 };
 
 const DEVICE_LIMIT = 5000;
@@ -191,6 +191,7 @@ function updateDeviceDiscoveryKpis(totals, options = {}) {
 
 function renderDeviceDiscoveryChart(sortedNodes) {
     const canvas = document.getElementById('deviceStackedChart');
+    const wrapper = document.getElementById('deviceChartWrapper');
     const ctx = canvas.getContext('2d');
 
     if (deviceDiscoveryState.chartInstance) {
@@ -202,21 +203,36 @@ function renderDeviceDiscoveryChart(sortedNodes) {
         label: `${analysis.label}`,
         data: sortedNodes.map(node => node.counts[analysis.key]),
         backgroundColor: analysis.color,
-        borderWidth: 1
+        borderWidth: 0,
+        borderRadius: 3,
+        borderSkipped: false
     }));
+
+    if (wrapper) {
+        wrapper.style.height = `${Math.max(420, sortedNodes.length * 28 + 84)}px`;
+    }
 
     deviceDiscoveryState.chartInstance = new Chart(ctx, {
         type: 'bar',
         data: { labels, datasets },
         options: {
+            indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
                 legend: { position: 'bottom' }
             },
             scales: {
-                x: { stacked: true, ticks: { autoSkip: false, maxRotation: 45, minRotation: 45 } },
-                y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Devices' } }
+                x: {
+                    stacked: true,
+                    beginAtZero: true,
+                    title: { display: true, text: 'Devices' }
+                },
+                y: {
+                    stacked: true,
+                    grid: { display: false },
+                    ticks: { autoSkip: false }
+                }
             }
         }
     });

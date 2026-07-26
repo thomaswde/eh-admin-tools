@@ -179,6 +179,11 @@
         openControl = control;
 
         const triggerRect = control.trigger.getBoundingClientRect();
+        const requestedMinWidth = Number(control.select.dataset.customSelectMinWidth);
+        const menuWidth = Math.min(
+            window.innerWidth - 16,
+            Math.max(triggerRect.width, Number.isFinite(requestedMinWidth) ? requestedMinWidth : 0)
+        );
         const desiredHeight = Math.min(control.menu.scrollHeight + 8, 280);
         const roomBelow = window.innerHeight - triggerRect.bottom - 8;
         const roomAbove = triggerRect.top - 8;
@@ -187,7 +192,7 @@
         const menuHeight = Math.min(desiredHeight, availableHeight);
         control.wrapper.classList.toggle('opens-up', opensUp);
         control.menu.style.left = `${triggerRect.left}px`;
-        control.menu.style.width = `${triggerRect.width}px`;
+        control.menu.style.width = `${menuWidth}px`;
         control.menu.style.maxHeight = `${Math.min(280, availableHeight)}px`;
         control.menu.style.top = opensUp
             ? `${Math.max(8, triggerRect.top - menuHeight - 6)}px`
@@ -242,6 +247,10 @@
         const wrapper = document.createElement('div');
         wrapper.className = 'custom-select';
         if (select.style.width) wrapper.style.width = select.style.width;
+        const requestedMinWidth = Number(select.dataset.customSelectMinWidth);
+        if (Number.isFinite(requestedMinWidth) && requestedMinWidth > 0) {
+            wrapper.style.minWidth = `${requestedMinWidth}px`;
+        }
 
         const trigger = document.createElement('button');
         trigger.type = 'button';
