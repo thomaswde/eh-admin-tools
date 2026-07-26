@@ -745,7 +745,7 @@
                     <div class="card">
                         <div class="card-head">
                             <h2 class="card-title">Report</h2>
-                            <p class="card-desc">Rates are peak bucket averages over one bounded, aligned report window.</p>
+                            <p class="card-desc">Rate and load peaks are averages for the selected metric cycle. All queries use the same report window.</p>
                         </div>
                         <div class="grid-fields">
                             <div class="field">
@@ -769,8 +769,8 @@
 
                     <div class="card">
                         <div class="card-head">
-                            <h2 class="card-title">Import Export</h2>
-                            <p class="card-desc">Uses the product catalog bundled with this package.</p>
+                            <h2 class="card-title">Import and export</h2>
+                            <p class="card-desc">Capacity comparisons use the product catalog included with this package.</p>
                         </div>
                         <div id="systemHealthCatalogStatus" class="system-health-catalog-status hidden">
                             <span class="system-health-catalog-badge">Catalog not loaded</span>
@@ -838,14 +838,14 @@
                         <header class="system-health-section-head">
                             <div class="system-health-section-kicker">Packet Sensors</div>
                             <h2 class="system-health-section-title">Processing and analysis capacity</h2>
-                            <p class="system-health-section-desc">Packet, throughput, trigger, and licensed analysis pressure are evaluated independently so a constraint remains attributable to the resource that caused it.</p>
+                            <p class="system-health-section-desc">Each chart compares one measured resource with its rated or licensed capacity.</p>
                         </header>
 
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Sensor Packet Rate Headroom</h2>
-                                    <p class="card-desc">Highest bucket-average packet rate for each sensor, compared with its model's rated packet-processing capacity.</p>
+                                    <h2 class="card-title">Packet rate by sensor</h2>
+                                    <p class="card-desc">Peak cycle average as a share of the model's rated packet-processing capacity.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketChart">Export PNG</button>
@@ -880,8 +880,8 @@
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Sensor Throughput Headroom</h2>
-                                    <p class="card-desc">Highest bucket-average throughput for each sensor, compared with its model's rated throughput capacity.</p>
+                                    <h2 class="card-title">Throughput by sensor</h2>
+                                    <p class="card-desc">Peak cycle average as a share of the model's rated throughput capacity.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthThroughputChart">Export PNG</button>
@@ -916,8 +916,8 @@
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Sensor Trigger Processing Headroom</h2>
-                                    <p class="card-desc">Maximum per-bucket trigger utilization using cycles consumed and available from the same interval; drop counts cover the full report window.</p>
+                                    <h2 class="card-title">Trigger utilization by sensor</h2>
+                                    <p class="card-desc">Peak cycle utilization. Used and available cycles come from the same interval; drop counts cover the report window.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthTriggersChart">Export PNG</button>
@@ -952,8 +952,8 @@
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Licensed Analysis Capacity by Tier</h2>
-                                    <p class="card-desc">Advanced and Standard device counts are compared with each sensor's licensed capacity. Discovery devices are shown separately and do not imply a capacity overrun on their own.</p>
+                                    <h2 class="card-title">Analysis usage by tier</h2>
+                                    <p class="card-desc">Advanced and Standard device counts are shown as a share of licensed capacity. Discovery devices are listed separately and are not scored as a capacity issue.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthAnalysisChart">Export PNG</button>
@@ -988,15 +988,15 @@
 
                         <header class="system-health-section-head">
                             <div class="system-health-section-kicker">Packetstore</div>
-                            <h2 class="system-health-section-title">Retention, capture fidelity, and processing headroom</h2>
-                            <p class="system-health-section-desc">Packetstore evidence is reported separately from Packet Sensor processing because Packetstores receive and retain their own packet feed.</p>
+                            <h2 class="system-health-section-title">Retention, data loss, and processing load</h2>
+                            <p class="system-health-section-desc">Packetstore metrics are shown separately because they describe the traffic received and retained for PCAP.</p>
                         </header>
 
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Packetstore Retention</h2>
-                                    <p class="card-desc">Latest estimated PCAP lookback for each reporting source; the neutral marker shows the shortest lookback observed during the report window.</p>
+                                    <h2 class="card-title">Packetstore retention</h2>
+                                    <p class="card-desc">Latest estimated PCAP lookback by source. The marker shows the shortest lookback measured during the report window.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreLookbackChart">Export PNG</button>
@@ -1007,8 +1007,8 @@
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Packetstore Capture and Secret Fidelity</h2>
-                                    <p class="card-desc">Share of offered packets and TLS secrets dropped over the report window. Each series is scored independently; slow-write, interface, and dropped-block counters identify where capture pressure occurred.</p>
+                                    <h2 class="card-title">Packet and TLS secret loss</h2>
+                                    <p class="card-desc">Dropped packets and TLS secrets as a share of the total offered during the report window. Slow-write, interface, and dropped-block counters show other sources of capture loss.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreFidelityChart">Export PNG</button>
@@ -1023,8 +1023,8 @@
                         <div class="card">
                             <div class="row row-top" style="margin-bottom: 14px;">
                                 <div>
-                                    <h2 class="card-title">Packetstore Processing Headroom</h2>
-                                    <p class="card-desc" id="systemHealthPacketstoreCycleLabel">Highest sampled input, header-compression, and disk-write load by source. The three percentages are separate and are not summed.</p>
+                                    <h2 class="card-title">Packetstore processing load</h2>
+                                    <p class="card-desc" id="systemHealthPacketstoreCycleLabel">Peak cycle averages for input, header compression, and disk writes. Each percentage is a separate metric.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" class="btn btn-sm" data-system-health-export="systemHealthPacketstoreLoadChart">Export PNG</button>
@@ -1040,7 +1040,7 @@
                         <div class="card">
                             <div class="card-head">
                                 <h2 class="card-title">Packetstore detail</h2>
-                                <p class="card-desc">Source-level retention, report-window loss counters, and peak sampled processing loads for every sensor that exposed Packetstore metrics.</p>
+                                <p class="card-desc">Retention, loss counters, and peak processing loads for each source that reported Packetstore metrics.</p>
                             </div>
                             <div class="table-container table-scroll">
                                 <table>
@@ -1061,7 +1061,7 @@
                             <div class="card-head row row-top">
                                 <div>
                                     <h2 class="card-title">Sensor detail</h2>
-                                    <p class="card-desc">Measured peaks, aligned trigger utilization, licensed analysis capacity, and collection status for each sensor.</p>
+                                    <p class="card-desc">Measured peaks, trigger utilization, licensed analysis usage, and collection status for each sensor.</p>
                                 </div>
                                 <div class="spacer"></div>
                                 <button type="button" id="systemHealthExportTableCsvButton" class="btn btn-sm" disabled>Export CSV</button>
@@ -1323,7 +1323,7 @@
 <div id="systemHealthPptxModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="systemHealthPptxModalTitle">
     <form id="systemHealthPptxForm" class="modal-content modal-wide">
         <h2 id="systemHealthPptxModalTitle" class="modal-title">Export an editable System Health deck</h2>
-        <p class="modal-desc">The current chart theme will be used throughout the presentation. Every field below is optional; empty fields use report-derived defaults or are omitted.</p>
+        <p class="modal-desc">The presentation uses the current chart theme. All fields are optional; blank fields use report defaults or are omitted.</p>
 
         <div class="modal-body">
             <div class="grid-2">
@@ -1353,7 +1353,7 @@
                 <span class="field-hint">Appears on the title slide and remains editable in PowerPoint or Google Slides.</span>
             </div>
             <div class="notice">
-                Charts are embedded as high-resolution PNGs for visual portability. Titles, findings, recommendations, and appendix tables remain editable.
+                Charts, titles, findings, recommendations, and appendix tables use editable PowerPoint elements.
             </div>
         </div>
 

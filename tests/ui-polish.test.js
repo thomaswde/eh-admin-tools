@@ -45,7 +45,9 @@ test('System Health and Records labels and layouts match the revised UI', () => 
     const html = source('index.html');
 
     assert.match(html, /<h2 class="card-title">Report<\/h2>/);
-    assert.match(html, /<h2 class="card-title">Import Export<\/h2>/);
+    assert.match(html, /<h2 class="card-title">Import and export<\/h2>/);
+    assert.match(html, /Charts, titles, findings, recommendations, and appendix tables use editable PowerPoint elements/);
+    assert.doesNotMatch(html, /Charts are embedded as high-resolution PNGs/);
     assert.match(html, /id="chartThemePanel" open/);
     assert.match(html, /Import capacity data/);
     assert.match(html, /Reserved daily capacity \(GB\)/);

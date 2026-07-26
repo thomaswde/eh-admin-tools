@@ -1062,6 +1062,17 @@ function systemHealthReportCycleLabel(report) {
     return report.cycle || report.requested_cycle || 'unknown-cycle';
 }
 
+function systemHealthCycleLabelForCopy(value) {
+    const raw = String(value || '').trim();
+    if (!raw || raw === 'unknown-cycle') return 'reported-interval';
+    if (raw === 'auto') return 'automatically selected interval';
+    const units = { sec: 'second', min: 'minute', hr: 'hour' };
+    return raw.split('/').map(part => {
+        const match = /^(\d+)(sec|min|hr)$/.exec(part.trim());
+        return match ? `${match[1]}-${units[match[2]]}` : part.trim();
+    }).filter(Boolean).join(' and ');
+}
+
 function systemHealthRowStatusText(row) {
     const conditions = (row.health_conditions || []).map(condition => condition.type.replace(/_/g, ' '));
     const metricStates = Object.values(row.collectionStatus || {});
@@ -1107,7 +1118,7 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
         : packetstoreLoss ? 'is-loss-warning' : '';
     const retention = systemHealthAveragePacketstoreLookback(packetstoreRows);
     const lookbackDays = report.window && report.window.lookback_days;
-    const cycle = systemHealthReportCycleLabel(report);
+    const cycle = systemHealthCycleLabelForCopy(systemHealthReportCycleLabel(report));
     const retentionValue = retention.average_seconds === null
         ? '—'
         : formatSystemHealthDays(retention.average_seconds / (SYSTEM_HEALTH_DAY_MS / 1000));
@@ -1120,7 +1131,7 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
                 <span class="system-health-summary-value">${formatSystemHealthNumber(onlineSensors)}</span>
                 <span class="system-health-summary-qualifier">of ${formatSystemHealthNumber(rows.length)} sensors online</span>
             </div>
-            <p class="system-health-summary-note">${escapeSystemHealthHtml(`${lookbackDays}-day report window · peak ${cycle} bucket averages`)}</p>
+            <p class="system-health-summary-note">${escapeSystemHealthHtml(`${lookbackDays}-day report window. Rate and load peaks are ${cycle} averages.`)}</p>
             <div class="system-health-summary-facts">
                 <span><b>${formatSystemHealthNumber(offlineSensors)}</b> offline</span>
                 <span><b>${formatSystemHealthNumber(dataUnavailableSensors)}</b> without data access</span>
@@ -1130,9 +1141,9 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
             <div class="system-health-summary-kicker">Sensor processing</div>
             <div class="system-health-summary-hero">
                 <span class="system-health-summary-value">${formatSystemHealthNumber(processingWatch)}</span>
-                <span class="system-health-summary-qualifier">sensors need review</span>
+                <span class="system-health-summary-qualifier">sensors to review</span>
             </div>
-            <p class="system-health-summary-note">At least 80% of a measured processing limit, or reporting trigger drops.</p>
+            <p class="system-health-summary-note">These sensors reached at least 80% of a measured processing limit or reported trigger drops.</p>
             <div class="system-health-summary-facts">
                 <span><b>${formatSystemHealthNumber(packetWatch)}</b> packet rate</span>
                 <span><b>${formatSystemHealthNumber(throughputWatch)}</b> throughput</span>
@@ -1144,9 +1155,9 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
             <div class="system-health-summary-kicker">Licensed analysis</div>
             <div class="system-health-summary-hero">
                 <span class="system-health-summary-value">${formatSystemHealthNumber(analysisWatch)}</span>
-                <span class="system-health-summary-qualifier">sensors near tier capacity</span>
+                <span class="system-health-summary-qualifier">sensors at 80% or more</span>
             </div>
-            <p class="system-health-summary-note">Advanced or Standard Analysis is at least 80% of licensed capacity.</p>
+            <p class="system-health-summary-note">Based on Advanced or Standard Analysis licensed capacity.</p>
             <div class="system-health-summary-facts">
                 <span><b>${formatSystemHealthNumber(discoverySensors)}</b> with devices in Discovery</span>
             </div>
@@ -1167,7 +1178,7 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
 
 function renderSystemHealthPacketstoreCharts(report, rows) {
     const cycleLabel = document.getElementById('systemHealthPacketstoreCycleLabel');
-    if (cycleLabel) cycleLabel.textContent = `Highest sampled ${systemHealthPacketstoreCycleLabel(report)} bucket-average input, header-compression, and disk-write load. The three percentages are separate and are not summed.`;
+    if (cycleLabel) cycleLabel.textContent = `Peak ${systemHealthCycleLabelForCopy(systemHealthPacketstoreCycleLabel(report))} averages for input, header compression, and disk writes. Each percentage is a separate metric.`;
     const offlineRows = rows.filter(row => row.offline);
     const reportingRows = rows.filter(row => !row.offline);
     drawSystemHealthPacketstoreLookback(
@@ -2943,7 +2954,7 @@ async function exportSystemHealthPptx(event) {
             packetstore_rows: systemHealthPacketstoreRows(report),
             palette: systemHealthStyleColors()
         });
-        setSystemHealthCsvStatus(`Exported ${result.filename}. Charts are drawn as native shapes, so every slide stays editable.`);
+        setSystemHealthCsvStatus(`Exported ${result.filename}. Charts and slide text remain editable in PowerPoint.`);
     } catch (error) {
         console.error('System Health PowerPoint export failed:', error);
         setSystemHealthCsvStatus(error.message || 'PowerPoint export failed.', true);

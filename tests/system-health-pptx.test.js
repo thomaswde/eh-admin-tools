@@ -230,7 +230,8 @@ test('offline hero, chart caption, recommendation colors, and Source Sans 3 are 
     assert.match(allText, /Offline sensor/);
     assert.doesNotMatch(allText, /supplied a usable value|excluded rather than shown as zero/);
 
-    const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet health at a glance'));
+    const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet summary'));
+    assert.match(overviewSlide.texts.map(item => item.text).join(' '), /5-minute averages/);
     const offlineHero = overviewSlide.texts.find(item => item.text === 'Offline appliance');
     assert.equal(offlineHero.options.color, 'EF4444');
 
@@ -257,7 +258,7 @@ test('verdict names the dominant condition rather than the first one found', () 
         ]
     });
     assert.match(mostlyDown.verdict, /9 of 10 sensors returned no data/);
-    assert.match(mostlyDown.recommendations[0], /Restore connectivity for the 9 sensors/);
+    assert.match(mostlyDown.recommendations[0], /Restore connectivity or data access for the 9 sensors/);
 
     const allHealthy = pptxApi.buildDeckModel({
         meta,
@@ -283,7 +284,7 @@ test('findings separate the headline condition from its supporting evidence', ()
     // The headline must not be restated inside its own evidence.
     assert.ok(!finding.evidence.startsWith('Trigger drops'));
     assert.equal(model.overview.at_capacity, 0);
-    assert.match(model.verdict, /none are at a hard capacity limit/);
+    assert.match(model.verdict, /No sensor reached a capacity limit/);
 });
 
 test('evidence names additional conditions instead of restating each in full', () => {
@@ -309,7 +310,7 @@ test('evidence names additional conditions instead of restating each in full', (
     assert.ok(finding.findings.length >= 6, `expected several conditions, got ${finding.findings.length}`);
     // ...but the row stays legible: one quantified headline plus named extras.
     assert.ok(finding.evidence.length <= 130, `evidence too long: ${finding.evidence}`);
-    assert.match(finding.evidence, /also /);
+    assert.match(finding.evidence, /Other conditions:/);
     assert.match(finding.evidence, /\+\d+ more/);
     // Every condition remains available for the appendix and speaker notes.
     assert.ok(finding.finding_text.length > finding.evidence.length);
@@ -390,8 +391,8 @@ test('capture loss reaches the verdict and the actions slide even when every sen
     // The sensor half of the verdict is unchanged; the packetstore clause is
     // appended so the deck never reads as an all-clear while evidence is lost.
     assert.match(model.verdict, /All 1 sensors are reporting and within capacity thresholds/);
-    assert.match(model.verdict, /1 packetstore of 2 dropped capture data/);
-    assert.match(model.recommendations.join(' '), /Investigate capture loss on 1 of 2 packetstores/);
+    assert.match(model.verdict, /1 of 2 Packetstore sources reported capture loss/);
+    assert.match(model.recommendations.join(' '), /Investigate capture loss on 1 of 2 Packetstore sources/);
 });
 
 test('packetstore processing pressure is reported only when no capture was lost', () => {
@@ -401,8 +402,8 @@ test('packetstore processing pressure is reported only when no capture was lost'
         packetstore_rows: [packetstoreRow({ id: 'hot', name: 'Hot store', diskWriteLoadPeak: 88 })]
     });
     assert.equal(loaded.overview.packetstores_loaded, 1);
-    assert.match(loaded.verdict, /peaked at or above 80% processing load without losing capture data/);
-    assert.match(loaded.recommendations.join(' '), /Confirm headroom on 1 packetstore peaking at or above 80%/);
+    assert.match(loaded.verdict, /reached at least 80% processing load. No capture loss was reported/);
+    assert.match(loaded.recommendations.join(' '), /Review processing load on 1 Packetstore source at or above 80%/);
 
     const loadedPptx = pptxApi.createPresentation(loaded, FakePptx);
     const loadedActions = loadedPptx._slides.find(slide => slide.texts.some(item => item.text === 'Recommended next steps'));
@@ -417,8 +418,33 @@ test('packetstore processing pressure is reported only when no capture was lost'
             id: 'hot', name: 'Hot store', diskWriteLoadPeak: 88, packetDropsTotal: 5, packetDropRatio: 0.005
         })]
     });
-    assert.doesNotMatch(both.recommendations.join(' '), /Confirm headroom/);
+    assert.doesNotMatch(both.recommendations.join(' '), /Review processing load/);
     assert.match(both.recommendations.join(' '), /Investigate capture loss/);
+});
+
+test('recommended next steps are ordered by criticality before slide numbering', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({
+            id: 'drops', name: 'Dropping sensor',
+            triggerDropsTotal: 12, triggerCyclesPeak: 40,
+            triggerCyclesAvail: 100, triggerUtilization: 0.4
+        })],
+        packetstore_rows: [packetstoreRow({
+            id: 'loss', name: 'Lossy store',
+            packetDropsTotal: 5, packetDropRatio: 0.005
+        })]
+    });
+
+    assert.match(model.recommendations[0], /Review trigger drops first/);
+    assert.match(model.recommendations[1], /Investigate capture loss/);
+
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const slide = pptx._slides.find(item => item.texts.some(text => text.text === 'Recommended next steps'));
+    const colors = slide.shapes
+        .filter(shape => shape.type === 'ellipse')
+        .map(shape => shape.options.fill.color);
+    assert.deepEqual(colors, ['EF4444', 'F59E0B', 'F59E0B']);
 });
 
 test('a clean packetstore fleet is stated rather than left silent', () => {
@@ -427,7 +453,7 @@ test('a clean packetstore fleet is stated rather than left silent', () => {
         rows: [sensorRow({ id: 'sensor', name: 'Healthy sensor' })],
         packetstore_rows: [packetstoreRow()]
     });
-    assert.match(model.verdict, /All 1 packetstore captured without loss/);
+    assert.match(model.verdict, /The Packetstore source reported no capture loss/);
 });
 
 test('Packetstore metric sources remain a sensor subset without double-counting models', () => {
@@ -453,11 +479,11 @@ test('Packetstore metric sources remain a sensor subset without double-counting 
     assert.deepEqual(counts, { 'EDA 6320': 1, 'EDA 8320': 1, 'EDA 9320': 1 });
 
     const pptx = pptxApi.createPresentation(model, FakePptx);
-    const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet health at a glance'));
+    const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet summary'));
     const overviewText = overviewSlide.texts.map(item => item.text).join(' | ');
-    assert.match(overviewText, /Packetstores losing data/);
+    assert.match(overviewText, /Packetstore sources with loss/);
     assert.match(overviewText, /1 paired · 1 all-in-one/);
-    assert.match(overviewText, /3 sensors · 2 packetstores/);
+    assert.match(overviewText, /Of 2 sources/);
 });
 
 test('the three packetstore charts are drawn as native shapes and label their own scale', () => {
@@ -472,7 +498,7 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     const pptx = pptxApi.createPresentation(model, FakePptx);
     const titleOf = title => pptx._slides.find(slide => slide.texts.some(item => item.text === title));
 
-    ['Packetstore retention', 'Packetstore capture and secret fidelity', 'Packetstore processing headroom']
+    ['Packetstore retention', 'Packet and TLS secret loss', 'Packetstore processing load']
         .forEach(title => assert.ok(titleOf(title), `missing chart slide: ${title}`));
 
     // Charts stay vector: bars are shapes, never images.
@@ -480,11 +506,11 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     assert.ok(retention.shapes.filter(shape => shape.type === 'rect').length >= 2);
     assert.equal((retention.images || []).length, 0);
     // Retention is reported, not scored, so the slide says so out loud.
-    assert.match(retention.texts.map(item => item.text).join(' '), /no customer retention target is collected/);
+    assert.match(retention.texts.map(item => item.text).join(' '), /no retention target is set/);
 
     // Load is the only packetstore chart with a capacity, so it is the only one
     // that draws the 80% guide.
-    const load = titleOf('Packetstore processing headroom');
+    const load = titleOf('Packetstore processing load');
     assert.ok(load.texts.some(item => item.text === '80%'));
     assert.ok(!retention.texts.some(item => item.text === '80%'));
 
@@ -493,10 +519,10 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     assert.match(loadText, /All in One/);
     assert.match(loadText, /Packetstore/);
 
-    const fidelity = titleOf('Packetstore capture and secret fidelity');
+    const fidelity = titleOf('Packet and TLS secret loss');
     const fidelityText = fidelity.texts.map(item => item.text).join(' | ');
     assert.match(fidelityText, /100% OF OFFERED TOTAL/);
-    assert.match(fidelityText, /fixed 0–100% scale/);
+    assert.match(fidelityText, /0% to 100% scale/);
     assert.match(fidelityText, /secrets 0% \(0 \/ 100\)/);
     const packetDropBar = fidelity.shapes.find(shape => shape.type === 'rect'
         && shape.options.fill && shape.options.fill.color === 'F59E0B');
@@ -572,7 +598,7 @@ test('PowerPoint presents sensor capacity evidence before Packetstore evidence',
         packetstore_rows: [packetstoreRow()]
     });
     const pptx = pptxApi.createPresentation(model, FakePptx);
-    const sensorIndex = pptx._slides.findIndex(slide => slide.texts.some(item => item.text === 'Sensor packet rate headroom'));
+    const sensorIndex = pptx._slides.findIndex(slide => slide.texts.some(item => item.text === 'Packet rate by sensor'));
     const packetstoreIndex = pptx._slides.findIndex(slide => slide.texts.some(item => item.text === 'Packetstore retention'));
 
     assert.ok(sensorIndex >= 0);
@@ -592,7 +618,7 @@ test('small drop rates never round to zero, and the highlight follows the actual
         ]
     });
     const pptx = pptxApi.createPresentation(model, FakePptx);
-    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore capture and secret fidelity'));
+    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packet and TLS secret loss'));
     const find = pattern => slide.texts.find(item => pattern.test(item.text));
 
     const microLossLine = find(/packets 0\.02%/);
@@ -623,7 +649,7 @@ test('packet and secret loss are classified and colored independently', () => {
         })]
     });
     const pptx = pptxApi.createPresentation(model, FakePptx);
-    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore capture and secret fidelity'));
+    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packet and TLS secret loss'));
     const packetLabel = slide.texts.find(item => /^packets 0\.50%/.test(item.text));
     const secretLabel = slide.texts.find(item => /^secrets 2%/.test(item.text));
     const causeLine = slide.texts.find(item => /blocks 7/.test(item.text));
@@ -647,7 +673,7 @@ test('counter-only loss remains visible when fidelity denominators are unavailab
         })]
     });
     const pptx = pptxApi.createPresentation(model, FakePptx);
-    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore capture and secret fidelity'));
+    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packet and TLS secret loss'));
 
     assert.ok(slide, 'counter-only loss should create a fidelity chart');
     assert.match(slide.texts.map(item => item.text).join(' | '), /interface 42/);
@@ -666,7 +692,7 @@ test('measured zero packetstore values do not draw non-zero colored bars', () =>
     });
     const pptx = pptxApi.createPresentation(model, FakePptx);
     assert.equal(pptx._slides.some(slide => slide.texts.some(item => item.text === 'Packetstore retention')), false);
-    const chartTitles = ['Packetstore capture and secret fidelity', 'Packetstore processing headroom'];
+    const chartTitles = ['Packet and TLS secret loss', 'Packetstore processing load'];
 
     chartTitles.forEach(title => {
         const slide = pptx._slides.find(s => s.texts.some(item => item.text === title));

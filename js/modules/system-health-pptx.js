@@ -42,6 +42,17 @@ function cleanText(value, maxLength = 240) {
     return String(value == null ? '' : value).trim().slice(0, maxLength);
 }
 
+function cycleLabelForCopy(value) {
+    const raw = cleanText(value, 80);
+    if (!raw || raw === 'unknown-cycle' || raw === 'reported-cycle') return 'reported-interval';
+    if (raw === 'auto') return 'automatically selected interval';
+    const units = { sec: 'second', min: 'minute', hr: 'hour' };
+    return raw.split('/').map(part => {
+        const match = /^(\d+)(sec|min|hr)$/.exec(part.trim());
+        return match ? `${match[1]}-${units[match[2]]}` : part.trim();
+    }).filter(Boolean).join(' and ');
+}
+
 function finiteNumber(value) {
     if (value === null || value === undefined || value === '') return null;
     const number = Number(value);
@@ -65,7 +76,7 @@ function defaultWindowLabel(meta) {
     }
     const from = formatShortDate(meta && meta.from_ms);
     const until = formatShortDate(meta && meta.until_ms);
-    if (from && until) return `${from} – ${until}`;
+    if (from && until) return `${from} to ${until}`;
     return formatShortDate(meta && meta.generated_at) || 'Current report window';
 }
 
@@ -183,8 +194,8 @@ function findingForRow(row) {
     if (drops !== null && drops > 0) {
         const load = triggerRatio === null
             ? ''
-            : `trigger load peaked at ${formatPercent(triggerRatio)} of available cycles`;
-        add('CRITICAL', 'Trigger drops', [`${formatInteger(drops)} drops`, load].filter(Boolean).join(' · '));
+            : `trigger load reached ${formatPercent(triggerRatio)} of available cycles`;
+        add('CRITICAL', 'Trigger drops', [`${formatInteger(drops)} drops`, load].filter(Boolean).join('; '));
     }
 
     [
@@ -193,14 +204,14 @@ function findingForRow(row) {
         ['Trigger load', triggerRatio, formatCompact(row.triggerCyclesPeak), formatCompact(row.triggerCyclesAvail)]
     ].forEach(([label, ratio, used, capacity]) => {
         if (ratio === null) return;
-        const detail = `${used} of ${capacity} · ${formatPercent(ratio)} of capacity`;
+        const detail = `${used} of ${capacity}; ${formatPercent(ratio)} of capacity`;
         if (ratio >= 1) add('CRITICAL', `${label} at capacity`, detail);
-        else if (ratio >= 0.8) add('WARNING', `${label} elevated`, detail);
+        else if (ratio >= 0.8) add('WARNING', `High ${label.toLowerCase()}`, detail);
     });
 
     const discovery = finiteNumber(analysis.discovery);
     if (discovery !== null && discovery > 0) {
-        add('WARNING', 'Devices in Discovery', `${formatInteger(discovery)} awaiting an analysis tier`);
+        add('WARNING', 'Devices in Discovery', `${formatInteger(discovery)} not assigned to an analysis tier`);
     }
 
     (row.health_conditions || []).forEach(condition => {
@@ -242,10 +253,10 @@ function findingForRow(row) {
         ? [
             primary.detail,
             others.length
-                ? `also ${others.slice(0, 2).map(item => item.label.toLowerCase()).join(', ')}`
+                ? `Other conditions: ${others.slice(0, 2).map(item => item.label.toLowerCase()).join(', ')}`
                     + (others.length > 2 ? ` +${others.length - 2} more` : '')
                 : ''
-        ].filter(Boolean).join(' · ')
+        ].filter(Boolean).join('. ')
         : '';
     const findings = ordered.map(item => [item.label, item.detail].filter(Boolean).join(': '));
     const atCapacity = [packetRatio, throughputRatio, triggerRatio, advancedRatio, standardRatio]
@@ -282,41 +293,61 @@ function joinList(items) {
     return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
 }
 
+function recommendationPriority(recommendation, overview = {}) {
+    const text = String(recommendation || '');
+    if (/capture loss/i.test(text)) {
+        return overview.packetstore_loss_severity === 'critical' ? 2 : 1;
+    }
+    if (/restore(?: appliance)? connectivity|data access|trigger drops/i.test(text)) return 2;
+    if (/at or above 80%|processing load|capacity pressure|analysis assignments|licensed capacity|license|synchronization/i.test(text)) {
+        return 1;
+    }
+    return 0;
+}
+
 function recommendationsFromFindings(findings, overview = {}) {
     const recommendations = [];
     const has = pattern => findings.some(item => pattern.test(item.finding_text));
     if (overview.absent) {
         const noun = overview.absent === 1 ? 'sensor' : 'sensors';
-        recommendations.push(`Restore connectivity for the ${formatInteger(overview.absent)} ${noun} that returned no data, then rerun the report to close the collection gap.`);
+        recommendations.push(`Restore connectivity or data access for the ${formatInteger(overview.absent)} ${noun} that returned no data, then rerun the report.`);
     }
     // Capture loss outranks capacity pressure: a dropped packet cannot be
     // recovered later, whereas a loaded sensor can still be rebalanced.
     if (overview.packetstores_with_loss) {
-        recommendations.push(`Investigate capture loss on ${formatInteger(overview.packetstores_with_loss)} of ${formatInteger(overview.packetstores)} packetstores; compare offered load against rated capture throughput, then review slow-write, interface, block-drop, and disk-write evidence before treating PCAP from this window as complete.`);
+        recommendations.push(`Investigate capture loss on ${formatInteger(overview.packetstores_with_loss)} of ${formatInteger(overview.packetstores)} Packetstore sources. Compare offered load with rated capture throughput, then review slow-write, interface, block-drop, and disk-write metrics.`);
     }
     if (has(/trigger drops/i)) {
-        recommendations.push('Investigate sensors with trigger drops first; validate trigger load and execution behavior during the reported window.');
+        recommendations.push('Review trigger drops first. Check trigger load and trigger execution during the report window.');
     }
     if (has(/packet rate|throughput|trigger load/i)) {
-        recommendations.push('Review sustained capacity pressure against appliance sizing and expected traffic growth.');
+        recommendations.push('Review sensors at or above 80% of packet rate, throughput, or trigger capacity. Confirm that appliance sizing allows for expected traffic growth.');
     }
     if (!overview.packetstores_with_loss && overview.packetstores_loaded) {
-        const noun = overview.packetstores_loaded === 1 ? 'packetstore' : 'packetstores';
-        recommendations.push(`Confirm headroom on ${formatInteger(overview.packetstores_loaded)} ${noun} peaking at or above ${formatPercent(PROCESSING_LOAD_GUIDE)} processing load before adding capture volume or extending retention.`);
+        const noun = overview.packetstores_loaded === 1 ? 'Packetstore source' : 'Packetstore sources';
+        recommendations.push(`Review processing load on ${formatInteger(overview.packetstores_loaded)} ${noun} at or above ${formatPercent(PROCESSING_LOAD_GUIDE)} before adding capture traffic or increasing retention.`);
     }
     if (has(/advanced analysis|standard analysis|Discovery/i)) {
-        recommendations.push('Rebalance analysis assignments and confirm licensed capacity before moving additional devices into higher analysis tiers.');
+        recommendations.push('Reassign devices or increase licensed analysis capacity before moving more devices into Advanced or Standard Analysis.');
     }
     if (!overview.absent && has(/incomplete collection|data access/i)) {
-        recommendations.push('Restore appliance connectivity and data access, then rerun the report to close collection gaps.');
+        recommendations.push('Restore appliance connectivity and data access, then rerun the report.');
     }
     if (has(/license|synchronization/i)) {
-        recommendations.push('Resolve license or synchronization warnings so capacity and health decisions remain auditable.');
+        recommendations.push('Resolve license or synchronization warnings before using the report for capacity decisions.');
     }
     if (!recommendations.length) {
-        recommendations.push('Continue monitoring the same report window and aggregation cycle to identify meaningful trend changes.');
+        recommendations.push('Use the same report window and aggregation cycle for future reports so the results are comparable.');
     }
-    return recommendations.slice(0, 5);
+    return recommendations
+        .map((recommendation, index) => ({
+            recommendation,
+            index,
+            priority: recommendationPriority(recommendation, overview)
+        }))
+        .sort((a, b) => b.priority - a.priority || a.index - b.index)
+        .slice(0, 5)
+        .map(item => item.recommendation);
 }
 
 /* ------------------------------------------------------------ packetstore */
@@ -483,7 +514,7 @@ function sensorVerdict(overview) {
     const absentShare = overview.absent / overview.sensors;
     if (absentShare >= 0.5) {
         return `${formatInteger(overview.absent)} of ${formatInteger(overview.sensors)} sensors returned no data. `
-            + 'Capacity is not the constraint — reachability is.';
+            + 'Resolve connectivity or data-access issues before evaluating capacity.';
     }
     if (overview.at_capacity) {
         return `${formatInteger(overview.at_capacity)} `
@@ -492,7 +523,7 @@ function sensorVerdict(overview) {
     }
     if (overview.attention) {
         return `${formatInteger(overview.attention)} of ${formatInteger(overview.reporting)} reporting sensors `
-            + 'crossed a report threshold; none are at a hard capacity limit.';
+            + 'need review. No sensor reached a capacity limit.';
     }
     if (overview.absent) {
         return `All ${formatInteger(overview.reporting)} reporting sensors are within capacity. `
@@ -505,16 +536,17 @@ function sensorVerdict(overview) {
 // when every sensor is healthy — otherwise the verdict reads as an all-clear.
 function packetstoreVerdictClause(overview) {
     if (!overview.packetstores) return '';
-    const stores = count => `${formatInteger(count)} ${count === 1 ? 'packetstore' : 'packetstores'}`;
     if (overview.packetstores_with_loss) {
-        return `${stores(overview.packetstores_with_loss)} of ${formatInteger(overview.packetstores)} `
-            + 'dropped capture data in the same window.';
+        return `${formatInteger(overview.packetstores_with_loss)} of ${formatInteger(overview.packetstores)} `
+            + 'Packetstore sources reported capture loss.';
     }
     if (overview.packetstores_loaded) {
-        return `${stores(overview.packetstores_loaded)} peaked at or above `
-            + `${formatPercent(PROCESSING_LOAD_GUIDE)} processing load without losing capture data.`;
+        return `${formatInteger(overview.packetstores_loaded)} Packetstore `
+            + `${overview.packetstores_loaded === 1 ? 'source' : 'sources'} reached at least `
+            + `${formatPercent(PROCESSING_LOAD_GUIDE)} processing load. No capture loss was reported.`;
     }
-    return `All ${stores(overview.packetstores)} captured without loss.`;
+    if (overview.packetstores === 1) return 'The Packetstore source reported no capture loss.';
+    return `No capture loss was reported by any of the ${formatInteger(overview.packetstores)} Packetstore sources.`;
 }
 
 function severityRank(value) {
@@ -787,12 +819,10 @@ function addOverview(model, assets) {
     const palette = model.palette;
     const overview = model.overview;
     const subtitle = [
-        `${formatInteger(overview.sensors)} sensors`,
-        overview.packetstores ? `${formatInteger(overview.packetstores)} packetstores` : '',
-        model.options.window_label,
-        `Peak ${model.meta.cycle_label || 'reported-cycle'} averages`
-    ].filter(Boolean).join(' · ');
-    const slide = addContentSlide(model, 'Fleet health at a glance', subtitle, assets);
+        `Report window: ${model.options.window_label}.`,
+        `Rate and load peaks are ${cycleLabelForCopy(model.meta.cycle_label)} averages.`
+    ].filter(Boolean).join(' ');
+    const slide = addContentSlide(model, 'Fleet summary', subtitle, assets);
 
     slide.addText(model.verdict, {
         x: MARGIN, y: 1.52, w: SLIDE_WIDTH - MARGIN * 2, h: 0.32, fontFace: FONT,
@@ -840,10 +870,10 @@ function addOverview(model, assets) {
     // The packetstore tile only appears when packetstores were collected, so a
     // sensor-only fleet keeps the original four-up layout untouched.
     const stats = [
-        [formatInteger(overview.sensors), 'Sensors in fleet', 'returned by the appliance API', palette.text],
-        [formatInteger(overview.reporting), 'Reporting data', `${formatPercent(overview.sensors ? overview.reporting / overview.sensors : 0)} of the fleet`, palette.text],
-        [formatInteger(overview.at_capacity), 'At or over capacity', 'across all measured limits', overview.at_capacity ? palette.high : palette.text],
-        [formatCompact(overview.trigger_drops), 'Trigger drops', 'total across the window', overview.trigger_drops ? palette.high : palette.text]
+        [formatInteger(overview.sensors), 'Sensors', 'Included in this report', palette.text],
+        [formatInteger(overview.reporting), 'Sensors with data', `${formatPercent(overview.sensors ? overview.reporting / overview.sensors : 0)} of sensors`, palette.text],
+        [formatInteger(overview.at_capacity), 'At or over capacity', 'Across measured limits', overview.at_capacity ? palette.high : palette.text],
+        [formatCompact(overview.trigger_drops), 'Trigger drops', 'Total for the report window', overview.trigger_drops ? palette.high : palette.text]
     ];
     if (overview.packetstores) {
         // These are metric-producing sensors, split by integrated versus paired
@@ -854,8 +884,8 @@ function addOverview(model, assets) {
         ].filter(Boolean).join(' · ');
         stats.push([
             formatInteger(overview.packetstores_with_loss),
-            'Packetstores losing data',
-            `of ${formatInteger(overview.packetstores)} sources · ${formatInteger(overview.packetstores_with_critical_loss)} above 1% · ${composition}`,
+            'Packetstore sources with loss',
+            `Of ${formatInteger(overview.packetstores)} sources; ${formatInteger(overview.packetstores_with_critical_loss)} above 1%; ${composition}`,
             packetstoreSeverityColor(palette, overview.packetstore_loss_severity)
         ]);
     }
@@ -935,7 +965,7 @@ function addAttentionSlides(model, assets) {
             ? `${model.findings.length} ${model.findings.length === 1 ? 'sensor' : 'sensors'} · ${criticals} critical`
             : '';
         const slide = addContentSlide(model, `Sensors that need attention${suffix}`,
-            'Ranked by severity · grouped by condition', assets,
+            'Critical conditions are listed first.', assets,
             kicker, criticals ? palette.high : palette.mid);
 
         const columns = [
@@ -959,7 +989,7 @@ function addAttentionSlides(model, assets) {
         let y = headerY + 0.36;
         const rowHeight = 0.58;
         if (!items.length) {
-            slide.addText('No reporting sensor crossed the report thresholds in this window.', {
+            slide.addText('No reporting sensor reached 80% of a measured limit or reported trigger drops.', {
                 x: MARGIN, y: y + 0.4, w: SLIDE_WIDTH - MARGIN * 2, h: 0.4, fontFace: FONT,
                 fontSize: 14, color: pptColor(palette.subtle), margin: 0
             });
@@ -1033,11 +1063,11 @@ function addAbsentRollup(model, slide, y) {
         x: MARGIN + 0.34, y: y + 0.15, w: 8.6, h: 0.26, fontFace: FONT, fontSize: 13,
         bold: true, color: pptColor(palette.text), margin: 0
     });
-    slide.addText(`${joinList(parts)}. No utilization conclusions are drawn for these sensors.`, {
+    slide.addText(`${joinList(parts)}. Capacity usage is not shown for these sensors.`, {
         x: MARGIN + 0.34, y: y + 0.45, w: 8.8, h: 0.24, fontFace: FONT, fontSize: 10.5,
         color: pptColor(palette.muted), margin: 0, breakLine: false, fit: 'shrink'
     });
-    slide.addText('Full list in appendix', {
+    slide.addText('See the appendix for the full list', {
         x: 10.0, y: y + 0.29, w: 2.63, h: 0.24, fontFace: FONT, fontSize: 10.5,
         color: pptColor(palette.muted), margin: 0, align: 'right'
     });
@@ -1048,28 +1078,28 @@ function addAbsentRollup(model, slide, y) {
 // Chart specs are declared against the normalized rows, so the deck no longer
 // depends on canvas screenshots captured by the report module.
 function chartSpecs(model) {
-    const cycle = model.meta.cycle_label || 'reported-cycle';
+    const cycle = cycleLabelForCopy(model.meta.cycle_label);
     return [
         {
             key: 'packet',
-            title: 'Sensor packet rate headroom',
-            subtitle: `Highest ${cycle} bucket average against rated model capacity`,
+            title: 'Packet rate by sensor',
+            subtitle: `Peak ${cycle} average as a share of rated packet-processing capacity.`,
             value: row => finiteNumber(row.packetPeak),
             capacity: row => finiteNumber(row.packetCapacity),
             format: formatRate
         },
         {
             key: 'throughput',
-            title: 'Sensor throughput headroom',
-            subtitle: `Highest ${cycle} bucket average against rated model capacity`,
+            title: 'Throughput by sensor',
+            subtitle: `Peak ${cycle} average as a share of rated throughput capacity.`,
             value: row => finiteNumber(row.throughputGbps),
             capacity: row => finiteNumber(row.throughputCapacity),
             format: formatGbps
         },
         {
             key: 'triggers',
-            title: 'Sensor trigger processing headroom',
-            subtitle: `Maximum aligned ${cycle} utilization · cycles used and available share one bucket · drops are report-window totals`,
+            title: 'Trigger utilization by sensor',
+            subtitle: `Peak ${cycle} utilization. Used and available cycles come from the same interval; drop counts cover the report window.`,
             value: row => finiteNumber(row.triggerCyclesPeak),
             capacity: row => finiteNumber(row.triggerCyclesAvail),
             format: value => formatCompact(value),
@@ -1078,8 +1108,8 @@ function chartSpecs(model) {
         },
         {
             key: 'advanced',
-            title: 'Advanced Analysis capacity',
-            subtitle: 'Devices in Advanced Analysis against licensed capacity',
+            title: 'Advanced Analysis usage',
+            subtitle: 'Device count as a share of licensed Advanced Analysis capacity.',
             value: row => finiteNumber(row.analysis && row.analysis.advanced),
             capacity: row => finiteNumber(row.advancedCapacity),
             eligible: supportsDeviceAnalysis,
@@ -1091,8 +1121,8 @@ function chartSpecs(model) {
         },
         {
             key: 'standard',
-            title: 'Standard Analysis capacity',
-            subtitle: 'Devices in Standard Analysis against licensed capacity',
+            title: 'Standard Analysis usage',
+            subtitle: 'Device count as a share of licensed Standard Analysis capacity.',
             value: row => finiteNumber(row.analysis && row.analysis.standard),
             capacity: row => finiteNumber(row.standardCapacity),
             eligible: supportsDeviceAnalysis,
@@ -1148,19 +1178,19 @@ function addChartSlides(model, assets) {
     chartSpecs(model).forEach(spec => {
         const pages = chartPagesForSpec(model, spec);
         pages.forEach((page, index) => {
-            const suffix = pages.length > 1 ? ` · ${index + 1} of ${pages.length}` : '';
-            const capacityLabel = page.capacity ? ` · rated ${spec.format(page.capacity)}`
-                : page.capacity_varies ? ' · capacity varies by sensor' : '';
+            const suffix = pages.length > 1 ? `, ${index + 1} of ${pages.length}` : '';
+            const capacityLabel = page.capacity ? ` Rated capacity: ${spec.format(page.capacity)}.`
+                : page.capacity_varies ? ' Rated capacity varies by sensor.' : '';
             addChartSlide(model, assets, spec, page,
                 `${spec.title}${suffix}`,
-                `${spec.subtitle} · ${page.model}${capacityLabel}`);
+                `${spec.subtitle} Model: ${page.model}.${capacityLabel}`);
         });
     });
 }
 
 function addChartSlide(model, assets, spec, page, title, subtitle) {
     const palette = model.palette;
-    const slide = addContentSlide(model, title, subtitle, assets, 'Capacity', palette.muted);
+    const slide = addContentSlide(model, title, subtitle, assets);
     const plotLeft = 3.35;
     const plotRight = 10.35;
     const span = plotRight - plotLeft;
@@ -1227,7 +1257,7 @@ function addChartSlide(model, assets, spec, page, title, subtitle) {
             color: pptColor(palette.muted), margin: 0, breakLine: true, fit: 'shrink'
         });
     }
-    slide.addText('Sorted by percent of model capacity', {
+    slide.addText('Highest capacity use first', {
         x: 9.2, y: y + 0.36, w: 3.45, h: 0.22, fontFace: FONT, fontSize: 10,
         color: pptColor(palette.muted), margin: 0, align: 'right'
     });
@@ -1258,13 +1288,12 @@ function packetstoreFidelityLabelParts(row) {
 }
 
 function packetstoreChartSpecs(model) {
-    const cycle = model.meta.cycle_label || 'reported-cycle';
+    const cycle = cycleLabelForCopy(model.meta.cycle_label);
     return [
         {
             key: 'retention',
             title: 'Packetstore retention',
-            kicker: 'RETENTION',
-            subtitle: 'Latest estimated PCAP lookback by reporting source · neutral marker shows the minimum observed in the window',
+            subtitle: 'Latest estimated PCAP lookback by source. The marker shows the shortest lookback measured during the report window.',
             axis: 'LONGEST LOOKBACK ON PAGE',
             // No customer retention target is collected, so a short lookback is
             // reported as an observation and never colored as a finding.
@@ -1276,15 +1305,14 @@ function packetstoreChartSpecs(model) {
                 const latest = finiteNumber(row.lookbackLatestSec);
                 const minimum = finiteNumber(row.lookbackMinSec);
                 if (latest === null) return 'unavailable';
-                return `${formatDays(latest)} latest${minimum === null ? '' : ` · ${formatDays(minimum)} min`}`;
+                return `${formatDays(latest)} latest${minimum === null ? '' : `; ${formatDays(minimum)} minimum`}`;
             },
             sort: row => finiteNumber(row.lookbackLatestSec) || 0
         },
         {
             key: 'fidelity',
-            title: 'Packetstore capture and secret fidelity',
-            kicker: 'DATA LOSS',
-            subtitle: 'Share of offered packets and TLS secrets dropped · report-window totals',
+            title: 'Packet and TLS secret loss',
+            subtitle: 'Dropped packets and TLS secrets as a share of the total offered during the report window.',
             axis: '100% OF OFFERED TOTAL',
             series: [
                 {
@@ -1314,9 +1342,8 @@ function packetstoreChartSpecs(model) {
         },
         {
             key: 'load',
-            title: 'Packetstore processing headroom',
-            kicker: 'HEADROOM',
-            subtitle: `Highest sampled ${cycle} bucket-average input, header-compression, and disk-write load · the three are separate and are not summed`,
+            title: 'Packetstore processing load',
+            subtitle: `Peak ${cycle} averages for input, header compression, and disk writes. Each bar is a separate metric.`,
             axis: 'FULL LOAD',
             guide: PROCESSING_LOAD_GUIDE,
             series: [
@@ -1377,7 +1404,7 @@ function addPacketstoreChartSlides(model, assets) {
 
 function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
     const palette = model.palette;
-    const slide = addContentSlide(model, title, spec.subtitle, assets, spec.kicker, palette.muted);
+    const slide = addContentSlide(model, title, spec.subtitle, assets);
     const plotLeft = 3.35;
     const plotRight = 9.30;
     const span = plotRight - plotLeft;
@@ -1520,10 +1547,10 @@ function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
         line: { color: pptColor(palette.grid), width: 0.75 }
     });
     const caption = spec.key === 'load'
-        ? 'Bars are scaled to full load; the three loads are measured separately.'
+        ? 'Bars use a 0% to 100% load scale.'
         : spec.key === 'fidelity'
-            ? 'Bars use a fixed 0–100% scale. Orange marks >0–1% warning; red marks >1% critical. Positive cause counters are orange.'
-            : 'Bars are scaled to the longest lookback on this page. Retention is reported, not scored: no customer retention target is collected.';
+            ? 'Bars use a 0% to 100% scale. Orange marks loss up to 1%; red marks loss above 1%. Positive cause counters are orange.'
+            : 'Bars share the scale of the longest lookback on this page. Values are not scored because no retention target is set.';
     slide.addText([
         offlineSummaryText(page.offline_names, 300),
         caption,
@@ -1534,15 +1561,14 @@ function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
         x: MARGIN, y: y + 0.34, w: SLIDE_WIDTH - MARGIN * 2, h: 0.56, fontFace: FONT, fontSize: 8.5,
         color: pptColor(palette.muted), margin: 0, breakLine: true, fit: 'shrink'
     });
-    addNotes(slide, model, 'Packetstore cpc metrics. Counters are report-window totals; lookback and processing loads are time-series summaries.');
+    addNotes(slide, model, 'Packetstore capture metrics. Counters cover the report window; lookback and processing loads are time-series summaries.');
 }
 
 /* ---------------------------------------------------------------- actions */
 
 function addRecommendationSlide(model, assets) {
     const palette = model.palette;
-    const slide = addContentSlide(model, 'Recommended next steps',
-        'Actions derived from the conditions observed in this report', assets);
+    const slide = addContentSlide(model, 'Recommended next steps', '', assets);
     model.recommendations.forEach((recommendation, index) => {
         const y = 1.72 + index * 1.02;
         const color = recommendationColor(recommendation, palette, model.overview);
@@ -1560,19 +1586,12 @@ function addRecommendationSlide(model, assets) {
             valign: 'top'
         });
     });
-    addNotes(slide, model, 'Recommended actions are deterministic suggestions derived from the findings in this report and should be validated against deployment context.');
+    addNotes(slide, model, 'Recommendations are generated from report findings and should be checked against the deployment context.');
 }
 
 function recommendationColor(recommendation, palette, overview = {}) {
-    const text = String(recommendation || '');
-    if (/capture loss/i.test(text)) {
-        return overview.packetstore_loss_severity === 'critical' ? palette.high : palette.mid;
-    }
-    if (/restore(?: appliance)? connectivity|data access|trigger drops/i.test(text)) return palette.high;
-    if (/capacity pressure|confirm headroom|analysis assignments|licensed capacity|license|synchronization/i.test(text)) {
-        return palette.mid;
-    }
-    return palette.low;
+    const priority = recommendationPriority(recommendation, overview);
+    return priority === 2 ? palette.high : priority === 1 ? palette.mid : palette.low;
 }
 
 /* ---------------------------------------------------------------- appendix */
@@ -1590,8 +1609,8 @@ function addAppendixSlides(model, assets) {
     });
     chunk(ordered, APPENDIX_ROWS_PER_SLIDE).forEach((items, pageIndex, pages) => {
         const suffix = pages.length > 1 ? ` · ${pageIndex + 1} of ${pages.length}` : '';
-        const slide = addContentSlide(model, `Appendix · Sensor detail${suffix}`,
-            'Every sensor in the fleet, including those excluded from the charts', assets);
+        const slide = addContentSlide(model, `Appendix: sensor detail${suffix}`,
+            'All sensors are listed here, including sensors without chart data.', assets);
         const headers = ['Sensor', 'Model', 'Status', 'Packet peak', 'Throughput peak',
             'Trigger', 'Drops', 'Advanced', 'Standard', 'Discovery'];
         const rows = [headers.map(text => tableCell(text, {
