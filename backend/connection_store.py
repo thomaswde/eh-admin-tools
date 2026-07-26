@@ -23,7 +23,7 @@ KEYRING_SERVICE = "com.extrahop.admin-tools.connections"
 KEYRING_ACCOUNT = "saved-connections-v1"
 ENV_CONNECTION_PATTERN = re.compile(
     r"^EH_CONNECTION_(360|ENTERPRISE)_([1-9][0-9]*)_"
-    r"(TENANT|API_ID|API_SECRET|HOST|API_KEY|PROXY_TOKEN|VERIFY_TLS)$"
+    r"(TENANT|API_ID|API_SECRET|HOST|API_KEY|VERIFY_TLS)$"
 )
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 PLACEHOLDER_SECRET_VALUES = {
@@ -148,28 +148,57 @@ class ConnectionStore:
         return dict(config)
 
     def save(self, config: Mapping[str, Any]) -> dict[str, Any]:
-        normalized = self._normalize_config(config)
+        normalized = self._persisted_config(config)
         connection_id = self._connection_id(normalized)
         with self._lock:
             configs = self._read_keychain_configs()
             configs[connection_id] = normalized
-            payload = json.dumps(
-                {"version": 1, "connections": configs},
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            try:
-                self._require_keyring().set_password(
-                    KEYRING_SERVICE,
-                    KEYRING_ACCOUNT,
-                    payload,
-                )
-            except Exception as error:
-                raise ConnectionStorageError(
-                    "The operating-system credential store is unavailable; "
-                    "the connection was not saved."
-                ) from error
+            self._write_keychain_configs(configs)
         return self._metadata(normalized, source="keychain")
+
+    def prepare_update(
+        self,
+        connection_id: str,
+        changes: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Merge browser-supplied changes without exposing stored secrets."""
+        with self._lock:
+            configs = self._read_keychain_configs()
+            if connection_id not in configs:
+                raise KeyError(connection_id)
+            merged = dict(configs[connection_id])
+            merged.update(
+                {
+                    key: value
+                    for key, value in changes.items()
+                    if value is not None
+                }
+            )
+            return self._persisted_config(merged)
+
+    def replace(
+        self,
+        connection_id: str,
+        config: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        normalized = self._persisted_config(config)
+        new_connection_id = self._connection_id(normalized)
+        with self._lock:
+            configs = self._read_keychain_configs()
+            if connection_id not in configs:
+                raise KeyError(connection_id)
+            del configs[connection_id]
+            configs[new_connection_id] = normalized
+            self._write_keychain_configs(configs)
+        return self._metadata(normalized, source="keychain")
+
+    def delete(self, connection_id: str) -> None:
+        with self._lock:
+            configs = self._read_keychain_configs()
+            if connection_id not in configs:
+                raise KeyError(connection_id)
+            del configs[connection_id]
+            self._write_keychain_configs(configs)
 
     def _read_keychain_configs(self) -> dict[str, dict[str, Any]]:
         with self._lock:
@@ -189,16 +218,43 @@ class ConnectionStore:
                 raw_configs = document["connections"]
                 if document.get("version") != 1 or not isinstance(raw_configs, dict):
                     raise ValueError("unsupported credential payload")
-                return {
-                    connection_id: self._normalize_config(config)
-                    for connection_id, config in raw_configs.items()
-                    if connection_id == self._connection_id(config)
-                }
+                configs: dict[str, dict[str, Any]] = {}
+                remove_transient_tokens = False
+                for connection_id, config in raw_configs.items():
+                    normalized = self._persisted_config(config)
+                    if connection_id == self._connection_id(normalized):
+                        configs[connection_id] = normalized
+                    if isinstance(config, Mapping) and config.get("proxyToken"):
+                        remove_transient_tokens = True
+                if remove_transient_tokens:
+                    self._write_keychain_configs(configs)
+                return configs
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                 raise ConnectionStorageError(
                     "Saved ExtraHop connections in the operating-system credential "
                     "store could not be read."
                 ) from error
+
+    def _write_keychain_configs(
+        self,
+        configs: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        payload = json.dumps(
+            {"version": 1, "connections": configs},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        try:
+            self._require_keyring().set_password(
+                KEYRING_SERVICE,
+                KEYRING_ACCOUNT,
+                payload,
+            )
+        except Exception as error:
+            raise ConnectionStorageError(
+                "The operating-system credential store is unavailable; "
+                "saved connections were not updated."
+            ) from error
 
     def _read_env_configs(self) -> tuple[dict[str, dict[str, Any]], list[str]]:
         if not self.env_path.is_file():
@@ -237,8 +293,6 @@ class ConnectionStore:
                         "apiKey": fields["API_KEY"],
                         "verifyTls": self._parse_bool(fields.get("VERIFY_TLS", "true")),
                     }
-                    if fields.get("PROXY_TOKEN"):
-                        config["proxyToken"] = fields["PROXY_TOKEN"]
                 normalized = self._normalize_config(config)
                 configs[self._connection_id(normalized)] = normalized
             except (KeyError, TypeError, ValueError):
@@ -329,6 +383,14 @@ class ConnectionStore:
         raise ValueError("unsupported deployment type")
 
     @staticmethod
+    def _persisted_config(config: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = ConnectionStore._normalize_config(config)
+        # Remote-access proxy tokens are short-lived, single-use session
+        # inputs. They must never be retained alongside durable credentials.
+        normalized.pop("proxyToken", None)
+        return normalized
+
+    @staticmethod
     def _normalize_enterprise_host(raw_host: Any) -> str:
         value = str(raw_host or "").strip()
         candidate = value if "://" in value else f"https://{value}"
@@ -385,4 +447,5 @@ class ConnectionStore:
             }
         metadata["source"] = source
         metadata["sources"] = [source]
+        metadata["editable"] = source == "keychain"
         return metadata

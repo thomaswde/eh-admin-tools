@@ -40,6 +40,27 @@ class DummyConnectionStore:
             raise KeyError(connection_id)
         return self.configs[connection_id]
 
+    def prepare_update(self, connection_id, changes):
+        config = dict(self.get(connection_id))
+        config.update(changes)
+        return config
+
+    def replace(self, connection_id, config):
+        self.get(connection_id)
+        del self.configs[connection_id]
+        new_id = f"{config['type']}-updated"
+        self.configs[new_id] = dict(config)
+        return {
+            "id": new_id,
+            "type": config["type"],
+            "host": config.get("host"),
+            "tenant": config.get("tenant"),
+        }
+
+    def delete(self, connection_id):
+        self.get(connection_id)
+        del self.configs[connection_id]
+
     def list_connections(self):
         return {
             "connections": [
@@ -259,6 +280,75 @@ class BackendRouteSecurityTests(unittest.TestCase):
         client_class.assert_called_once()
         self.assertEqual(client_class.call_args.args[0]["apiSecret"], "secret")
         self.assertNotIn("secret", response.text)
+
+    def test_saved_enterprise_connection_accepts_transient_proxy_token(self):
+        store = DummyConnectionStore()
+        store.configs["enterprise-saved"] = {
+            "type": "enterprise",
+            "host": "sensor.example.test",
+            "apiKey": "durable-key",
+        }
+        with (
+            patch("main.ExtraHopClient", side_effect=DummyExtraHopClient) as client_class,
+            patch("main.connection_store", store),
+        ):
+            response = self.client.post(
+                "/backend/connections/enterprise-saved/session",
+                json={"proxyToken": "single-use-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        runtime_config = client_class.call_args.args[0]
+        self.assertEqual(runtime_config["apiKey"], "durable-key")
+        self.assertEqual(runtime_config["proxyToken"], "single-use-token")
+        self.assertNotIn("proxyToken", store.configs["enterprise-saved"])
+        self.assertNotIn("single-use-token", response.text)
+
+    def test_saved_connection_edit_authenticates_then_replaces_keychain_entry(self):
+        store = DummyConnectionStore()
+        store.configs["enterprise-saved"] = {
+            "type": "enterprise",
+            "host": "sensor.example.test",
+            "apiKey": "old-key",
+            "verifyTls": True,
+        }
+        with (
+            patch("main.ExtraHopClient", side_effect=DummyExtraHopClient) as client_class,
+            patch("main.connection_store", store),
+        ):
+            response = self.client.post(
+                "/backend/connections/enterprise-saved/session",
+                json={
+                    "updates": {
+                        "host": "renamed.example.test",
+                        "apiKey": "new-key",
+                        "verifyTls": False,
+                    }
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["savedConnection"])
+        self.assertEqual(response.json()["connectionId"], "enterprise-updated")
+        runtime_config = client_class.call_args.args[0]
+        self.assertEqual(runtime_config["apiKey"], "new-key")
+        self.assertFalse(runtime_config["verifyTls"])
+        self.assertNotIn("enterprise-saved", store.configs)
+        self.assertEqual(store.configs["enterprise-updated"]["apiKey"], "new-key")
+
+    def test_delete_saved_connection_removes_only_store_entry(self):
+        store = DummyConnectionStore()
+        store.configs["enterprise-saved"] = {
+            "type": "enterprise",
+            "host": "sensor.example.test",
+            "apiKey": "key",
+        }
+        with patch("main.connection_store", store):
+            response = self.client.delete("/backend/connections/enterprise-saved")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"deleted": True})
+        self.assertEqual(store.configs, {})
 
     def test_saved_connection_list_never_contains_credentials(self):
         store = DummyConnectionStore()

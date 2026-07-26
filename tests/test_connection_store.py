@@ -75,6 +75,96 @@ class ConnectionStoreTests(unittest.TestCase):
             self.assertIn("client-id", keychain_payload)
             self.assertIn("super-secret", keychain_payload)
 
+    def test_enterprise_proxy_token_is_never_persisted(self):
+        with TemporaryDirectory() as directory:
+            keyring = FakeKeyring()
+            store = ConnectionStore(
+                Path(directory),
+                env_path=Path(directory) / ".env",
+                keyring_backend=keyring,
+            )
+
+            saved = store.save(
+                {
+                    "type": "enterprise",
+                    "host": "sensor.lab.local",
+                    "apiKey": "durable-key",
+                    "proxyToken": "single-use-token",
+                }
+            )
+
+            self.assertNotIn("proxyToken", store.get(saved["id"]))
+            payload = keyring.passwords[(KEYRING_SERVICE, KEYRING_ACCOUNT)]
+            self.assertNotIn("single-use-token", payload)
+            self.assertNotIn("proxyToken", payload)
+
+    def test_legacy_keychain_proxy_token_is_scrubbed_on_read(self):
+        with TemporaryDirectory() as directory:
+            keyring = FakeKeyring()
+            store = ConnectionStore(
+                Path(directory),
+                env_path=Path(directory) / ".env",
+                keyring_backend=keyring,
+            )
+            saved = store.save(
+                {
+                    "type": "enterprise",
+                    "host": "sensor.lab.local",
+                    "apiKey": "durable-key",
+                }
+            )
+            keyring.passwords[(KEYRING_SERVICE, KEYRING_ACCOUNT)] = json.dumps(
+                {
+                    "version": 1,
+                    "connections": {
+                        saved["id"]: {
+                            "type": "enterprise",
+                            "host": "sensor.lab.local",
+                            "apiKey": "durable-key",
+                            "proxyToken": "legacy-token",
+                            "verifyTls": True,
+                        }
+                    },
+                }
+            )
+
+            resolved = store.get(saved["id"])
+
+            self.assertNotIn("proxyToken", resolved)
+            migrated = keyring.passwords[(KEYRING_SERVICE, KEYRING_ACCOUNT)]
+            self.assertNotIn("legacy-token", migrated)
+            self.assertNotIn("proxyToken", migrated)
+
+    def test_edit_retains_omitted_secret_and_delete_removes_connection(self):
+        with TemporaryDirectory() as directory:
+            store = ConnectionStore(
+                Path(directory),
+                env_path=Path(directory) / ".env",
+                keyring_backend=FakeKeyring(),
+            )
+            saved = store.save(
+                {
+                    "type": "enterprise",
+                    "host": "sensor.lab.local",
+                    "apiKey": "original-key",
+                }
+            )
+
+            candidate = store.prepare_update(
+                saved["id"],
+                {"host": "renamed.lab.local", "verifyTls": False},
+            )
+            updated = store.replace(saved["id"], candidate)
+
+            self.assertEqual(candidate["apiKey"], "original-key")
+            self.assertNotEqual(updated["id"], saved["id"])
+            self.assertFalse(store.get(updated["id"])["verifyTls"])
+            with self.assertRaises(KeyError):
+                store.get(saved["id"])
+
+            store.delete(updated["id"])
+            self.assertEqual(store.list_connections()["connections"], [])
+
     def test_loads_and_groups_360_then_enterprise_connections_from_env(self):
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
@@ -83,6 +173,7 @@ class ConnectionStoreTests(unittest.TestCase):
                     [
                         "EH_CONNECTION_ENTERPRISE_1_HOST=sensor-b.lab.local",
                         "EH_CONNECTION_ENTERPRISE_1_API_KEY=enterprise-key",
+                        "EH_CONNECTION_ENTERPRISE_1_PROXY_TOKEN=legacy-token-is-ignored",
                         "EH_CONNECTION_360_2_TENANT=zulu",
                         "EH_CONNECTION_360_2_API_ID=zulu-id",
                         "EH_CONNECTION_360_2_API_SECRET=zulu-secret",
@@ -111,6 +202,12 @@ class ConnectionStoreTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(catalog["env"]["connectionCount"], 3)
+            enterprise = next(
+                item
+                for item in catalog["connections"]
+                if item["type"] == "enterprise"
+            )
+            self.assertNotIn("proxyToken", store.get(enterprise["id"]))
 
     def test_env_connection_overrides_same_destination_from_keyring(self):
         with TemporaryDirectory() as directory:

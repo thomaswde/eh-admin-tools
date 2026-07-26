@@ -90,6 +90,22 @@ function findActiveSavedConnectionId(connections, config) {
 }
 
 let savedConnectionCatalog = [];
+let editingSavedConnectionId = '';
+
+function selectedSavedConnection() {
+    const connectionId = document.getElementById('savedConnectionSelect')?.value;
+    return savedConnectionCatalog.find(connection => connection.id === connectionId) || null;
+}
+
+function syncSavedEnterpriseProxyTokenVisibility() {
+    const field = document.getElementById('savedEnterpriseProxyTokenField');
+    const input = document.getElementById('savedEnterpriseProxyToken');
+    if (!field || !input) return;
+
+    const show = selectedSavedConnection()?.type === 'enterprise';
+    field.hidden = !show;
+    if (!show) input.value = '';
+}
 
 function syncSavedConnectionSelection(connections = savedConnectionCatalog) {
     const select = document.getElementById('savedConnectionSelect');
@@ -107,6 +123,7 @@ function syncSavedConnectionSelection(connections = savedConnectionCatalog) {
     }
 
     if (connectBtn) connectBtn.disabled = !select.value;
+    syncSavedEnterpriseProxyTokenVisibility();
     window.refreshCustomSelect?.(select);
 }
 
@@ -148,6 +165,7 @@ async function loadSavedConnections() {
                     option.textContent = connection.label;
                     option.dataset.deploymentType = connection.type;
                     option.dataset.connectionTarget = savedConnectionTarget(connection);
+                    option.dataset.connectionEditable = String(connection.editable === true);
                     parent.appendChild(option);
                 }
                 if (group.label) select.appendChild(parent);
@@ -187,18 +205,98 @@ async function loadSavedConnections() {
         select.appendChild(option);
         select.disabled = true;
         connectBtn.disabled = true;
+        syncSavedEnterpriseProxyTokenVisibility();
         window.refreshCustomSelect?.(select);
         status.textContent = error.message;
     }
 }
 
-function showNewConnectionForm(show) {
+function setDeploymentForm(deploymentType) {
+    const is360 = deploymentType === '360';
+    document.getElementById('config360').style.display = is360 ? 'block' : 'none';
+    document.getElementById('configEnterprise').style.display = is360 ? 'none' : 'flex';
+}
+
+function setConnectionEditHints(show) {
+    ['apiIdEditHint', 'apiSecretEditHint', 'enterpriseApiKeyEditHint'].forEach(id => {
+        const hint = document.getElementById(id);
+        if (hint) hint.hidden = !show;
+    });
+}
+
+function resetConnectionFormMode() {
+    editingSavedConnectionId = '';
+    const deployment = document.getElementById('deploymentType');
+    deployment.disabled = false;
+    document.getElementById('connectionFormTitle').textContent = 'New connection';
+    document.getElementById('connectBtn').textContent = 'Connect and save';
+    setConnectionEditHints(false);
+    window.refreshCustomSelect?.(deployment);
+}
+
+function showNewConnectionForm(show, connection = null) {
     const form = document.getElementById('configForm');
     form.style.display = show ? 'flex' : 'none';
     if (show) {
-        document.getElementById('deploymentType').focus();
+        clearCredentialInputs();
+        const deployment = document.getElementById('deploymentType');
+        if (connection) {
+            editingSavedConnectionId = connection.id;
+            deployment.value = connection.type;
+            deployment.disabled = true;
+            document.getElementById('connectionFormTitle').textContent = `Edit ${connection.label}`;
+            document.getElementById('connectBtn').textContent = 'Connect and save changes';
+            document.getElementById('tenantName').value = connection.tenant || '';
+            document.getElementById('enterpriseHost').value = connection.host || '';
+            document.getElementById('enterpriseAllowUntrustedTls').checked = connection.verifyTls === false;
+            setConnectionEditHints(true);
+        } else {
+            resetConnectionFormMode();
+            document.getElementById('tenantName').value = '';
+            document.getElementById('enterpriseHost').value = '';
+            document.getElementById('enterpriseAllowUntrustedTls').checked = false;
+        }
+        setDeploymentForm(deployment.value);
+        window.refreshCustomSelect?.(deployment);
+        const firstInput = deployment.value === '360'
+            ? document.getElementById('tenantName')
+            : document.getElementById('enterpriseHost');
+        firstInput.focus();
     } else {
         clearCredentialInputs();
+        resetConnectionFormMode();
+    }
+}
+
+function editSavedConnection(connectionId) {
+    const connection = savedConnectionCatalog.find(item => (
+        item.id === connectionId && item.editable === true
+    ));
+    if (!connection) {
+        showStatus('This connection is managed outside the app and cannot be edited here.', true);
+        return;
+    }
+    showNewConnectionForm(true, connection);
+}
+
+async function deleteSavedConnection(connectionId, label) {
+    const connection = savedConnectionCatalog.find(item => (
+        item.id === connectionId && item.editable === true
+    ));
+    if (!connection) {
+        showStatus('This connection is managed outside the app and cannot be removed here.', true);
+        return;
+    }
+    if (!confirm(`Remove the saved connection "${label || connection.label}"?`)) return;
+
+    try {
+        await ExtraHopAPI.deleteSavedConnection(connectionId);
+        if (editingSavedConnectionId === connectionId) showNewConnectionForm(false);
+        await loadSavedConnections();
+        showStatus(`Removed saved connection "${label || connection.label}".`, false);
+    } catch (error) {
+        showStatus('✖ ' + error.message, true);
+        showConnectionError(error);
     }
 }
 
@@ -227,7 +325,12 @@ async function handleSavedConnect() {
     try {
         connectBtn.disabled = true;
         connectBtn.textContent = 'Connecting...';
-        const api = new ExtraHopAPI({ connectionId });
+        const config = { connectionId };
+        const proxyToken = document.getElementById('savedEnterpriseProxyToken')?.value.trim();
+        if (selectedSavedConnection()?.type === 'enterprise' && proxyToken) {
+            config.proxyToken = proxyToken;
+        }
+        const api = new ExtraHopAPI(config);
         await api.authenticate();
         completeConnection(api);
     } catch (error) {
@@ -241,6 +344,7 @@ async function handleSavedConnect() {
 async function handleConnect() {
     const connectBtn = document.getElementById('connectBtn');
     const deploymentType = document.getElementById('deploymentType').value;
+    const editing = Boolean(editingSavedConnectionId);
 
     try {
         connectBtn.disabled = true;
@@ -248,30 +352,36 @@ async function handleConnect() {
 
         let config;
         if (deploymentType === '360') {
-            config = {
-                type: '360',
-                tenant: document.getElementById('tenantName').value.trim(),
-                apiId: document.getElementById('apiId').value.trim(),
-                apiSecret: document.getElementById('apiSecret').value.trim()
-            };
+            const tenant = document.getElementById('tenantName').value.trim();
+            const apiId = document.getElementById('apiId').value.trim();
+            const apiSecret = document.getElementById('apiSecret').value.trim();
+            config = editing
+                ? { connectionId: editingSavedConnectionId, updates: { tenant } }
+                : { type: '360', tenant, apiId, apiSecret };
+            if (editing && apiId) config.updates.apiId = apiId;
+            if (editing && apiSecret) config.updates.apiSecret = apiSecret;
 
-            if (!config.tenant || !config.apiId || !config.apiSecret) {
+            if (!tenant || (!editing && (!apiId || !apiSecret))) {
                 throw new Error('Please fill in all fields');
             }
         } else {
             const proxyToken = document.getElementById('enterpriseProxyToken')?.value.trim();
-            config = {
-                type: 'enterprise',
-                host: document.getElementById('enterpriseHost').value.trim(),
-                apiKey: document.getElementById('enterpriseApiKey').value.trim(),
-                verifyTls: !document.getElementById('enterpriseAllowUntrustedTls').checked
-            };
+            const host = document.getElementById('enterpriseHost').value.trim();
+            const apiKey = document.getElementById('enterpriseApiKey').value.trim();
+            const verifyTls = !document.getElementById('enterpriseAllowUntrustedTls').checked;
+            config = editing
+                ? {
+                    connectionId: editingSavedConnectionId,
+                    updates: { host, verifyTls }
+                }
+                : { type: 'enterprise', host, apiKey, verifyTls };
+            if (editing && apiKey) config.updates.apiKey = apiKey;
 
             if (proxyToken) {
                 config.proxyToken = proxyToken;
             }
 
-            if (!config.host || !config.apiKey) {
+            if (!host || (!editing && !apiKey)) {
                 throw new Error('Please fill in all fields');
             }
         }
@@ -285,7 +395,7 @@ async function handleConnect() {
     } catch (error) {
         showStatus('✖ ' + error.message, true);
         showConnectionError(error);
-        connectBtn.textContent = 'Connect and save';
+        connectBtn.textContent = editing ? 'Connect and save changes' : 'Connect and save';
         connectBtn.disabled = false;
     }
 }
@@ -319,7 +429,13 @@ async function handleDisconnect() {
 }
 
 function clearCredentialInputs() {
-    ['apiId', 'apiSecret', 'enterpriseApiKey', 'enterpriseProxyToken'].forEach(id => {
+    [
+        'apiId',
+        'apiSecret',
+        'enterpriseApiKey',
+        'enterpriseProxyToken',
+        'savedEnterpriseProxyToken'
+    ].forEach(id => {
         const input = document.getElementById(id);
         if (input) input.value = '';
     });

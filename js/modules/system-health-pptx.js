@@ -80,9 +80,9 @@ function resolveOptions(meta, rawOptions = {}) {
 
 function normalizedPalette(raw = {}) {
     const fallback = {
-        bg: '#ffffff', text: BRAND_SAPPHIRE, subtle: '#4d477f', muted: '#74709b',
-        grid: '#dcdbe6', track: '#e9e9ef', altRow: '#f5f5f8',
-        low: '#00aaef', mid: '#f05918', high: '#ec0089'
+        bg: '#ffffff', text: '#16151f', subtle: '#403f47', muted: '#6a6970',
+        grid: '#dadadb', track: '#e8e8e9', altRow: '#f5f4f5',
+        low: '#00aaef', mid: '#f59e0b', high: '#ef4444'
     };
     const palette = {};
     Object.keys(fallback).forEach(key => {

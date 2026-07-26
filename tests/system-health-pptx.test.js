@@ -73,7 +73,7 @@ test('deck model keeps legitimate zero values distinct from unavailable collecti
     const model = pptxApi.buildDeckModel({
         meta,
         options: {},
-        palette: { bg: '#ffffff', text: '#261f63', low: '#00aaef', mid: '#f05918', high: '#ec0089' },
+        palette: { bg: '#ffffff', text: '#16151f', low: '#00aaef', mid: '#f59e0b', high: '#ef4444' },
         charts: [],
         rows: [
             {
@@ -152,7 +152,7 @@ class FakePptx {
 function presentationFor(rows) {
     const model = pptxApi.buildDeckModel({
         meta,
-        palette: { bg: '#ffffff', text: '#261f63', low: '#00aaef', mid: '#f05918', high: '#ec0089' },
+        palette: { bg: '#ffffff', text: '#16151f', low: '#00aaef', mid: '#f59e0b', high: '#ef4444' },
         rows
     });
     return { model, pptx: pptxApi.createPresentation(model, FakePptx) };
@@ -227,13 +227,13 @@ test('offline hero, chart caption, recommendation colors, and Source Sans 3 are 
 
     const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet health at a glance'));
     const offlineHero = overviewSlide.texts.find(item => item.text === 'Offline appliance');
-    assert.equal(offlineHero.options.color, 'EC0089');
+    assert.equal(offlineHero.options.color, 'EF4444');
 
     const recommendationSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Recommended next steps'));
     const bulletColors = recommendationSlide.shapes
         .filter(shape => shape.type === 'ellipse')
         .map(shape => shape.options.fill.color);
-    assert.deepEqual(bulletColors, ['EC0089', 'F05918']);
+    assert.deepEqual(bulletColors, ['EF4444', 'F59E0B']);
 });
 
 test('offline hero is omitted when the fleet has no offline appliances', () => {
@@ -404,7 +404,7 @@ test('packetstore processing pressure is reported only when no capture was lost'
 
     const loadedPptx = pptxApi.createPresentation(loaded, FakePptx);
     const loadedActions = loadedPptx._slides.find(slide => slide.texts.some(item => item.text === 'Recommended next steps'));
-    assert.equal(loadedActions.shapes.find(shape => shape.type === 'ellipse').options.fill.color, 'F05918');
+    assert.equal(loadedActions.shapes.find(shape => shape.type === 'ellipse').options.fill.color, 'F59E0B');
 
     // Loss outranks load: a store doing both gets the loss language only, so the
     // reader is never given two competing calls to action for one appliance.
@@ -497,7 +497,7 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     assert.match(fidelityText, /fixed 0–100% scale/);
     assert.match(fidelityText, /secrets 0% \(0 \/ 100\)/);
     const packetDropBar = fidelity.shapes.find(shape => shape.type === 'rect'
-        && shape.options.fill && shape.options.fill.color === 'EC0089');
+        && shape.options.fill && shape.options.fill.color === 'EF4444');
     assert.ok(packetDropBar.options.w < 0.1, 'a 1% drop rate should occupy about 1% of the chart width');
 });
 
@@ -535,21 +535,21 @@ test('small drop rates never round to zero, and the highlight follows the actual
     const find = pattern => slide.texts.find(item => pattern.test(item.text));
 
     assert.match(find(/^packets/).text, /packets 0\.02%/);
-    assert.equal(find(/packets 0\.02%/).options.color, 'EC0089');
+    assert.equal(find(/packets 0\.02%/).options.color, 'EF4444');
 
     // The frame-loss store keeps a plain 0% ratio line and moves the highlight
     // to the counter line that carries the loss.
     const ratioLine = slide.texts.filter(item => /^packets 0% /.test(item.text))[0];
     assert.ok(!ratioLine.options.bold);
     const noteLine = slide.texts.find(item => /interface 3,100/.test(item.text));
-    assert.equal(noteLine.options.color, 'EC0089');
+    assert.equal(noteLine.options.color, 'EF4444');
 
     const healthTable = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore health'));
     const fidelityCells = healthTable.tables[0].rows.slice(1).map(row => row[2].text);
     assert.ok(fidelityCells.some(text => /Packets 0\.02%/.test(text)));
 
     const actions = pptx._slides.find(s => s.texts.some(item => item.text === 'Recommended next steps'));
-    assert.equal(actions.shapes.find(shape => shape.type === 'ellipse').options.fill.color, 'EC0089');
+    assert.equal(actions.shapes.find(shape => shape.type === 'ellipse').options.fill.color, 'EF4444');
 });
 
 test('counter-only loss remains visible when fidelity denominators are unavailable', () => {
@@ -587,7 +587,7 @@ test('measured zero packetstore values do not draw non-zero colored bars', () =>
     chartTitles.forEach(title => {
         const slide = pptx._slides.find(s => s.texts.some(item => item.text === title));
         const coloredBars = slide.shapes.filter(shape => shape.type === 'rect'
-            && ['00AAEF', 'F05918', 'EC0089'].includes(shape.options.fill && shape.options.fill.color));
+            && ['00AAEF', 'F59E0B', 'EF4444'].includes(shape.options.fill && shape.options.fill.color));
         assert.equal(coloredBars.length, 0, `${title} drew a colored bar for a measured zero`);
     });
 });

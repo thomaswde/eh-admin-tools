@@ -180,3 +180,86 @@ test('saved connection authentication sends only the opaque id', async () => {
     assert.equal(calls[0].options.method, 'POST');
     assert.equal('body' in calls[0].options, false);
 });
+
+test('saved Enterprise authentication sends a transient proxy token without durable credentials', async () => {
+    const calls = [];
+    const context = vm.createContext({
+        console,
+        window: {},
+        fetch: async (url, options) => {
+            calls.push({ url, options });
+            return {
+                ok: true,
+                status: 200,
+                async text() {
+                    return JSON.stringify({
+                        connected: true,
+                        config: { type: 'enterprise', host: 'sensor.lab.local' }
+                    });
+                }
+            };
+        }
+    });
+    vm.runInContext(source('js/api-client/extrahop-api.js'), context);
+
+    await vm.runInContext(`
+        (async () => {
+            const api = new ExtraHopAPI({
+                connectionId: 'enterprise-saved',
+                proxyToken: 'single-use-token'
+            });
+            await api.authenticate();
+        })()
+    `, context);
+
+    assert.equal(calls[0].url, '/backend/connections/enterprise-saved/session');
+    assert.deepEqual(
+        JSON.parse(calls[0].options.body),
+        { proxyToken: 'single-use-token' }
+    );
+});
+
+test('saved connection edits send only changed fields', async () => {
+    const calls = [];
+    const context = vm.createContext({
+        console,
+        window: {},
+        fetch: async (url, options) => {
+            calls.push({ url, options });
+            return {
+                ok: true,
+                status: 200,
+                async text() {
+                    return JSON.stringify({
+                        connected: true,
+                        config: { type: '360', tenant: 'renamed' }
+                    });
+                }
+            };
+        }
+    });
+    vm.runInContext(source('js/api-client/extrahop-api.js'), context);
+
+    await vm.runInContext(`
+        (async () => {
+            const api = new ExtraHopAPI({
+                connectionId: '360-saved',
+                updates: {
+                    tenant: 'renamed',
+                    apiSecret: 'replacement-secret'
+                }
+            });
+            await api.authenticate();
+        })()
+    `, context);
+
+    assert.deepEqual(
+        JSON.parse(calls[0].options.body),
+        {
+            updates: {
+                tenant: 'renamed',
+                apiSecret: 'replacement-secret'
+            }
+        }
+    );
+});

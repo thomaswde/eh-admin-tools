@@ -26,16 +26,16 @@ const nodemapState = {
     }
 };
 
-// Platform colors (aligned with global site palette)
+// Platform colors use the shared categorical chart palette.
 const platformColors = {
-    'command': '#00aaef',              // Cyan
-    'packet_sensor': '#dae343',        // Lime
-    'discover': '#dae343',             // Lime
-    'packetstore': '#f05918',          // Tangerine
-    'trace': '#f05918',                // Tangerine
-    'multifunction_sensor': '#dae343', // Lime
-    'all_in_one': '#dae343',           // Lime
-    'efc': '#7f2854'                   // Plum for Flow Collector
+    'command': genericChartPrimaryColor(),
+    'packet_sensor': genericChartPaletteColor(0),
+    'discover': genericChartPaletteColor(0),
+    'packetstore': genericChartPaletteColor(1),
+    'trace': genericChartPaletteColor(1),
+    'multifunction_sensor': genericChartPaletteColor(0),
+    'all_in_one': genericChartPaletteColor(0),
+    'efc': genericChartPaletteColor(2)
 };
 
 const roleLabels = {
@@ -109,17 +109,17 @@ function getStatusInfo(appliance) {
         level = 'warning';
     }
 
-    let circleColor = '#9ca3af';
+    let circleColor = stateIndicatorColor('unknown');
     let badgeClass = 'badge';
 
     if (level === 'online') {
-        circleColor = '#10b981';
+        circleColor = stateIndicatorColor('online');
         badgeClass = 'badge badge-success';
     } else if (level === 'error') {
-        circleColor = '#ef4444';
+        circleColor = stateIndicatorColor('error');
         badgeClass = 'badge badge-danger';
     } else if (level === 'warning') {
-        circleColor = '#f59e0b';
+        circleColor = stateIndicatorColor('warning');
         badgeClass = 'badge badge-warning';
     }
 
@@ -604,8 +604,8 @@ function renderGraph(records) {
     function drawNodes(positions) {
         positions.forEach(({ record, x, y }) => {
             const strokeColor = record.role === 'other'
-                ? '#6b7280'
-                : (platformColors[record.role] || platformColors[record.info.platform] || '#6b7280');
+                ? appCssColor('--gray', '#898a8d')
+                : (platformColors[record.role] || platformColors[record.info.platform] || appCssColor('--gray', '#898a8d'));
 
             const nodeGroup = g.append('g')
                 .attr('class', 'node-group')

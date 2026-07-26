@@ -136,3 +136,76 @@ function escapeAttribute(text) {
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#39;');
 }
+
+/* --------------------------- shared color system --------------------------- */
+
+const GENERIC_CHART_COLOR_FALLBACKS = [
+    '#72aed9',
+    '#5e55d7',
+    '#bb5fd8',
+    '#d0638d',
+    '#d28861',
+    '#d4dd73',
+    '#8fdb6f',
+    '#86dba9'
+];
+
+function appCssColor(token, fallback) {
+    if (
+        typeof getComputedStyle !== 'function'
+        || typeof document === 'undefined'
+        || !document.documentElement
+    ) return fallback;
+    const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+    return value || fallback;
+}
+
+function genericChartPrimaryColor() {
+    return appCssColor('--chart-primary', '#00aaef');
+}
+
+function genericChartPaletteColor(index) {
+    const parsed = Number(index);
+    const integer = Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
+    const normalized = (
+        (integer % GENERIC_CHART_COLOR_FALLBACKS.length)
+        + GENERIC_CHART_COLOR_FALLBACKS.length
+    ) % GENERIC_CHART_COLOR_FALLBACKS.length;
+    return appCssColor(`--chart-${normalized + 1}`, GENERIC_CHART_COLOR_FALLBACKS[normalized]);
+}
+
+function stateIndicatorColor(level) {
+    const colors = {
+        online: ['--ok', '#2bb673'],
+        warning: ['--warn-indicator', '#f59e0b'],
+        error: ['--danger-indicator', '#ef4444'],
+        unknown: ['--gray', '#898a8d']
+    };
+    const [token, fallback] = colors[level] || colors.unknown;
+    return appCssColor(token, fallback);
+}
+
+function applyChartJsTheme() {
+    if (typeof Chart === 'undefined') return;
+    const text = appCssColor('--text-2', '#3c3b47');
+    const muted = appCssColor('--gray', '#898a8d');
+    const grid = appCssColor('--hairline', '#e9e9ef');
+
+    Chart.defaults.color = text;
+    Chart.defaults.borderColor = grid;
+
+    Object.values(Chart.instances || {}).forEach(chart => {
+        chart.options.color = text;
+        const legend = chart.options.plugins?.legend;
+        if (legend) legend.labels = { ...(legend.labels || {}), color: text };
+        Object.values(chart.options.scales || {}).forEach(scale => {
+            scale.ticks = { ...(scale.ticks || {}), color: muted };
+            scale.title = { ...(scale.title || {}), color: text };
+            scale.grid = { ...(scale.grid || {}), color: grid };
+            scale.border = { ...(scale.border || {}), color: grid };
+        });
+        chart.update('none');
+    });
+}
+
+applyChartJsTheme();

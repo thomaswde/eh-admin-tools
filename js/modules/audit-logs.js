@@ -14,8 +14,6 @@ const auditLogState = {
     }
 };
 
-const ehColors = ['#7f2854', '#261f63', '#ec0089', '#00aaef', '#f05918', '#dae343'];
-
 async function loadAuditLog() {
     if (!state.connected) {
         alert('Please connect to your ExtraHop instance first');
@@ -215,8 +213,8 @@ function generateEventTypesChart() {
             datasets: [{
                 label: 'Number of Log Entries',
                 data: data,
-                backgroundColor: ehColors[0],
-                borderColor: ehColors[0],
+                backgroundColor: genericChartPrimaryColor(),
+                borderColor: genericChartPrimaryColor(),
                 borderWidth: 1
             }]
         },
@@ -271,8 +269,8 @@ function generateLoginPerDayChart() {
             datasets: [{
                 label: 'Login Events',
                 data: data,
-                backgroundColor: ehColors[0],
-                borderColor: ehColors[0],
+                backgroundColor: genericChartPrimaryColor(),
+                borderColor: genericChartPrimaryColor(),
                 borderWidth: 1
             }]
         },
@@ -327,8 +325,8 @@ function generateLoginByUserChart() {
             datasets: [{
                 label: 'Login Count',
                 data: data,
-                backgroundColor: ehColors.slice(0, data.length),
-                borderColor: ehColors.slice(0, data.length),
+                backgroundColor: genericChartPrimaryColor(),
+                borderColor: genericChartPrimaryColor(),
                 borderWidth: 1
             }]
         },
@@ -434,8 +432,8 @@ function generateActivityByUserChart() {
         datasets.push({
             label: user,
             data: data,
-            backgroundColor: ehColors[colorIndex % ehColors.length],
-            borderColor: ehColors[colorIndex % ehColors.length],
+            backgroundColor: genericChartPaletteColor(colorIndex),
+            borderColor: genericChartPaletteColor(colorIndex),
             borderWidth: 1
         });
         
@@ -503,9 +501,9 @@ function showAuditLogStatus(message, type = 'success') {
     statusText.textContent = message;
     
     const colors = {
-        success: { bg: '#dcfce7', border: '#166534', text: '#166534' },
-        warning: { bg: '#fef3c7', border: '#92400e', text: '#92400e' },
-        error: { bg: '#fee2e2', border: '#dc2626', text: '#dc2626' }
+        success: { bg: 'var(--ok-bg)', border: 'var(--ok-border)', text: 'var(--ok-text)' },
+        warning: { bg: 'var(--warn-bg)', border: 'var(--warn-border)', text: 'var(--warn)' },
+        error: { bg: 'var(--danger-bg)', border: 'var(--danger-border)', text: 'var(--danger-text)' }
     };
     
     const color = colors[type] || colors.success;

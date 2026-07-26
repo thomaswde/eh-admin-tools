@@ -1895,11 +1895,6 @@ function drawSystemHealthUtilizationCanvas(canvas, rows, options, meta) {
         const fillWidth = Math.min(plotWidth, plotWidth * fillRatio);
         const labelY = y + barHeight / 2;
 
-        if (index % 2 === 1) {
-            ctx.fillStyle = colors.altRow;
-            ctx.fillRect(10, y - 4, width - 20, rowHeight);
-        }
-
         ctx.fillStyle = colors.subtle;
         ctx.font = '11px Arial';
         ctx.textAlign = 'right';
@@ -2062,11 +2057,6 @@ function drawSystemHealthAnalysisCanvas(canvas, rows, meta) {
         const centerY = y + rowHeight / 2;
         const barHeight = 16;
         const barY = centerY - barHeight / 2;
-
-        if (index % 2 === 1) {
-            ctx.fillStyle = colors.altRow;
-            ctx.fillRect(padX, y, width - padX * 2, rowHeight);
-        }
 
         ctx.fillStyle = colors.text;
         ctx.font = '11px Arial';
@@ -2928,7 +2918,7 @@ function setSystemHealthCsvStatus(message, isError = false) {
     const el = document.getElementById('systemHealthCsvStatus');
     if (!el) return;
     el.textContent = message;
-    el.style.color = isError ? '#dc2626' : 'var(--text-muted)';
+    el.style.color = isError ? 'var(--danger-text)' : 'var(--text-muted)';
 }
 
 function systemHealthNumber(value) {

@@ -40,17 +40,14 @@ const CHART_THEME_BUILTINS = [
     {
         id: 'light',
         name: 'Light',
-        colors: { bg: '#ffffff', text: '#261f63', low: '#00aaef', mid: '#f05918', high: '#ec0089' }
+        colors: { bg: '#ffffff', text: '#16151f', low: '#00aaef', mid: '#f59e0b', high: '#ef4444' }
     },
     {
-        // Sapphire is a brand color, not a canvas. At full strength behind a
-        // whole chart it saturates everything drawn on top, so the background
-        // is Sapphire darkened ~78% and the ramp is muted to match: cyan for
-        // normal load, bronze for elevated, plum for at-capacity. Every ramp
-        // color clears 4.5:1 against the background.
+        // The default dark chart follows the app's neutral canvas and uses the
+        // same warning/error indicators as Connected Appliances.
         id: 'dark',
         name: 'Dark',
-        colors: { bg: '#131127', text: '#f1eff8', low: '#4fa9d4', mid: '#c1996b', high: '#ce78a6' }
+        colors: { bg: '#131218', text: '#ececf2', low: '#00aaef', mid: '#f59e0b', high: '#ef4444' }
     },
     {
         id: 'midnight',

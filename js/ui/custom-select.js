@@ -31,6 +31,29 @@
         if (openControl && openControl !== except) closeControl(openControl);
     }
 
+    function createActionIcon(action) {
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        icon.setAttribute('width', '14');
+        icon.setAttribute('height', '14');
+        icon.setAttribute('viewBox', '0 0 24 24');
+        icon.setAttribute('fill', 'none');
+        icon.setAttribute('stroke', 'currentColor');
+        icon.setAttribute('stroke-width', '1.9');
+        icon.setAttribute('stroke-linecap', 'round');
+        icon.setAttribute('stroke-linejoin', 'round');
+        icon.setAttribute('aria-hidden', 'true');
+
+        const paths = action === 'edit'
+            ? ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 013 3L8 18l-4 1 1-4L16.5 3.5z']
+            : ['M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 14H6L5 6', 'M10 11v5', 'M14 11v5'];
+        for (const pathData of paths) {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', pathData);
+            icon.appendChild(path);
+        }
+        return icon;
+    }
+
     function createOptionButton(control, option, flatIndex) {
         const button = document.createElement('button');
         button.type = 'button';
@@ -59,7 +82,44 @@
             renderControl(control);
             closeControl(control, { restoreFocus: true });
         });
-        return button;
+
+        if (option.dataset.connectionEditable !== 'true') {
+            return button;
+        }
+
+        const row = document.createElement('div');
+        row.className = 'custom-select-option-row';
+        row.appendChild(button);
+
+        const actions = document.createElement('span');
+        actions.className = 'custom-select-option-actions';
+        for (const action of ['edit', 'delete']) {
+            const actionButton = document.createElement('button');
+            actionButton.type = 'button';
+            actionButton.className = `custom-select-option-action custom-select-option-action--${action}`;
+            actionButton.title = `${action === 'edit' ? 'Edit' : 'Delete'} ${option.textContent}`;
+            actionButton.setAttribute(
+                'aria-label',
+                `${action === 'edit' ? 'Edit' : 'Delete'} saved connection ${option.textContent}`
+            );
+            actionButton.appendChild(createActionIcon(action));
+            actionButton.addEventListener('click', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                control.select.dispatchEvent(new CustomEvent('custom-select-action', {
+                    bubbles: true,
+                    detail: {
+                        action,
+                        value: option.value,
+                        label: option.textContent
+                    }
+                }));
+                closeControl(control, { restoreFocus: true });
+            });
+            actions.appendChild(actionButton);
+        }
+        row.appendChild(actions);
+        return row;
     }
 
     function renderControl(control) {
@@ -166,7 +226,9 @@
             event.preventDefault();
             closeControl(control, { restoreFocus: true });
         } else if (event.key === 'Tab') {
-            closeControl(control);
+            setTimeout(() => {
+                if (!control.menu.contains(document.activeElement)) closeControl(control);
+            }, 0);
         }
     }
 

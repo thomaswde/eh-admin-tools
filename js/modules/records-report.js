@@ -24,9 +24,6 @@ const CRS_CAPACITIES = {
     'EDA10300': 1000
 };
 
-// ExtraHop brand colors for charts
-const EH_COLORS = ['#ec0089', '#00aaef', '#f05918', '#dae343', '#7f2854', '#261f63'];
-
 // Update capacity input options based on selected period
 function updateCapacityInputOptions() {
     const isMultiDay = crsState.selectedPeriod !== 'yesterday';
@@ -374,7 +371,7 @@ function renderStackedBarChart(data, reservedCapacity) {
         .map((d, i) => ({
             label: d.name,
             data: [parseFloat(d.compressedGB)],
-            backgroundColor: EH_COLORS[i % EH_COLORS.length]
+            backgroundColor: genericChartPaletteColor(i)
         }));
     
     // Only add remaining capacity if reservedCapacity is provided
@@ -383,7 +380,7 @@ function renderStackedBarChart(data, reservedCapacity) {
         datasets.push({
             label: 'Remaining Capacity',
             data: [remaining],
-            backgroundColor: '#898a8d'
+            backgroundColor: appCssColor('--gray', '#898a8d')
         });
     }
     
@@ -433,7 +430,7 @@ function renderSensorBarChart(data) {
             datasets: [{
                 label: 'Utilization (GB)',
                 data: values,
-                backgroundColor: '#7f2854'
+                backgroundColor: genericChartPrimaryColor()
             }]
         },
         options: {

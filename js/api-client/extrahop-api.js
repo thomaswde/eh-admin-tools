@@ -16,7 +16,19 @@ class ExtraHopAPI {
                 'Accept': 'application/json'
             }
         };
-        if (!savedConnectionId) {
+        if (savedConnectionId) {
+            const savedConnectionRequest = {};
+            if (this.config.proxyToken) {
+                savedConnectionRequest.proxyToken = this.config.proxyToken;
+            }
+            if (this.config.updates && Object.keys(this.config.updates).length) {
+                savedConnectionRequest.updates = this.config.updates;
+            }
+            if (Object.keys(savedConnectionRequest).length) {
+                options.headers['Content-Type'] = 'application/json';
+                options.body = JSON.stringify(savedConnectionRequest);
+            }
+        } else {
             options.headers['Content-Type'] = 'application/json';
             options.body = JSON.stringify(this.config);
         }
@@ -36,6 +48,17 @@ class ExtraHopAPI {
             method: 'GET',
             headers: { 'Accept': 'application/json' }
         });
+        return ExtraHopAPI.parseStaticResponse(response);
+    }
+
+    static async deleteSavedConnection(connectionId) {
+        const response = await ExtraHopAPI.backendFetch(
+            `/backend/connections/${encodeURIComponent(connectionId)}`,
+            {
+                method: 'DELETE',
+                headers: { 'Accept': 'application/json' }
+            }
+        );
         return ExtraHopAPI.parseStaticResponse(response);
     }
 

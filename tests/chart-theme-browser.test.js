@@ -16,7 +16,13 @@ test('chart theme dependency explicitly exports the API used by System Health', 
     const window = {
         addEventListener() {}
     };
+    let resolvedTheme = 'light';
     const document = {
+        documentElement: {
+            getAttribute() {
+                return resolvedTheme;
+            }
+        },
         getElementById() {
             return null;
         },
@@ -46,6 +52,39 @@ test('chart theme dependency explicitly exports the API used by System Health', 
 
     assert.equal(typeof window.initChartThemePanel, 'function');
     assert.equal(typeof window.chartThemeResolvedColors, 'function');
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(vm.runInContext('window.chartThemeResolvedColors()', context))),
+        {
+            bg: '#ffffff',
+            text: '#16151f',
+            low: '#00aaef',
+            mid: '#f59e0b',
+            high: '#ef4444',
+            subtle: '#403f47',
+            muted: '#6a6970',
+            grid: '#dadadb',
+            track: '#e8e8e9',
+            altRow: '#f5f4f5',
+            transparent: false
+        }
+    );
+    resolvedTheme = 'dark';
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(vm.runInContext('window.chartThemeResolvedColors()', context))),
+        {
+            bg: '#131218',
+            text: '#ececf2',
+            low: '#00aaef',
+            mid: '#f59e0b',
+            high: '#ef4444',
+            subtle: '#c5c5cb',
+            muted: '#9e9ea4',
+            grid: '#36353b',
+            track: '#29282e',
+            altRow: '#1d1c22',
+            transparent: false
+        }
+    );
     const firstPanelInitializer = window.initChartThemePanel;
     const firstPaletteResolver = window.chartThemeResolvedColors;
     assert.doesNotThrow(() => vm.runInContext(chartThemeSource, context));

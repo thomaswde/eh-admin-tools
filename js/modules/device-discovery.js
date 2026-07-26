@@ -11,10 +11,10 @@ const deviceDiscoveryState = {
 };
 
 const DEVICE_ANALYSIS = {
-    advanced: { key: 'advanced', label: 'Advanced', color: '#ec0089' },
-    standard: { key: 'standard', label: 'Standard', color: '#261f63' },
-    discovery: { key: 'discovery', label: 'Discovery', color: '#f05918' },
-    flow_log: { key: 'flow_log', label: 'Flow Log', color: '#00aaef' }
+    advanced: { key: 'advanced', label: 'Advanced', color: genericChartPaletteColor(0) },
+    standard: { key: 'standard', label: 'Standard', color: genericChartPaletteColor(1) },
+    discovery: { key: 'discovery', label: 'Discovery', color: genericChartPaletteColor(2) },
+    flow_log: { key: 'flow_log', label: 'Flow Log', color: genericChartPaletteColor(3) }
 };
 
 const DEVICE_LIMIT = 5000;

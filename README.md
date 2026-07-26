@@ -102,6 +102,10 @@ in the browser with editable native shapes and text. Decks request Source Sans 3
 include installable Regular and Bold font files because PowerPoint otherwise substitutes a local
 font and can change text proportions.
 
+Single-series charts use cyan. Generic categorical charts share one eight-color palette, while
+capacity and health charts use the Connected Appliances warning orange and error red. Dark-theme
+selected controls stay neutral gray so application chrome does not compete with chart data.
+
 ## Styling
 
 `css/styles.css` is the only stylesheet. It defines semantic tokens in `:root`, overrides them

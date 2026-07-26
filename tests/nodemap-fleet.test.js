@@ -17,6 +17,10 @@ function plain(value) {
 }
 
 function loadNodemap() {
+    const commonSource = fs.readFileSync(
+        path.join(__dirname, '..', 'js', 'utils', 'common.js'),
+        'utf8'
+    );
     const source = fs.readFileSync(
         path.join(__dirname, '..', 'js', 'modules', 'nodemap.js'),
         'utf8'
@@ -27,10 +31,12 @@ function loadNodemap() {
         console: { log: noop, warn: noop, error: noop },
         state: { connected: false },
         document: {
+            documentElement: {},
             getElementById: () => null,
             querySelector: () => null,
             querySelectorAll: () => []
         },
+        getComputedStyle: () => ({ getPropertyValue: () => '' }),
         window: {},
         fetch: () => Promise.reject(new Error('not used')),
         escapeHtml: text => (text == null ? '' : String(text)),
@@ -40,6 +46,7 @@ function loadNodemap() {
         d3: {}
     });
 
+    vm.runInContext(commonSource, context, { filename: 'common.js' });
     vm.runInContext(
         `${source}
 ;({

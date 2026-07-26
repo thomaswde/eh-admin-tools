@@ -22,6 +22,7 @@ function applyTheme(pref) {
     document.querySelectorAll('#themeSeg .seg-btn').forEach(button => {
         button.classList.toggle('active', button.dataset.value === pref);
     });
+    window.applyChartJsTheme?.();
 }
 
 function setTheme(pref) {

@@ -378,9 +378,9 @@ function showLocalityStatus(message, type = 'success') {
     statusText.textContent = message;
     
     const colors = {
-        success: { bg: '#dcfce7', border: '#166534', text: '#166534' },
-        warning: { bg: '#fef3c7', border: '#92400e', text: '#92400e' },
-        error: { bg: '#fee2e2', border: '#dc2626', text: '#dc2626' }
+        success: { bg: 'var(--ok-bg)', border: 'var(--ok-border)', text: 'var(--ok-text)' },
+        warning: { bg: 'var(--warn-bg)', border: 'var(--warn-border)', text: 'var(--warn)' },
+        error: { bg: 'var(--danger-bg)', border: 'var(--danger-border)', text: 'var(--danger-text)' }
     };
     
     const color = colors[type] || colors.success;

@@ -10,8 +10,9 @@
      6. Module styles   option pickers, localities, nodemap
      7. System Health   chart frames and pagers
 
-   Colour rule: cyan is the only accent. It marks selection and focus, and
-   nothing else. Everything else is neutral or a state colour.
+   Colour rule: cyan is the primary accent and the default for single-series
+   charts. Generic multi-series charts use the categorical palette tokens.
+   Everything else is neutral or a state colour.
    ========================================================================== */
 
 /* ============================== 1. FONTS ============================== */
@@ -45,7 +46,18 @@
     --cyan: #00aaef;
     --magenta: #ec0089;
     --tangerine: #f05918;
-    --lime: #dae343;
+    --lime: #daed43;
+
+    /* Charts — identical in both themes */
+    --chart-primary: #00aaef;
+    --chart-1: #72aed9;
+    --chart-2: #5e55d7;
+    --chart-3: #bb5fd8;
+    --chart-4: #d0638d;
+    --chart-5: #d28861;
+    --chart-6: #d4dd73;
+    --chart-7: #8fdb6f;
+    --chart-8: #86dba9;
 
     /* Surfaces */
     --bg: #ffffff;
@@ -82,9 +94,11 @@
     --ok-border: #b7ebd2;
     --ok-text: #14724b;
     --warn: #b06a12;
+    --warn-indicator: #f59e0b;
     --warn-bg: #fffbeb;
     --warn-border: #f4dda1;
     --danger: #d83a3a;
+    --danger-indicator: #ef4444;
     --danger-text: #b03030;
     --danger-bg: #fdf2f2;
     --danger-border: #f3d8d8;
@@ -133,11 +147,11 @@
 
     --btn-bg: #232230;
     --btn-fg: #ececf2;
-    --primary-bg: #e3e0f2;
-    --primary-fg: #16151f;
-    --primary-bg-hover: #f0eefa;
-    --chip-bg: #2a2740;
-    --chip-border: #3a3656;
+    --primary-bg: #3b3a46;
+    --primary-fg: #ececf2;
+    --primary-bg-hover: #484752;
+    --chip-bg: #302f39;
+    --chip-border: #45444f;
     --track: #2a2935;
 
     --ok: #3cc98a;
@@ -156,8 +170,8 @@
     --shadow-pop: 0 2px 6px rgba(0, 0, 0, .4), 0 16px 40px rgba(0, 0, 0, .5);
 
     /* Legacy aliases that need their own dark values */
-    --sapphire: #b3a8f2;
-    --plum: #d171a0;
+    --sapphire: #c4c3cf;
+    --plum: #9b9ba6;
 }
 
 /* ============================== 3. BASE ============================== */
@@ -689,6 +703,8 @@ a { color: var(--cyan); }
     min-width: 0;
 }
 
+#savedEnterpriseProxyTokenField[hidden] { display: none; }
+
 .field > label,
 .label {
     font-size: 12px;
@@ -899,6 +915,52 @@ select[multiple] {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.custom-select-option-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    border-radius: 6px;
+}
+
+.custom-select-option-row > .custom-select-option {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+}
+
+.custom-select-option-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+    padding-right: 4px;
+}
+
+.custom-select-option-action {
+    display: inline-grid;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    place-items: center;
+    color: var(--text-faint);
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.custom-select-option-action:hover,
+.custom-select-option-action:focus-visible {
+    color: var(--ink);
+    background-color: var(--surface-hover);
+    outline: none;
+}
+
+.custom-select-option-action--delete:hover,
+.custom-select-option-action--delete:focus-visible {
+    color: var(--danger);
 }
 
 .field-hint {

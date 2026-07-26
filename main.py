@@ -122,6 +122,24 @@ class ConnectionConfig(BaseModel):
         return self
 
 
+class SavedConnectionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tenant: str | None = None
+    apiId: str | None = None
+    apiSecret: str | None = None
+    host: str | None = None
+    apiKey: str | None = None
+    verifyTls: bool | None = None
+
+
+class SavedConnectionSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    proxyToken: str | None = None
+    updates: SavedConnectionUpdate | None = None
+
+
 class ApiLoggingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -283,34 +301,109 @@ async def list_saved_connections() -> dict[str, Any]:
 async def create_saved_connection_session(
     connection_id: str,
     response: Response,
+    request_body: SavedConnectionSessionRequest | None = None,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
+    changes = (
+        request_body.updates.model_dump(exclude_none=True)
+        if request_body and request_body.updates
+        else {}
+    )
     try:
-        stored_config = await asyncio.to_thread(connection_store.get, connection_id)
+        if changes:
+            stored_config = await asyncio.to_thread(
+                connection_store.prepare_update,
+                connection_id,
+                changes,
+            )
+        else:
+            stored_config = await asyncio.to_thread(connection_store.get, connection_id)
     except KeyError as error:
+        message = (
+            "Saved connection is not editable."
+            if changes
+            else "Saved connection was not found."
+        )
         raise HTTPException(
             status_code=404,
-            detail={"message": "Saved connection was not found."},
+            detail={"message": message},
         ) from error
     except ConnectionStorageError as error:
         raise HTTPException(
             status_code=503,
             detail={"message": str(error)},
         ) from error
+    except (TypeError, ValueError) as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "Saved connection changes are invalid."},
+        ) from error
+
+    runtime_config = dict(stored_config)
+    proxy_token = str(request_body.proxyToken or "").strip() if request_body else ""
+    if proxy_token:
+        if runtime_config.get("type") != "enterprise":
+            raise HTTPException(
+                status_code=422,
+                detail={"message": "Proxy tokens can only be used with Enterprise connections."},
+            )
+        runtime_config["proxyToken"] = proxy_token
 
     try:
-        config = ConnectionConfig.model_validate(stored_config)
+        config = ConnectionConfig.model_validate(runtime_config)
     except Exception as error:
         raise HTTPException(
             status_code=500,
             detail={"message": "Saved connection settings are invalid."},
         ) from error
-    return await establish_session(
+    result = await establish_session(
         config,
         response,
         eh_admin_session,
         save_connection=False,
     )
+    if changes:
+        try:
+            saved = await asyncio.to_thread(
+                connection_store.replace,
+                connection_id,
+                stored_config,
+            )
+            result.update(
+                {
+                    "savedConnection": True,
+                    "connectionId": saved["id"],
+                    "connectionStorage": {"available": True, "message": None},
+                }
+            )
+        except (ConnectionStorageError, KeyError) as error:
+            result.update(
+                {
+                    "savedConnection": False,
+                    "connectionStorage": {
+                        "available": False,
+                        "message": str(error),
+                    },
+                }
+            )
+    return result
+
+
+@app.delete("/backend/connections/{connection_id}")
+async def delete_saved_connection(connection_id: str) -> dict[str, bool]:
+    try:
+        await asyncio.to_thread(connection_store.delete, connection_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404,
+            detail={"message": "Saved connection was not found or is managed by .env."},
+        ) from error
+    except ConnectionStorageError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"message": str(error)},
+        ) from error
+    return {"deleted": True}
 
 
 @app.post("/backend/session")
@@ -551,15 +644,15 @@ async def close_session_clients() -> None:
 # Light theme values from js/modules/chart-theme.js, derived neutrals included.
 SYSTEM_HEALTH_PDF_FALLBACK_COLORS = {
     "bg": "#ffffff",
-    "text": "#261f63",
-    "subtle": "#4d477f",
-    "muted": "#74709b",
-    "grid": "#dcdbe6",
-    "track": "#e9e9ef",
-    "altRow": "#f5f5f8",
+    "text": "#16151f",
+    "subtle": "#403f47",
+    "muted": "#6a6970",
+    "grid": "#dadadb",
+    "track": "#e8e8e9",
+    "altRow": "#f5f4f5",
     "low": "#00aaef",
-    "mid": "#f05918",
-    "high": "#ec0089",
+    "mid": "#f59e0b",
+    "high": "#ef4444",
 }
 
 

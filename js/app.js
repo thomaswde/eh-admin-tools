@@ -114,9 +114,7 @@ function setupGlobalEventListeners() {
 
     // Deployment type change
     document.getElementById('deploymentType').addEventListener('change', (e) => {
-        const is360 = e.target.value === '360';
-        document.getElementById('config360').style.display = is360 ? 'block' : 'none';
-        document.getElementById('configEnterprise').style.display = is360 ? 'none' : 'flex';
+        setDeploymentForm(e.target.value);
     });
 
     // Connect button
@@ -124,6 +122,14 @@ function setupGlobalEventListeners() {
     document.getElementById('connectSavedBtn').addEventListener('click', handleSavedConnect);
     document.getElementById('savedConnectionSelect').addEventListener('change', event => {
         document.getElementById('connectSavedBtn').disabled = !event.target.value;
+        syncSavedEnterpriseProxyTokenVisibility();
+    });
+    document.getElementById('savedConnectionSelect').addEventListener('custom-select-action', event => {
+        if (event.detail?.action === 'edit') {
+            editSavedConnection(event.detail.value);
+        } else if (event.detail?.action === 'delete') {
+            deleteSavedConnection(event.detail.value, event.detail.label);
+        }
     });
     document.getElementById('addConnectionBtn').addEventListener('click', () => {
         showNewConnectionForm(true);
@@ -272,7 +278,7 @@ async function loadApiLoggingStatus() {
         renderApiLoggingStatus(config);
     } catch (error) {
         statusEl.textContent = `Logging status unavailable: ${error.message}`;
-        statusEl.style.color = '#ef4444';
+        statusEl.style.color = 'var(--danger-text)';
     }
 }
 
@@ -290,7 +296,7 @@ async function handleApiLoggingChange(event) {
         const statusEl = document.getElementById('apiLoggingStatus');
         if (statusEl) {
             statusEl.textContent = `Could not update logging: ${error.message}`;
-            statusEl.style.color = '#ef4444';
+            statusEl.style.color = 'var(--danger-text)';
         }
     } finally {
         selectEl.disabled = false;
