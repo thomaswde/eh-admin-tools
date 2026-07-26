@@ -444,7 +444,7 @@ function addPacketstoreSlides(model, assets) {
             tableRows.push([
                 tableCell(`${cleanText(row.name || row.id, 42)}\n${packetstoreRoleLabel(row)}`),
                 tableCell(latest === null || minimum === null ? 'Unavailable' : `${(latest / 86400).toFixed(1)}d latest\n${(minimum / 86400).toFixed(1)}d minimum`),
-                tableCell(`Packets ${packetRatio === null ? 'unavailable' : formatLossPercent(packetRatio)} (${formatInteger(row.packetDropsTotal || 0)} dropped)\nSecrets ${secretRatio === null ? 'unavailable' : formatLossPercent(secretRatio)} (${formatInteger(row.secretDropsTotal || 0)} dropped)\nSlow-write ${formatInteger(row.slowWriteDropsTotal || 0)} · interface ${formatInteger(row.interfaceDropsTotal || 0)}`),
+                tableCell(`Packets ${packetRatio === null ? 'unavailable' : formatLossPercent(packetRatio)} (${formatInteger(row.packetDropsTotal || 0)} dropped)\nSecrets ${secretRatio === null ? 'unavailable' : formatLossPercent(secretRatio)} (${formatInteger(row.secretDropsTotal || 0)} of ${formatInteger(row.secretsTotal || 0)} dropped)\nSlow-write ${formatInteger(row.slowWriteDropsTotal || 0)} · interface ${formatInteger(row.interfaceDropsTotal || 0)}`),
                 tableCell(`Input ${loadLabel(row.inputLoadPeak)}\nCompress ${loadLabel(row.compressionLoadPeak)}\nWrite ${loadLabel(row.diskWriteLoadPeak)}`)
             ]);
         });
@@ -1219,8 +1219,8 @@ function clipName(value, limit = 30) {
 
 // The three packetstore charts share one renderer because they differ only in
 // how many bars a row carries and what the bar is measured against. Retention
-// is scaled to the longest lookback on the page, fidelity to the worst observed
-// drop rate, and load to a fixed 100% so it matches the capacity charts.
+// is scaled to the longest lookback on the page. Fidelity and load use a fixed
+// 100% scale so the visual proportions match the reported percentages.
 function packetstoreChartSpecs(model) {
     const cycle = model.meta.cycle_label || 'reported-cycle';
     return [
@@ -1234,6 +1234,7 @@ function packetstoreChartSpecs(model) {
             // reported as an observation and never colored as a finding.
             series: [{ value: row => finiteNumber(row.lookbackLatestSec), color: palette => palette.low }],
             marker: row => finiteNumber(row.lookbackMinSec),
+            include: (row, values) => values[0] !== null && values[0] > 0,
             scaleMax: entries => Math.max(...entries.map(entry => entry.values[0] || 0), 1),
             label: row => {
                 const latest = finiteNumber(row.lookbackLatestSec);
@@ -1241,14 +1242,14 @@ function packetstoreChartSpecs(model) {
                 if (latest === null) return 'unavailable';
                 return `${formatDays(latest)} latest${minimum === null ? '' : ` · ${formatDays(minimum)} min`}`;
             },
-            sort: row => -(finiteNumber(row.lookbackLatestSec) || 0)
+            sort: row => finiteNumber(row.lookbackLatestSec) || 0
         },
         {
             key: 'fidelity',
             title: 'Capture and secret fidelity',
             kicker: 'DATA LOSS',
             subtitle: 'Share of offered packets and secrets that were dropped · totals for the window',
-            axis: 'WORST DROP RATE ON PAGE',
+            axis: '100% OF OFFERED TOTAL',
             series: [
                 { value: row => finiteNumber(row.packetDropRatio), color: palette => palette.high },
                 { value: row => finiteNumber(row.secretDropRatio), color: palette => palette.mid }
@@ -1257,11 +1258,8 @@ function packetstoreChartSpecs(model) {
             // is unavailable. Keep that row in the chart and show its counters
             // instead of dropping the appliance along with its missing rate.
             include: (row, values) => hasCaptureLoss(row) || values.some(value => value !== null),
-            scaleMax: entries => Math.max(
-                ...entries.flatMap(entry => entry.values.filter(value => value !== null && value > 0)),
-                Number.EPSILON
-            ),
-            label: row => `packets ${formatLossPercent(row.packetDropRatio)} · secrets ${formatLossPercent(row.secretDropRatio)}`,
+            scaleMax: () => 1,
+            label: row => `packets ${formatLossPercent(row.packetDropRatio)} · secrets ${formatLossPercent(row.secretDropRatio)} (${formatCompact(row.secretDropsTotal)} / ${formatCompact(row.secretsTotal)})`,
             note: row => `slow-write ${formatInteger(row.slowWriteDropsTotal || 0)} · interface ${formatInteger(row.interfaceDropsTotal || 0)}`,
             // Alerting is split so the highlight always lands on the line that
             // actually carries the loss — a store dropping only interface frames
@@ -1386,7 +1384,7 @@ function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
             if (value !== null && value > 0) {
                 const ratio = Math.min(value / scaleMax, 1);
                 slide.addShape(model.pptx.ShapeType.rect, {
-                    x: plotLeft, y: barY, w: Math.max(span * ratio, 0.035), h: barHeight,
+                    x: plotLeft, y: barY, w: span * ratio, h: barHeight,
                     fill: { color: pptColor(spec.series[index].color(palette, value)) },
                     line: { type: 'none' }
                 });
@@ -1431,8 +1429,9 @@ function addPacketstoreChartSlide(model, assets, spec, entries, title, page) {
     });
     const caption = spec.key === 'load'
         ? 'Bars are scaled to full load; the three loads are measured separately.'
-        : `Bars are scaled to the widest value on this page, not to a rated capacity.${
-            spec.key === 'retention' ? ' Retention is reported, not scored: no customer retention target is collected.' : ''}`;
+        : spec.key === 'fidelity'
+            ? 'Bars use a fixed 0–100% scale of the offered packet or secret total.'
+            : 'Bars are scaled to the longest lookback on this page. Retention is reported, not scored: no customer retention target is collected.';
     slide.addText([caption, page.withheld > 0
         ? `${formatInteger(page.withheld)} lower-ranked packetstores continue in the Packetstore health table`
         : ''].filter(Boolean).join(' · '), {

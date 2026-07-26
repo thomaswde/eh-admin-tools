@@ -3,6 +3,7 @@
 const SYSTEM_HEALTH_ROWS_PER_PAGE = 22;
 const SYSTEM_HEALTH_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_HEALTH_DEVICE_LIMIT = 5000;
+const SYSTEM_HEALTH_CHART_RIGHT_GUTTER = 300;
 const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '3';
 const SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS = [
     'schema_version', 'generated_at', 'report_lookback_days', 'report_from_ms', 'report_until_ms',
@@ -1079,9 +1080,29 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
 function renderSystemHealthPacketstoreCharts(report, rows) {
     const cycleLabel = document.getElementById('systemHealthPacketstoreCycleLabel');
     if (cycleLabel) cycleLabel.textContent = `Peak sampled 30-second input, header-compression, and disk-write CPU load at ${systemHealthPacketstoreCycleLabel(report)} cadence. The three loads are separate and are not summed.`;
-    drawSystemHealthPacketstoreLookback(document.getElementById('systemHealthPacketstoreLookbackChart'), rows);
+    drawSystemHealthPacketstoreLookback(
+        document.getElementById('systemHealthPacketstoreLookbackChart'),
+        systemHealthPacketstoreLookbackRows(rows)
+    );
     drawSystemHealthPacketstoreFidelity(document.getElementById('systemHealthPacketstoreFidelityChart'), rows);
     drawSystemHealthPacketstoreLoad(document.getElementById('systemHealthPacketstoreLoadChart'), rows);
+}
+
+function systemHealthPacketstoreLookbackRows(rows) {
+    return (rows || []).filter(row => {
+        const value = Number(row && row.lookbackLatestSec);
+        return Number.isFinite(value) && value > 0;
+    }).slice().sort((a, b) => Number(a.lookbackLatestSec) - Number(b.lookbackLatestSec)
+        || Number(a.lookbackMinSec || 0) - Number(b.lookbackMinSec || 0)
+        || String(a.name || a.id || '').localeCompare(String(b.name || b.id || '')));
+}
+
+function systemHealthHorizontalChartLayout(width) {
+    const compact = width < 760;
+    return {
+        left: compact ? 135 : 220,
+        right: compact ? 190 : SYSTEM_HEALTH_CHART_RIGHT_GUTTER
+    };
 }
 
 function systemHealthPacketstoreCycleLabel(report) {
@@ -1106,10 +1127,9 @@ function drawSystemHealthPacketstoreLookback(canvas, rows) {
     const state = setupSystemHealthCanvas(canvas, height);
     if (!state) return;
     const { ctx, width } = state;
-    if (!rows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore-backed sensors were detected');
+    if (!rows.length) return drawSystemHealthEmpty(ctx, width, height, 'No positive Packetstore retention values were returned');
     const colors = systemHealthStyleColors();
-    const left = width < 760 ? 135 : 220;
-    const right = 125;
+    const { left, right } = systemHealthHorizontalChartLayout(width);
     const plotWidth = Math.max(100, width - left - right);
     const maxDays = Math.max(1, ...rows.map(row => Number(row.lookbackLatestSec || 0) / 86400));
     drawSystemHealthValueGrid(ctx, left, 18, plotWidth, rows.length * 30, maxDays, value => `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}d`);
@@ -1138,11 +1158,9 @@ function drawSystemHealthPacketstoreFidelity(canvas, rows) {
     const { ctx, width } = state;
     if (!rows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore-backed sensors were detected');
     const colors = systemHealthStyleColors();
-    const left = width < 760 ? 135 : 220;
-    const right = 205;
+    const { left, right } = systemHealthHorizontalChartLayout(width);
     const plotWidth = Math.max(100, width - left - right);
-    const maxRatio = Math.max(0.000001, ...rows.flatMap(row => [row.packetDropRatio || 0, row.secretDropRatio || 0]));
-    drawSystemHealthValueGrid(ctx, left, 18, plotWidth, rows.length * 42, maxRatio * 100, value => formatSystemHealthPercent(value / 100));
+    drawSystemHealthPercentGrid(ctx, left, 18, plotWidth, rows.length * 42);
     rows.forEach((row, index) => {
         const y = 24 + index * 42;
         ctx.fillStyle = colors.subtle; ctx.font = '11px Arial'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
@@ -1150,13 +1168,18 @@ function drawSystemHealthPacketstoreFidelity(canvas, rows) {
         [['packetDropRatio', colors.high, 0], ['secretDropRatio', colors.mid, 16]].forEach(([key, color, offset]) => {
             const value = row[key];
             ctx.fillStyle = colors.track; ctx.fillRect(left, y + offset, plotWidth, 10);
-            if (value !== null) { ctx.fillStyle = color; ctx.fillRect(left, y + offset, plotWidth * Math.min(1, value / maxRatio), 10); }
+            if (value !== null) { ctx.fillStyle = color; ctx.fillRect(left, y + offset, plotWidth * systemHealthFidelityBarRatio(value), 10); }
         });
         ctx.fillStyle = colors.text; ctx.textAlign = 'left'; ctx.font = '10px Arial';
-        ctx.fillText(`packets ${formatSystemHealthPercent(row.packetDropRatio)} · secrets ${formatSystemHealthPercent(row.secretDropRatio)}`, left + plotWidth + 8, y + 7);
+        ctx.fillText(`packets ${formatSystemHealthPercent(row.packetDropRatio)} · secrets ${formatSystemHealthPercent(row.secretDropRatio)} (${formatSystemHealthCompactNumber(row.secretDropsTotal)} / ${formatSystemHealthCompactNumber(row.secretsTotal)})`, left + plotWidth + 8, y + 7);
         ctx.fillStyle = colors.muted;
         ctx.fillText(`slow-write ${formatSystemHealthNumber(row.slowWriteDropsTotal)} · interface ${formatSystemHealthNumber(row.interfaceDropsTotal)}`, left + plotWidth + 8, y + 23);
     });
+}
+
+function systemHealthFidelityBarRatio(value) {
+    const ratio = Number(value);
+    return Number.isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) : 0;
 }
 
 function drawSystemHealthPacketstoreLoad(canvas, rows) {
@@ -1166,8 +1189,7 @@ function drawSystemHealthPacketstoreLoad(canvas, rows) {
     const { ctx, width } = state;
     if (!rows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore-backed sensors were detected');
     const colors = systemHealthStyleColors();
-    const left = width < 760 ? 135 : 220;
-    const right = 155;
+    const { left, right } = systemHealthHorizontalChartLayout(width);
     const plotWidth = Math.max(100, width - left - right);
     drawSystemHealthPercentGrid(ctx, left, 18, plotWidth, rows.length * 42);
     rows.forEach((row, index) => {
@@ -1850,9 +1872,8 @@ function drawSystemHealthUtilizationCanvas(canvas, rows, options, meta) {
 
     const colors = systemHealthStyleColors();
     const compact = width < 760;
-    const left = compact ? 130 : 220;
-    const right = compact ? 118 : 170;
-    const plotWidth = Math.max(120, width - left - right);
+    const { left, right } = systemHealthHorizontalChartLayout(width);
+    const plotWidth = Math.max(100, width - left - right);
     const plotHeight = height - top - bottom;
     const hasCapacity = rows.some(row => Number(row[options.capacityKey] || 0) > 0);
     const maxValue = Math.max(...rows.map(row => Number(row[options.valueKey] || 0)), 1);
@@ -3011,6 +3032,11 @@ function systemHealthUtilizationColor(ratio) {
 function formatSystemHealthNumber(value) {
     if (value === null || value === undefined || Number.isNaN(Number(value))) return '';
     return Number(value).toLocaleString();
+}
+
+function formatSystemHealthCompactNumber(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
+    return Number(value).toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 }
 
 function formatSystemHealthRate(value) {

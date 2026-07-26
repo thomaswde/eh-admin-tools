@@ -490,6 +490,32 @@ test('the three packetstore charts are drawn as native shapes and label their ow
     const loadText = load.texts.map(item => item.text).join(' | ');
     assert.match(loadText, /All in One/);
     assert.match(loadText, /Packetstore/);
+
+    const fidelity = titleOf('Capture and secret fidelity');
+    const fidelityText = fidelity.texts.map(item => item.text).join(' | ');
+    assert.match(fidelityText, /100% OF OFFERED TOTAL/);
+    assert.match(fidelityText, /fixed 0–100% scale/);
+    assert.match(fidelityText, /secrets 0% \(0 \/ 100\)/);
+    const packetDropBar = fidelity.shapes.find(shape => shape.type === 'rect'
+        && shape.options.fill && shape.options.fill.color === 'EC0089');
+    assert.ok(packetDropBar.options.w < 0.1, 'a 1% drop rate should occupy about 1% of the chart width');
+});
+
+test('retention charts rank shortest positive lookback first and omit zero lookback rows', () => {
+    const model = pptxApi.buildDeckModel({
+        meta,
+        rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
+        packetstore_rows: [
+            packetstoreRow({ id: 'long', name: 'Long retention', lookbackLatestSec: 259200 }),
+            packetstoreRow({ id: 'missing', name: 'Missing retention', lookbackLatestSec: 0 }),
+            packetstoreRow({ id: 'short', name: 'Short retention', lookbackLatestSec: 86400 })
+        ]
+    });
+    const pptx = pptxApi.createPresentation(model, FakePptx);
+    const slide = pptx._slides.find(s => s.texts.some(item => item.text === 'Packetstore retention'));
+    const labels = slide.texts.map(item => item.text);
+    assert.ok(labels.indexOf('Short retention') < labels.indexOf('Long retention'));
+    assert.equal(labels.includes('Missing retention'), false);
 });
 
 test('small drop rates never round to zero, and the highlight follows the actual loss', () => {
@@ -555,7 +581,8 @@ test('measured zero packetstore values do not draw non-zero colored bars', () =>
         })]
     });
     const pptx = pptxApi.createPresentation(model, FakePptx);
-    const chartTitles = ['Packetstore retention', 'Capture and secret fidelity', 'Packetstore processing load'];
+    assert.equal(pptx._slides.some(slide => slide.texts.some(item => item.text === 'Packetstore retention')), false);
+    const chartTitles = ['Capture and secret fidelity', 'Packetstore processing load'];
 
     chartTitles.forEach(title => {
         const slide = pptx._slides.find(s => s.texts.some(item => item.text === title));

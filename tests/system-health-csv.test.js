@@ -23,6 +23,9 @@ const csvApi = vm.runInContext(`({
     systemHealthUnifiedSummaryCsv,
     systemHealthRows,
     systemHealthPacketstoreRows,
+    systemHealthPacketstoreLookbackRows,
+    systemHealthHorizontalChartLayout,
+    systemHealthFidelityBarRatio,
     systemHealthPacketstoreHasLoss,
     systemHealthSensorDetailCsv,
     systemHealthAnalysisModelPages,
@@ -306,6 +309,22 @@ test('slow-write packet drops count as Packetstore capture loss', () => {
         interfaceDropsTotal: 0,
         secretDropsTotal: 0
     }), false);
+});
+
+test('retention chart sorts shortest positive lookback first and omits unavailable zeros', () => {
+    const rows = csvApi.systemHealthPacketstoreLookbackRows([
+        { id: 'long', name: 'Long', lookbackLatestSec: 259200, lookbackMinSec: 172800 },
+        { id: 'missing', name: 'Missing', lookbackLatestSec: 0, lookbackMinSec: 0 },
+        { id: 'short', name: 'Short', lookbackLatestSec: 86400, lookbackMinSec: 43200 }
+    ]);
+    assert.deepEqual(Array.from(rows, row => row.id), ['short', 'long']);
+});
+
+test('horizontal charts share a right gutter and fidelity bars use a fixed 100 percent scale', () => {
+    assert.deepEqual({ ...csvApi.systemHealthHorizontalChartLayout(960) }, { left: 220, right: 300 });
+    assert.equal(csvApi.systemHealthFidelityBarRatio(0.005), 0.005);
+    assert.equal(csvApi.systemHealthFidelityBarRatio(0.00001), 0.00001);
+    assert.equal(csvApi.systemHealthFidelityBarRatio(2), 1);
 });
 
 test('load rejects legacy or incomplete CSVs instead of drawing misleading charts', () => {

@@ -757,7 +757,7 @@ def system_health_pdf_packetstore_page(rows: list[dict[str, Any]], page: int, pa
         secret_label = f"{secret_ratio * 100:.4g}%" if secret_ratio is not None else "unavailable"
         fidelity = (
             f"Packets {packet_label} ({int(row.get('packet_drops') or 0):,} dropped) · "
-            f"Secrets {secret_label} ({int(row.get('secret_drops') or 0):,} dropped)<br>"
+            f"Secrets {secret_label} ({int(row.get('secret_drops') or 0):,} of {int(row.get('secrets') or 0):,} dropped)<br>"
             f"Slow-write {int(row.get('slow_write_drops') or 0):,} · interface {int(row.get('interface_drops') or 0):,}"
         )
         load_values = [("Input", row.get("input_load")), ("Compress", row.get("compress_load")), ("Write", row.get("write_load"))]
