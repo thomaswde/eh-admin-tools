@@ -21,7 +21,7 @@ ExtraHop `int64` IDs and XIDs can exceed JavaScript's safe integer range. `backe
 - do not decode them arithmetically or pass them through `Number`/`parseInt`;
 - convert only domain measurements, counts, timestamps, and durations to numbers.
 
-When a new identifier field is introduced, extend the backend normalization contract and add a proxy-to-browser test. Browser-only fixtures containing pre-stringified large IDs do not prove transport safety.
+When a new identifier field is introduced, extend the backend normalization contract and add a proxy-to-browser test. Browser-only fixtures containing pre-stringified large IDs do not prove transport safety. For outbound metric JSON only, the backend losslessly rehydrates decimal-string `object_ids` into the JSON integers required by the ExtraHop request schema; browser code must never perform that conversion through JavaScript numbers.
 
 ## Retry, deadline, and cancellation ownership
 

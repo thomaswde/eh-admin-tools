@@ -18,6 +18,12 @@ TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
 MAX_REQUEST_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+DECIMAL_IDENTIFIER_PATTERN = re.compile(r"^-?(?:0|[1-9][0-9]*)$")
+METRIC_REQUEST_ENDPOINTS = frozenset({
+    "/api/v1/metrics",
+    "/api/v1/metrics/total",
+    "/api/v1/metrics/totalbyobject",
+})
 
 # JavaScript cannot represent API int64 identifiers above 2**53 exactly.  These
 # names come from the bundled ExtraHop OpenAPI schema.  Normalize identifiers at
@@ -54,6 +60,41 @@ def normalize_api_identifiers(value: Any, *, identifier_value: bool = False) -> 
     if identifier_value and isinstance(value, int) and not isinstance(value, bool):
         return str(value)
     return value
+
+
+def restore_metric_request_identifiers(
+    endpoint: str,
+    body: bytes | None,
+    content_type: str | None,
+) -> bytes | None:
+    """Rehydrate opaque browser IDs for metric schemas that require JSON int64."""
+    if (
+        not body
+        or endpoint not in METRIC_REQUEST_ENDPOINTS
+        or "application/json" not in str(content_type or "").lower()
+    ):
+        return body
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return body
+    if not isinstance(payload, dict) or not isinstance(payload.get("object_ids"), list):
+        return body
+
+    changed = False
+    object_ids = []
+    for value in payload["object_ids"]:
+        if isinstance(value, str) and DECIMAL_IDENTIFIER_PATTERN.fullmatch(value):
+            object_ids.append(int(value))
+            changed = True
+        else:
+            object_ids.append(value)
+    if not changed:
+        return body
+
+    payload["object_ids"] = object_ids
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 class ExtraHopApiError(Exception):
@@ -194,6 +235,7 @@ class ExtraHopClient:
         content_type: str | None = None,
     ) -> Any:
         endpoint = self._normalize_endpoint(endpoint)
+        body = restore_metric_request_identifiers(endpoint, body, content_type)
         await self.refresh_if_needed()
 
         response = await self._send(method, endpoint, query_string, body, content_type)

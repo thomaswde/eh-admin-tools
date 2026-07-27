@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -248,6 +249,51 @@ class BackendRouteSecurityTests(unittest.TestCase):
         self.assertIsInstance(data["stats"][0]["time"], int)
         self.assertIsInstance(data["stats"][0]["duration"], int)
         self.assertIsInstance(data["stats"][0]["values"][0][0], int)
+
+    def test_proxy_restores_opaque_metric_object_ids_for_upstream_json(self):
+        unsafe_id = 9007199254740993
+        captured_payloads = []
+
+        def upstream_response(request):
+            payload = json.loads(request.content)
+            captured_payloads.append(payload)
+            return httpx.Response(
+                200,
+                json={"object_ids": payload["object_ids"]},
+                headers={"content-type": "application/json"},
+                request=request,
+            )
+
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream_response))
+        session_id = main.sessions.create(client)
+        self.client.cookies.set(main.SESSION_COOKIE, session_id)
+        self.addCleanup(lambda: asyncio.run(client.aclose()))
+
+        for endpoint in ("metrics", "metrics/total", "metrics/totalbyobject"):
+            with self.subTest(endpoint=endpoint):
+                response = self.client.post(
+                    f"/backend/extrahop/api/v1/{endpoint}",
+                    json={
+                        "object_type": "system",
+                        "object_ids": [str(unsafe_id), "7"],
+                        "metric_specs": [{"name": "pkts"}],
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["object_ids"], [str(unsafe_id), "7"])
+
+        self.assertEqual(len(captured_payloads), 3)
+        for payload in captured_payloads:
+            self.assertEqual(payload["object_ids"], [unsafe_id, 7])
+            self.assertTrue(all(isinstance(value, int) for value in payload["object_ids"]))
 
     def test_index_disables_browser_caching(self):
         response = self.client.get("/")
