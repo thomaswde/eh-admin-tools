@@ -1,0 +1,22 @@
+{
+  "name": "eh-admin-tools",
+  "version": "2026.7.24",
+  "private": true,
+  "description": "Local administration and reporting tools for ExtraHop deployments",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check:syntax": "find js -name '*.js' -not -path 'js/vendor/*' -print0 | xargs -0 -n1 node --check",
+    "lint": "eslint js tests",
+    "format": "prettier --write 'js/**/*.js' 'tests/**/*.js' '*.json' '*.md'",
+    "format:check": "prettier --check 'js/**/*.js' 'tests/**/*.js' '*.json' '*.md'",
+    "check": "npm run test && npm run check:syntax && npm run lint"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "prettier": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
