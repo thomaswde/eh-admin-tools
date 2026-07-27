@@ -101,15 +101,6 @@ class ExtraHopAPI {
         return ExtraHopAPI.parseStaticResponse(response);
     }
 
-    async refreshAccessToken() {
-        const response = await ExtraHopAPI.backendFetch('/backend/session/refresh', {
-            method: 'POST',
-            headers: { 'Accept': 'application/json' }
-        });
-        await this.parseResponse(response);
-        return true;
-    }
-
     async dispose() {
         await ExtraHopAPI.backendFetch('/backend/session', { method: 'DELETE' }).catch(() => {});
     }

@@ -1,36 +1,3 @@
-async function refreshAccessToken() {
-    if (!window.apiClient || !state.apiConfig || state.apiConfig.type !== '360') {
-        return false;
-    }
-
-    try {
-        return await window.apiClient.refreshAccessToken();
-    } catch (error) {
-        console.error('Failed to refresh access token:', error);
-        return false;
-    }
-}
-
-// Wrapper for API requests that handles token refresh
-async function apiRequestWithRetry(apiMethod, ...args) {
-    try {
-        return await apiMethod(...args);
-    } catch (error) {
-        // Check if it's a 401 error (expired token)
-        if (error.message.includes('401') && state.apiConfig?.type === '360') {
-            console.log('Detected 401, attempting token refresh...');
-            const refreshed = await refreshAccessToken();
-            
-            if (refreshed) {
-                // Retry the original request
-                return await apiMethod(...args);
-            }
-        }
-        // Re-throw if not a token issue or refresh failed
-        throw error;
-    }
-}
-
 function groupSavedConnections(connections) {
     const sorted = [...(connections || [])].sort((left, right) => {
         const labelOrder = String(left.label || '').localeCompare(
