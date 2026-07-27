@@ -1109,6 +1109,18 @@
                     Upload CSV
                     <input type="file" id="localityCsvInput" accept=".csv" class="hidden">
                 </label>
+                <div class="grow">
+                    <input type="search" id="filterLocalities" placeholder="Filter localities…" style="display: none;">
+                </div>
+                <span id="localitiesFilterCount" class="small muted" style="display: none;"></span>
+            </div>
+
+            <div id="localitiesBulkActions" class="selection-bar" style="display: none;">
+                <span id="selectedLocalitiesCount" class="selection-count">0 selected</span>
+                <button type="button" id="bulkDeleteLocalities" class="btn-danger btn-sm">Delete selected</button>
+                <span class="small muted">Deletion is staged until you save changes.</span>
+                <div class="spacer"></div>
+                <button type="button" id="clearLocalitySelection" class="btn-link">Clear</button>
             </div>
 
             <div id="localityStatus" style="display: none; margin-bottom: 14px;">
@@ -1124,8 +1136,9 @@
                 <table id="localitiesDataTable">
                     <thead>
                         <tr>
-                            <th style="width: 20%;">Name</th>
-                            <th style="width: 30%;">IP addresses and CIDR blocks</th>
+                            <th class="col-check"><input type="checkbox" id="selectAllLocalities" aria-label="Select all filtered localities"></th>
+                            <th style="width: 19%;">Name</th>
+                            <th style="width: 29%;">IP addresses and CIDR blocks</th>
                             <th style="width: 15%;">Type</th>
                             <th style="width: 25%;">Description</th>
                             <th style="width: 10%;" class="actions">Actions</th>
@@ -1440,6 +1453,10 @@
                 <input type="checkbox" id="grantEditAccess">
                 <span>Grant previous owner edit access</span>
             </label>
+            <div class="dashboard-mutation-progress notice" role="status" aria-live="polite" style="display: none;">
+                <div class="spinner spinner-sm"></div>
+                <span class="dashboard-mutation-progress-text"></span>
+            </div>
         </div>
         <div class="modal-foot">
             <button type="button" id="cancelChangeOwner" class="btn">Cancel</button>
@@ -1462,6 +1479,10 @@
                 <select id="additionalEditorsSelect" multiple size="6"></select>
                 <span class="field-hint">Hold Ctrl or Cmd to select multiple users.</span>
             </div>
+            <div class="dashboard-mutation-progress notice" role="status" aria-live="polite" style="display: none;">
+                <div class="spinner spinner-sm"></div>
+                <span class="dashboard-mutation-progress-text"></span>
+            </div>
         </div>
         <div class="modal-foot">
             <button type="button" id="cancelModifySharing" class="btn">Cancel</button>
@@ -1475,6 +1496,10 @@
     <div class="modal-content">
         <h2 class="modal-title modal-title-danger">Confirm deletion</h2>
         <p class="modal-desc">Are you sure you want to delete <strong id="deleteCount"></strong>? This cannot be undone.</p>
+        <div class="dashboard-mutation-progress notice" role="status" aria-live="assertive" style="display: none; margin-top: 14px;">
+            <div class="spinner spinner-sm"></div>
+            <span class="dashboard-mutation-progress-text"></span>
+        </div>
         <div class="modal-foot" style="margin-top: 20px;">
             <button type="button" id="cancelDelete" class="btn">Cancel</button>
             <button type="button" id="confirmDelete" class="btn-danger">Delete</button>

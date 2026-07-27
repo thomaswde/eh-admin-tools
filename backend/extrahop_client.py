@@ -16,6 +16,7 @@ from backend.api_response_logger import ApiResponseLogger
 DEFAULT_360_TOKEN_TTL_SECONDS = 30 * 60
 TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
 MAX_REQUEST_ATTEMPTS = 4
+MAX_INFLIGHT_MUTATIONS = 128
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 DECIMAL_IDENTIFIER_PATTERN = re.compile(r"^-?(?:0|[1-9][0-9]*)$")
@@ -139,6 +140,8 @@ class ExtraHopClient:
         self.verify_tls = True
         self._http_client: httpx.AsyncClient | None = None
         self._auth_lock = asyncio.Lock()
+        self._mutation_lock = asyncio.Lock()
+        self._inflight_mutations: dict[tuple[Any, ...], asyncio.Task[Any]] = {}
 
         if config["type"] == "360":
             tenant = config["tenant"].strip().lower()
@@ -246,6 +249,46 @@ class ExtraHopClient:
     ) -> Any:
         endpoint = self._normalize_endpoint(endpoint)
         body = restore_api_request_identifiers(endpoint, body, content_type)
+        normalized_method = method.upper()
+        if self._coalesces_mutation(normalized_method, endpoint):
+            key = (
+                normalized_method,
+                endpoint,
+                query_string,
+                body or b"",
+                content_type or "",
+                include_metadata,
+            )
+            return await self._coalesced_mutation(
+                key,
+                self._request_normalized(
+                    normalized_method,
+                    endpoint,
+                    query_string=query_string,
+                    body=body,
+                    content_type=content_type,
+                    include_metadata=include_metadata,
+                ),
+            )
+        return await self._request_normalized(
+            normalized_method,
+            endpoint,
+            query_string=query_string,
+            body=body,
+            content_type=content_type,
+            include_metadata=include_metadata,
+        )
+
+    async def _request_normalized(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        query_string: str,
+        body: bytes | None,
+        content_type: str | None,
+        include_metadata: bool,
+    ) -> Any:
         await self.refresh_if_needed()
 
         response = await self._send(method, endpoint, query_string, body, content_type)
@@ -274,6 +317,48 @@ class ExtraHopClient:
                 location=self._safe_relative_location(response.headers.get("location")),
             )
         return data
+
+    async def _coalesced_mutation(self, key: tuple[Any, ...], request: Any) -> Any:
+        async with self._mutation_lock:
+            task = self._inflight_mutations.get(key)
+            if task is None:
+                if len(self._inflight_mutations) >= MAX_INFLIGHT_MUTATIONS:
+                    request.close()
+                    raise ExtraHopApiError(
+                        "Too many ExtraHop mutations are already in progress",
+                        503,
+                        {"limit": MAX_INFLIGHT_MUTATIONS},
+                    )
+                task = asyncio.create_task(request)
+                self._inflight_mutations[key] = task
+                task.add_done_callback(
+                    lambda completed, mutation_key=key: self._remove_inflight_mutation(
+                        mutation_key,
+                        completed,
+                    )
+                )
+            else:
+                request.close()
+        return await asyncio.shield(task)
+
+    def _remove_inflight_mutation(
+        self,
+        key: tuple[Any, ...],
+        task: asyncio.Task[Any],
+    ) -> None:
+        if self._inflight_mutations.get(key) is task:
+            self._inflight_mutations.pop(key, None)
+
+    @staticmethod
+    def _coalesces_mutation(method: str, endpoint: str) -> bool:
+        if method not in {"PATCH", "DELETE"}:
+            return False
+        path_parts = endpoint.strip("/").split("/")
+        return (
+            len(path_parts) in {4, 5}
+            and path_parts[:3] == ["api", "v1", "dashboards"]
+            and (len(path_parts) == 4 or path_parts[4] == "sharing")
+        )
 
     async def _send(
         self,

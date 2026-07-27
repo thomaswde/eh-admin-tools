@@ -3,6 +3,8 @@
 const localitiesState = {
     currentLocalities: [],   // Working copy with edits
     deletedIds: new Set(),   // Track deleted entries
+    selectedKeys: new Set(),
+    filterTerm: '',
     isLoaded: false
 };
 
@@ -22,7 +24,69 @@ function cloneLocality(locality) {
 function replaceLocalityState(localities) {
     localitiesState.currentLocalities = localities.map(cloneLocality);
     localitiesState.deletedIds.clear();
+    localitiesState.selectedKeys.clear();
     localitiesState.isLoaded = true;
+}
+
+function localitySelectionKey(locality) {
+    if (locality.id != null && locality.id !== '') return `id:${String(locality.id)}`;
+    return `draft:${String(locality._clientId || '')}`;
+}
+
+function localityMatchesFilter(locality) {
+    const term = localitiesState.filterTerm.trim().toLowerCase();
+    if (!term) return true;
+    return [
+        locality.name,
+        ...(locality.networks || []),
+        locality.external ? 'external' : 'internal',
+        locality.description,
+        locality.id
+    ].some(value => String(value || '').toLowerCase().includes(term));
+}
+
+function getVisibleLocalityEntries() {
+    return localitiesState.currentLocalities
+        .map((locality, index) => ({ locality, index }))
+        .filter(({ locality }) => !locality._deleted && localityMatchesFilter(locality));
+}
+
+function pruneLocalitySelection() {
+    const selectableKeys = new Set(
+        localitiesState.currentLocalities
+            .filter(locality => !locality._deleted)
+            .map(localitySelectionKey)
+    );
+    localitiesState.selectedKeys.forEach(key => {
+        if (!selectableKeys.has(key)) localitiesState.selectedKeys.delete(key);
+    });
+}
+
+function updateLocalitySelectionUi() {
+    pruneLocalitySelection();
+    const visibleEntries = getVisibleLocalityEntries();
+    const activeCount = localitiesState.currentLocalities.filter(locality => !locality._deleted).length;
+    const visibleKeys = visibleEntries.map(({ locality }) => localitySelectionKey(locality));
+    const selectedVisibleCount = visibleKeys.filter(key => localitiesState.selectedKeys.has(key)).length;
+    const selectAll = document.getElementById('selectAllLocalities');
+    const bulkActions = document.getElementById('localitiesBulkActions');
+    const selectedCount = document.getElementById('selectedLocalitiesCount');
+    const filterCount = document.getElementById('localitiesFilterCount');
+
+    if (selectAll) {
+        selectAll.checked = visibleKeys.length > 0 && selectedVisibleCount === visibleKeys.length;
+        selectAll.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleKeys.length;
+        selectAll.disabled = visibleKeys.length === 0;
+    }
+    if (bulkActions) {
+        bulkActions.style.display = localitiesState.selectedKeys.size > 0 ? 'flex' : 'none';
+    }
+    if (selectedCount) {
+        selectedCount.textContent = `${localitiesState.selectedKeys.size} selected`;
+    }
+    if (filterCount) {
+        filterCount.textContent = `${visibleEntries.length} of ${activeCount} localit${activeCount === 1 ? 'y' : 'ies'} shown`;
+    }
 }
 
 // API Functions for Network Localities
@@ -48,6 +112,8 @@ async function loadNetworkLocalities() {
         document.getElementById('addLocalityRow').style.display = 'inline-block';
         document.getElementById('saveLocalityChanges').style.display = 'inline-block';
         document.getElementById('uploadCsvLabel').style.display = 'inline-block';
+        document.getElementById('filterLocalities').style.display = 'inline-block';
+        document.getElementById('localitiesFilterCount').style.display = 'inline';
 
         showLocalityStatus(`Loaded ${response.length} network localities`, 'success');
     } catch (error) {
@@ -59,15 +125,21 @@ async function loadNetworkLocalities() {
 function renderLocalitiesTable() {
     const tbody = document.getElementById('localitiesTableBody');
     tbody.innerHTML = '';
+    const visibleEntries = getVisibleLocalityEntries();
 
-    localitiesState.currentLocalities.forEach((locality, index) => {
-        if (locality._deleted) return; // Skip deleted rows
-
+    visibleEntries.forEach(({ locality, index }) => {
         const row = document.createElement('tr');
         row.dataset.index = index;
         row.dataset.id = locality.id || '';
+        const selectionKey = localitySelectionKey(locality);
         
         row.innerHTML = `
+            <td class="col-check">
+                <input type="checkbox" class="locality-checkbox"
+                       data-selection-key="${escapeAttribute(selectionKey)}"
+                       aria-label="Select ${escapeAttribute(locality.name || 'new locality')}"
+                       ${localitiesState.selectedKeys.has(selectionKey) ? 'checked' : ''}>
+            </td>
             <td>
                 <input type="text" class="locality-field" data-field="name"
                        value="${escapeAttribute(locality.name || '')}">
@@ -95,6 +167,10 @@ function renderLocalitiesTable() {
         tbody.appendChild(row);
     });
 
+    if (visibleEntries.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6"><div class="empty-inline">No network localities match the current filter</div></td></tr>';
+    }
+
     // Add event listeners for inline editing
     document.querySelectorAll('.locality-field').forEach(input => {
         input.addEventListener('change', handleLocalityFieldChange);
@@ -104,6 +180,78 @@ function renderLocalitiesTable() {
     document.querySelectorAll('.delete-locality-btn').forEach(btn => {
         btn.addEventListener('click', handleDeleteLocality);
     });
+
+    document.querySelectorAll('.locality-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', handleLocalitySelectionChange);
+    });
+    updateLocalitySelectionUi();
+}
+
+function handleLocalitySelectionChange(e) {
+    const key = e.target.dataset.selectionKey;
+    if (e.target.checked) {
+        localitiesState.selectedKeys.add(key);
+    } else {
+        localitiesState.selectedKeys.delete(key);
+    }
+    updateLocalitySelectionUi();
+}
+
+function handleSelectAllLocalities(e) {
+    getVisibleLocalityEntries().forEach(({ locality }) => {
+        const key = localitySelectionKey(locality);
+        if (e.target.checked) {
+            localitiesState.selectedKeys.add(key);
+        } else {
+            localitiesState.selectedKeys.delete(key);
+        }
+    });
+    renderLocalitiesTable();
+}
+
+function handleLocalityFilter(e) {
+    localitiesState.filterTerm = e.target.value;
+    renderLocalitiesTable();
+}
+
+function clearLocalitySelection() {
+    localitiesState.selectedKeys.clear();
+    renderLocalitiesTable();
+}
+
+function stageLocalitiesForDeletion(selectionKeys) {
+    const selected = new Set(selectionKeys);
+    let staged = 0;
+    localitiesState.currentLocalities.forEach(locality => {
+        if (!selected.has(localitySelectionKey(locality)) || locality._deleted) return;
+        if (locality.id != null && locality.id !== '') {
+            localitiesState.deletedIds.add(String(locality.id));
+        }
+        locality._deleted = true;
+        staged++;
+    });
+    selected.forEach(key => localitiesState.selectedKeys.delete(key));
+    return staged;
+}
+
+function handleBulkDeleteLocalities() {
+    const selectionKeys = Array.from(localitiesState.selectedKeys);
+    if (selectionKeys.length === 0) return;
+
+    const noun = selectionKeys.length === 1 ? 'locality' : 'localities';
+    if (!confirm(
+        `Stage ${selectionKeys.length} selected ${noun} for deletion? ` +
+        'Existing localities are not deleted until you click Save Changes.'
+    )) {
+        return;
+    }
+
+    const staged = stageLocalitiesForDeletion(selectionKeys);
+    renderLocalitiesTable();
+    showLocalityStatus(
+        `Staged ${staged} ${staged === 1 ? 'locality' : 'localities'} for deletion. Click Save Changes to apply.`,
+        'warning'
+    );
 }
 
 function handleLocalityFieldChange(e) {
@@ -135,18 +283,14 @@ function handleDeleteLocality(e) {
         return;
     }
     
-    if (id) {
-        // Existing locality - mark for deletion
-        localitiesState.deletedIds.add(id);
-    }
-    
-    // Mark as deleted in current state
-    localitiesState.currentLocalities[index]._deleted = true;
-    
+    stageLocalitiesForDeletion([localitySelectionKey(locality)]);
     renderLocalitiesTable();
 }
 
 function addLocalityRow() {
+    localitiesState.filterTerm = '';
+    const filterInput = document.getElementById('filterLocalities');
+    if (filterInput) filterInput.value = '';
     const newLocality = {
         name: '',
         networks: [],
@@ -268,6 +412,7 @@ async function saveLocalityChanges() {
     }
 
     try {
+        localitiesState.selectedKeys.clear();
         document.getElementById('saveLocalityChanges').disabled = true;
         document.getElementById('saveLocalityChanges').textContent = 'Saving...';
         
@@ -503,6 +648,10 @@ function initLocalitiesModule() {
         document.getElementById('addLocalityRow').addEventListener('click', addLocalityRow);
         document.getElementById('saveLocalityChanges').addEventListener('click', saveLocalityChanges);
         document.getElementById('localityCsvInput').addEventListener('change', handleCsvUpload);
+        document.getElementById('filterLocalities').addEventListener('input', handleLocalityFilter);
+        document.getElementById('selectAllLocalities').addEventListener('change', handleSelectAllLocalities);
+        document.getElementById('bulkDeleteLocalities').addEventListener('click', handleBulkDeleteLocalities);
+        document.getElementById('clearLocalitySelection').addEventListener('click', clearLocalitySelection);
         
         document.getElementById('loadLocalities').setAttribute('data-listener-added', 'true');
     }

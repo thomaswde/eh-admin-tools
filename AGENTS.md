@@ -1,17 +1,15 @@
 # Repository Working Instructions
 
-These instructions describe the current ExtraHop Admin Tools repository. Historical audits are evidence, not active task lists.
+Use these durable repository rules for ExtraHop Admin Tools. Verify implementation details against the current code and tests.
 
-## Authoritative documentation
+## Before editing
 
+- Inspect the working tree and preserve unrelated changes.
 - Read [docs/architecture.md](docs/architecture.md) before changing cross-cutting behavior.
-- Follow [docs/decisions/2026-07-26-repository-overhaul.md](docs/decisions/2026-07-26-repository-overhaul.md) for the current overhaul decisions and their rationale.
-- The original System Health audit is preserved verbatim at [docs/audits/2026-07-26-system-health-rest-api-audit.md](docs/audits/2026-07-26-system-health-rest-api-audit.md). Its findings describe the pre-refactor state and must not be treated as current defects without verifying the code and tests.
-- Prototype-artifact status is recorded in [docs/decisions/2026-07-26-prototype-artifacts.md](docs/decisions/2026-07-26-prototype-artifacts.md).
+- Treat `docs/audits/` and `docs/decisions/` as historical context, not active task lists.
 
 ## Working rules
 
-- Preserve unrelated working-tree changes. Inspect status and overlapping diffs before editing.
 - Keep the browser-to-ExtraHop boundary intact: browser code calls the loopback FastAPI service; credentials and upstream authentication stay server-side.
 - Gate deployment-specific features through `js/utils/deployment-capabilities.js`. Do not discover unsupported endpoint families by making speculative runtime calls.
 - Treat ExtraHop IDs and XIDs as opaque decimal strings after the backend normalizes them. Do not use `parseInt`, floating-point arithmetic, or numeric sorting on identifiers.
@@ -19,7 +17,7 @@ These instructions describe the current ExtraHop Admin Tools repository. Histori
 - For reports, compute one absolute window and reuse it. Preserve measured zero separately from offline, empty, unauthorized, failed, timed-out, or partial collection states. Never use aggregate totals as time-series peaks.
 - Keep resource use bounded: pagination, metric cardinality, response logging, queues, request bodies, PDF work, and generated artifacts all require explicit limits and failure behavior.
 - Prefer behavioral tests over source-string assertions. Add regression coverage with the correction, and keep browser, CSV, PDF, and PowerPoint projections consistent when they share domain semantics.
-- Runtime code belongs only in the distribution allowlist maintained by `scripts/build_dist.py`. Files documented as prototypes are not runtime dependencies.
+- Keep shipped runtime files in the explicit distribution allowlist maintained by `scripts/build_dist.py`.
 
 ## Verification
 

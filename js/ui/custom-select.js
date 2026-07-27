@@ -31,6 +31,11 @@
         if (openControl && openControl !== except) closeControl(openControl);
     }
 
+    function handleDocumentScroll(event) {
+        if (openControl?.menu.contains(event.target)) return;
+        closeOpenControl();
+    }
+
     function createActionIcon(action) {
         const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         icon.setAttribute('width', '14');
@@ -367,7 +372,7 @@
             }
         });
         window.addEventListener('resize', () => closeOpenControl());
-        document.addEventListener('scroll', () => closeOpenControl(), true);
+        document.addEventListener('scroll', handleDocumentScroll, true);
     });
 
     window.refreshCustomSelect = refreshSelect;

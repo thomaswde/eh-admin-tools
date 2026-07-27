@@ -27,6 +27,8 @@ When a new identifier field is introduced, extend the backend normalization cont
 
 `backend/extrahop_client.py` owns bounded retries for transient network errors, HTTP 429, and selected transient server responses. It honors `Retry-After`, uses backoff with jitter, and retries only safe methods plus the allowlisted read-oriented POST endpoints. Permanent validation/authorization failures and cancellation are not retried.
 
+Dashboard PATCH and DELETE requests also have a bounded, per-session single-flight guard. Identical concurrent mutations share one upstream task, so a duplicate browser submission cannot repeat the same in-progress change. The guard is not a durable idempotency cache: after the first operation finishes, a later intentional request may run normally.
+
 The browser API wrapper owns a request timeout and caller cancellation. A collector that drains asynchronous ExtraHop results, such as Metrics XID continuations, owns the continuation state machine and one absolute deadline beginning before the initial request. It must not wrap backend transport retries in another retry loop. Exhaustion produces an explicit incomplete or failed state, never silent partial success or zero.
 
 ## Report windows and status semantics

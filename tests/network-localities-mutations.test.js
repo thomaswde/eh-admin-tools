@@ -198,3 +198,59 @@ test('authoritative reload resolves an ambiguous create response without staging
         [['10', 'confirmed', false], ['11', 'ambiguous', false]]
     );
 });
+
+test('filter-aware bulk selection stages only selected localities for deletion', () => {
+    const { context, localitiesState } = loadLocalities({});
+    localitiesState.currentLocalities = [
+        {
+            id: '9007199254740993',
+            name: 'Production East',
+            networks: ['10.1.0.0/16'],
+            external: false,
+            description: 'primary'
+        },
+        {
+            id: '2',
+            name: 'Development',
+            networks: ['10.2.0.0/16'],
+            external: false,
+            description: 'lab'
+        },
+        {
+            name: 'Production draft',
+            networks: ['10.3.0.0/16'],
+            external: false,
+            description: '',
+            _isNew: true,
+            _clientId: 'draft-production'
+        }
+    ];
+    localitiesState.filterTerm = 'production';
+
+    const visibleKeys = vm.runInContext(
+        'getVisibleLocalityEntries().map(({ locality }) => localitySelectionKey(locality))',
+        context
+    );
+    assert.deepEqual(plain(visibleKeys), [
+        'id:9007199254740993',
+        'draft:draft-production'
+    ]);
+
+    vm.runInContext('handleSelectAllLocalities({ target: { checked: true } })', context);
+    assert.deepEqual(Array.from(localitiesState.selectedKeys), [
+        'id:9007199254740993',
+        'draft:draft-production'
+    ]);
+
+    const staged = vm.runInContext(
+        'stageLocalitiesForDeletion(Array.from(localitiesState.selectedKeys))',
+        context
+    );
+
+    assert.equal(staged, 2);
+    assert.deepEqual(Array.from(localitiesState.deletedIds), ['9007199254740993']);
+    assert.equal(localitiesState.currentLocalities[0]._deleted, true);
+    assert.equal(localitiesState.currentLocalities[1]._deleted, undefined);
+    assert.equal(localitiesState.currentLocalities[2]._deleted, true);
+    assert.equal(localitiesState.selectedKeys.size, 0);
+});

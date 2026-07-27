@@ -21,6 +21,19 @@ test('Connected Appliances uses an inline tick filter menu and a wide group sele
     assert.match(nodemap, /setNodemapFilterMenuOpen/);
 });
 
+test('scrolling an open custom-select menu does not close it', () => {
+    const customSelect = source('js/ui/custom-select.js');
+
+    assert.match(
+        customSelect,
+        /function handleDocumentScroll\(event\) \{\s*if \(openControl\?\.menu\.contains\(event\.target\)\) return;\s*closeOpenControl\(\);\s*\}/
+    );
+    assert.match(
+        customSelect,
+        /document\.addEventListener\('scroll', handleDocumentScroll, true\)/
+    );
+});
+
 test('Topology uses a far-left trunk and row-level right-angle branches', () => {
     const nodemap = source('js/modules/nodemap.js');
 

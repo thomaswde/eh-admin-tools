@@ -83,6 +83,41 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         await client.aclose()
         self.assertTrue(shared_client.is_closed)
 
+    async def test_coalesces_identical_concurrent_dashboard_mutations_only_while_in_flight(self):
+        attempts = 0
+        request_started = asyncio.Event()
+        release_request = asyncio.Event()
+
+        async def handler(_request):
+            nonlocal attempts
+            attempts += 1
+            request_started.set()
+            await release_request.wait()
+            return httpx.Response(204)
+
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        first = asyncio.create_task(client.request("DELETE", "/dashboards/42"))
+        await request_started.wait()
+        duplicate = asyncio.create_task(client.request("DELETE", "/dashboards/42"))
+        await asyncio.sleep(0)
+
+        self.assertEqual(attempts, 1)
+        release_request.set()
+        self.assertEqual(await first, {})
+        self.assertEqual(await duplicate, {})
+
+        await client.request("DELETE", "/dashboards/42")
+        self.assertEqual(attempts, 2, "completed work is not retained as a durable idempotency cache")
+        await client.aclose()
+
     async def test_360_reauthenticates_once_after_401_with_shared_client(self):
         api_attempts = 0
         token_attempts = 0

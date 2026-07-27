@@ -164,6 +164,63 @@ test('bulk deletion attempts every item and reloads after any confirmed deletion
     assert.equal(context.refreshCount, 1);
 });
 
+test('a second dashboard mutation submission cannot queue while the first is active', async () => {
+    let deleteCalls = 0;
+    let releaseDelete;
+    const blockedDelete = new Promise(resolve => {
+        releaseDelete = resolve;
+    });
+    const api = {
+        async deleteDashboard() {
+            deleteCalls++;
+            await blockedDelete;
+            return true;
+        }
+    };
+    const { context } = loadDashboardManager(api);
+    vm.runInContext('updateBulkActions = () => {}; syncSelectAllCheckbox = () => {};', context);
+
+    const first = vm.runInContext(
+        `runDashboardMutation('delete', ['one'], onProgress => performDashboardDeletes(['one'], onProgress))`,
+        context
+    );
+    const duplicate = vm.runInContext(
+        `runDashboardMutation('delete', ['one'], onProgress => performDashboardDeletes(['one'], onProgress))`,
+        context
+    );
+
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(deleteCalls, 1);
+    assert.equal(await duplicate, null);
+
+    releaseDelete();
+    const results = await first;
+    assert.equal(results.deletions, 1);
+    assert.equal(deleteCalls, 1);
+});
+
+test('dashboard mutation progress reports per-item completion and the authoritative refresh phase', async () => {
+    const progress = [];
+    const api = {
+        async deleteDashboard() {
+            return true;
+        }
+    };
+    const { context } = loadDashboardManager(api);
+    context.captureProgress = value => progress.push(plain(value));
+
+    await vm.runInContext(
+        `performDashboardDeletes(['one', 'two'], captureProgress)`,
+        context
+    );
+
+    assert.deepEqual(progress, [
+        { completed: 1, total: 2, phase: 'mutating' },
+        { completed: 2, total: 2, phase: 'mutating' },
+        { completed: 2, total: 2, phase: 'refreshing' }
+    ]);
+});
+
 test('sharing read failures remain unavailable instead of becoming empty sharing', async () => {
     const api = {
         async getDashboardSharing() {

@@ -1,5 +1,111 @@
 // Dashboard Manager Module
 
+const dashboardMutationState = {
+    promise: null,
+    operation: null
+};
+
+const dashboardMutationUi = {
+    owner: {
+        progressLabel: 'Changing dashboard owners',
+        confirmButtonId: 'confirmChangeOwner',
+        idleButtonLabel: 'Change owner'
+    },
+    sharing: {
+        progressLabel: 'Updating dashboard sharing',
+        confirmButtonId: 'confirmModifySharing',
+        idleButtonLabel: 'Update sharing'
+    },
+    delete: {
+        progressLabel: 'Deleting dashboards',
+        confirmButtonId: 'confirmDelete',
+        idleButtonLabel: 'Delete'
+    }
+};
+
+function isDashboardMutationRunning() {
+    return dashboardMutationState.promise !== null;
+}
+
+function setDashboardMutationProgress(operation, completed, total, phase = 'mutating') {
+    const ui = dashboardMutationUi[operation];
+    if (!ui) return;
+
+    const message = phase === 'refreshing'
+        ? `${ui.progressLabel}: ${total} of ${total} complete. Refreshing dashboards…`
+        : `${ui.progressLabel}: ${completed} of ${total} complete…`;
+    const button = document.getElementById(ui.confirmButtonId);
+    if (button) {
+        button.textContent = phase === 'refreshing'
+            ? 'Refreshing…'
+            : `${ui.progressLabel.replace('dashboards', '').trim()} ${completed}/${total}…`;
+    }
+    document.querySelectorAll?.('.dashboard-mutation-progress').forEach(element => {
+        element.style.display = 'flex';
+        element.querySelector('.dashboard-mutation-progress-text').textContent = message;
+    });
+}
+
+function setDashboardMutationBusy(operation, busy) {
+    const ui = dashboardMutationUi[operation];
+    if (!ui) return;
+
+    [
+        'bulkChangeOwnerBtn',
+        'bulkShareBtn',
+        'bulkDeleteBtn',
+        'selectAllFilteredBtn',
+        'clearDashboardSelectionBtn',
+        'loadDashboardsBtn',
+        'confirmChangeOwner',
+        'confirmModifySharing',
+        'confirmDelete',
+        'cancelChangeOwner',
+        'cancelModifySharing',
+        'cancelDelete'
+    ].forEach(id => {
+        const control = document.getElementById(id);
+        if (control) control.disabled = busy;
+    });
+
+    const module = document.getElementById('dashboardsModule');
+    if (module) module.setAttribute('aria-busy', busy ? 'true' : 'false');
+
+    if (!busy) {
+        const button = document.getElementById(ui.confirmButtonId);
+        if (button) button.textContent = ui.idleButtonLabel;
+        document.querySelectorAll?.('.dashboard-mutation-progress').forEach(element => {
+            element.style.display = 'none';
+        });
+        updateBulkActions();
+        syncSelectAllCheckbox();
+    }
+}
+
+async function runDashboardMutation(operation, dashboardIds, mutation) {
+    if (dashboardMutationState.promise) return null;
+
+    setDashboardMutationBusy(operation, true);
+    setDashboardMutationProgress(operation, 0, dashboardIds.length);
+    dashboardMutationState.operation = operation;
+    dashboardMutationState.promise = mutation(progress => {
+        setDashboardMutationProgress(
+            operation,
+            progress.completed,
+            progress.total,
+            progress.phase
+        );
+    });
+
+    try {
+        return await dashboardMutationState.promise;
+    } finally {
+        dashboardMutationState.promise = null;
+        dashboardMutationState.operation = null;
+        setDashboardMutationBusy(operation, false);
+    }
+}
+
 async function loadDashboards() {
     if (!state.connected) {
         alert('Please connect to your ExtraHop instance first');
@@ -127,10 +233,10 @@ async function refreshDashboardsAfterMutations(results) {
     }
 }
 
-async function performDashboardOwnerChanges(dashboardIds, newOwner, grantAccess) {
+async function performDashboardOwnerChanges(dashboardIds, newOwner, grantAccess, onProgress) {
     const results = newDashboardMutationResults();
 
-    for (const id of dashboardIds) {
+    for (const [index, id] of dashboardIds.entries()) {
         const dashboard = findDashboardById(id);
         const oldOwner = dashboard?.owner;
         let ownerChanged = false;
@@ -168,16 +274,18 @@ async function performDashboardOwnerChanges(dashboardIds, newOwner, grantAccess)
                 results.errors.push(message);
             }
         }
+        onProgress?.({ completed: index + 1, total: dashboardIds.length, phase: 'mutating' });
     }
 
+    onProgress?.({ completed: dashboardIds.length, total: dashboardIds.length, phase: 'refreshing' });
     await refreshDashboardsAfterMutations(results);
     return results;
 }
 
-async function performDashboardSharingChanges(dashboardIds, changes) {
+async function performDashboardSharingChanges(dashboardIds, changes, onProgress) {
     const results = newDashboardMutationResults();
 
-    for (const id of dashboardIds) {
+    for (const [index, id] of dashboardIds.entries()) {
         const itemResult = { id, sharing: { status: 'pending' } };
         results.items.push(itemResult);
         try {
@@ -190,16 +298,18 @@ async function performDashboardSharingChanges(dashboardIds, changes) {
             itemResult.sharing = { status: 'failed', error: message };
             results.errors.push(message);
         }
+        onProgress?.({ completed: index + 1, total: dashboardIds.length, phase: 'mutating' });
     }
 
+    onProgress?.({ completed: dashboardIds.length, total: dashboardIds.length, phase: 'refreshing' });
     await refreshDashboardsAfterMutations(results);
     return results;
 }
 
-async function performDashboardDeletes(dashboardIds) {
+async function performDashboardDeletes(dashboardIds, onProgress) {
     const results = newDashboardMutationResults();
 
-    for (const id of dashboardIds) {
+    for (const [index, id] of dashboardIds.entries()) {
         const itemResult = { id, deletion: { status: 'pending' } };
         results.items.push(itemResult);
         try {
@@ -213,8 +323,10 @@ async function performDashboardDeletes(dashboardIds) {
             itemResult.deletion = { status: 'failed', error: message };
             results.errors.push(message);
         }
+        onProgress?.({ completed: index + 1, total: dashboardIds.length, phase: 'mutating' });
     }
 
+    onProgress?.({ completed: dashboardIds.length, total: dashboardIds.length, phase: 'refreshing' });
     await refreshDashboardsAfterMutations(results);
     return results;
 }
@@ -274,7 +386,7 @@ function syncSelectAllCheckbox() {
     const pageDashboards = getCurrentPageDashboards();
     const selectedOnPage = pageDashboards.filter(dashboard => state.selectedDashboards.has(dashboard.id)).length;
 
-    if (pageDashboards.length === 0) {
+    if (pageDashboards.length === 0 || isDashboardMutationRunning()) {
         selectAllCheckbox.checked = false;
         selectAllCheckbox.indeterminate = false;
         selectAllCheckbox.disabled = true;
@@ -460,9 +572,13 @@ function updateBulkActions() {
     const allFilteredSelected = state.filteredDashboards.length > 0
         && state.filteredDashboards.every(dashboard => state.selectedDashboards.has(dashboard.id));
 
-    selectAllFilteredBtn.disabled = false;
+    const mutationRunning = isDashboardMutationRunning();
+    selectAllFilteredBtn.disabled = mutationRunning;
     selectAllFilteredBtn.textContent = allFilteredSelected ? 'All Selected' : 'Select All';
-    clearSelectionBtn.disabled = state.selectedDashboards.size === 0;
+    clearSelectionBtn.disabled = mutationRunning || state.selectedDashboards.size === 0;
+    ['bulkChangeOwnerBtn', 'bulkShareBtn', 'bulkDeleteBtn'].forEach(id => {
+        document.getElementById(id).disabled = mutationRunning;
+    });
 
     if (state.selectedDashboards.size > 0) {
         bulkActions.style.display = 'flex';
@@ -476,6 +592,7 @@ function updateBulkActions() {
 }
 
 async function handleBulkChangeOwner() {
+    if (isDashboardMutationRunning()) return;
     showModal('changeOwnerModal');
 }
 
@@ -489,7 +606,12 @@ async function confirmChangeOwner() {
     }
 
     const dashboardIds = Array.from(state.selectedDashboards);
-    const results = await performDashboardOwnerChanges(dashboardIds, newOwner, grantAccess);
+    const results = await runDashboardMutation(
+        'owner',
+        dashboardIds,
+        onProgress => performDashboardOwnerChanges(dashboardIds, newOwner, grantAccess, onProgress)
+    );
+    if (!results) return;
 
     if (results.ownerChanges > 0) {
         hideModal('changeOwnerModal');
@@ -501,6 +623,7 @@ async function confirmChangeOwner() {
 }
 
 async function handleBulkShare() {
+    if (isDashboardMutationRunning()) return;
     showModal('modifySharingModal');
 }
 
@@ -516,7 +639,12 @@ async function confirmModifySharing() {
         sharingChanges.users = Object.fromEntries(selectedEditors.map(username => [username, 'editor']));
     }
 
-    const results = await performDashboardSharingChanges(dashboardIds, sharingChanges);
+    const results = await runDashboardMutation(
+        'sharing',
+        dashboardIds,
+        onProgress => performDashboardSharingChanges(dashboardIds, sharingChanges, onProgress)
+    );
+    if (!results) return;
     if (results.sharingChanges > 0) {
         hideModal('modifySharingModal');
     }
@@ -526,6 +654,7 @@ async function confirmModifySharing() {
 }
 
 async function handleBulkDelete() {
+    if (isDashboardMutationRunning()) return;
     const count = state.selectedDashboards.size;
     document.getElementById('deleteCount').textContent = `${count} dashboard${count > 1 ? 's' : ''}`;
     showModal('deleteConfirmModal');
@@ -533,7 +662,12 @@ async function handleBulkDelete() {
 
 async function confirmDelete() {
     const dashboardIds = Array.from(state.selectedDashboards);
-    const results = await performDashboardDeletes(dashboardIds);
+    const results = await runDashboardMutation(
+        'delete',
+        dashboardIds,
+        onProgress => performDashboardDeletes(dashboardIds, onProgress)
+    );
+    if (!results) return;
 
     if (results.deletions > 0) {
         hideModal('deleteConfirmModal');
@@ -631,6 +765,7 @@ function initDashboardsModule() {
         });
 
         document.getElementById('dashboardsTableBody').addEventListener('change', (e) => {
+            if (isDashboardMutationRunning()) return;
             if (e.target.classList.contains('dashboard-checkbox')) {
                 const id = e.target.dataset.id;
                 if (e.target.checked) {
@@ -644,6 +779,7 @@ function initDashboardsModule() {
         });
 
         document.getElementById('dashboardsTableBody').addEventListener('click', (e) => {
+            if (isDashboardMutationRunning()) return;
             const checkbox = e.target.closest('input[type="checkbox"]');
             if (checkbox) {
                 return;
