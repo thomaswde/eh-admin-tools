@@ -7,6 +7,26 @@ const localitiesState = {
     isLoaded: false
 };
 
+let nextLocalityDraftId = 1;
+
+function createLocalityDraftId() {
+    return `locality-draft-${nextLocalityDraftId++}`;
+}
+
+function cloneLocality(locality) {
+    return {
+        ...locality,
+        networks: Array.isArray(locality.networks) ? [...locality.networks] : []
+    };
+}
+
+function replaceLocalityState(localities) {
+    localitiesState.originalLocalities = localities.map(cloneLocality);
+    localitiesState.currentLocalities = localities.map(cloneLocality);
+    localitiesState.deletedIds.clear();
+    localitiesState.isLoaded = true;
+}
+
 // API Functions for Network Localities
 async function loadNetworkLocalities() {
     if (!state.connected || !window.apiClient) {
@@ -21,10 +41,7 @@ async function loadNetworkLocalities() {
 
         const response = await window.apiClient.request('/networklocalities');
         
-        localitiesState.originalLocalities = response.map(loc => ({...loc}));
-        localitiesState.currentLocalities = response.map(loc => ({...loc}));
-        localitiesState.deletedIds.clear();
-        localitiesState.isLoaded = true;
+        replaceLocalityState(response);
 
         renderLocalitiesTable();
         
@@ -125,7 +142,7 @@ function handleDeleteLocality(e) {
     
     if (id) {
         // Existing locality - mark for deletion
-        localitiesState.deletedIds.add(parseInt(id));
+        localitiesState.deletedIds.add(id);
     }
     
     // Mark as deleted in current state
@@ -140,7 +157,8 @@ function addLocalityRow() {
         networks: [],
         external: false,
         description: '',
-        _isNew: true
+        _isNew: true,
+        _clientId: createLocalityDraftId()
     };
     
     localitiesState.currentLocalities.push(newLocality);
@@ -153,6 +171,88 @@ function addLocalityRow() {
             lastRow.querySelector('input[data-field="name"]')?.focus();
         }
     }, 100);
+}
+
+function reconcileCreatedLocality(locality, response) {
+    const index = localitiesState.currentLocalities.indexOf(locality);
+    if (index === -1) return;
+
+    if (response && response.id != null) {
+        localitiesState.currentLocalities[index] = {
+            ...cloneLocality(response),
+            _clientId: locality._clientId
+        };
+        return;
+    }
+
+    // POST is documented to return 201 without a response schema. If no identity
+    // is returned, remove the completed draft so a retry cannot create it again.
+    localitiesState.currentLocalities.splice(index, 1);
+}
+
+function reconcileUpdatedLocality(locality, response) {
+    if (response && typeof response === 'object' && response.id != null) {
+        Object.assign(locality, cloneLocality(response));
+    }
+    delete locality._modified;
+}
+
+function reconcileDeletedLocality(id) {
+    localitiesState.deletedIds.delete(id);
+    localitiesState.currentLocalities = localitiesState.currentLocalities.filter(
+        locality => String(locality.id) !== String(id)
+    );
+}
+
+function localityDraftMatches(authoritative, draft) {
+    const normalizedNetworks = locality => [...(locality.networks || [])].map(String).sort();
+    return String(authoritative.name || '') === String(draft.name || '')
+        && JSON.stringify(normalizedNetworks(authoritative)) === JSON.stringify(normalizedNetworks(draft))
+        && Boolean(authoritative.external) === Boolean(draft.external)
+        && String(authoritative.description || '') === String(draft.description || '');
+}
+
+function reapplyUnresolvedLocalityDrafts(authoritative, unresolved) {
+    const current = authoritative.map(cloneLocality);
+    const byId = new Map(current.map((locality, index) => [String(locality.id), index]));
+    const deletedIds = new Set();
+
+    unresolved.updates.forEach(draft => {
+        const index = byId.get(String(draft.id));
+        if (index == null) return;
+        if (localityDraftMatches(current[index], draft)) return;
+        current[index] = {
+            ...current[index],
+            ...cloneLocality(draft),
+            _modified: true
+        };
+    });
+
+    unresolved.deletes.forEach(id => {
+        const index = byId.get(String(id));
+        if (index == null) return;
+        current[index]._deleted = true;
+        deletedIds.add(id);
+    });
+
+    unresolved.creates.forEach(draft => {
+        if (current.some(locality => localityDraftMatches(locality, draft))) return;
+        current.push({
+            ...cloneLocality(draft),
+            _isNew: true,
+            _clientId: draft._clientId || createLocalityDraftId()
+        });
+    });
+
+    localitiesState.originalLocalities = authoritative.map(cloneLocality);
+    localitiesState.currentLocalities = current;
+    localitiesState.deletedIds = deletedIds;
+    localitiesState.isLoaded = true;
+}
+
+async function reloadLocalitiesPreservingUnresolved(unresolved) {
+    const authoritative = await window.apiClient.request('/networklocalities');
+    reapplyUnresolvedLocalityDrafts(authoritative, unresolved);
 }
 
 async function saveLocalityChanges() {
@@ -181,13 +281,15 @@ async function saveLocalityChanges() {
             created: [],
             updated: [],
             deleted: [],
-            errors: []
+            errors: [],
+            reconciliationError: null
         };
+        const unresolved = { creates: [], updates: [], deletes: [] };
+        const pendingSaves = localitiesState.currentLocalities.filter(locality => !locality._deleted);
+        const pendingDeletes = Array.from(localitiesState.deletedIds);
 
         // Process creations and updates
-        for (const locality of localitiesState.currentLocalities) {
-            if (locality._deleted) continue;
-
+        for (const locality of pendingSaves) {
             const payload = {
                 name: locality.name,
                 networks: locality.networks,
@@ -203,6 +305,7 @@ async function saveLocalityChanges() {
                         body: JSON.stringify(payload)
                     });
                     results.created.push(locality.name);
+                    reconcileCreatedLocality(locality, response);
                 } else if (locality._modified && locality.id) {
                     // Update existing locality
                     await window.apiClient.request(`/networklocalities/${locality.id}`, {
@@ -210,19 +313,37 @@ async function saveLocalityChanges() {
                         body: JSON.stringify(payload)
                     });
                     results.updated.push(locality.name);
+                    reconcileUpdatedLocality(locality);
                 }
             } catch (error) {
                 results.errors.push(`Failed to save "${locality.name}": ${error.message}`);
+                if (locality._isNew && !locality.id) {
+                    unresolved.creates.push(cloneLocality(locality));
+                } else if (locality._modified && locality.id) {
+                    unresolved.updates.push(cloneLocality(locality));
+                }
             }
         }
 
         // Apply destructive changes last, after all rows have passed validation.
-        for (const id of localitiesState.deletedIds) {
+        for (const id of pendingDeletes) {
             try {
                 await window.apiClient.request(`/networklocalities/${id}`, { method: 'DELETE' });
                 results.deleted.push(id);
+                reconcileDeletedLocality(id);
             } catch (error) {
                 results.errors.push(`Failed to delete locality ID ${id}: ${error.message}`);
+                unresolved.deletes.push(id);
+            }
+        }
+
+        const successfulMutationCount = results.created.length + results.updated.length + results.deleted.length;
+        if (successfulMutationCount > 0) {
+            try {
+                await reloadLocalitiesPreservingUnresolved(unresolved);
+            } catch (error) {
+                results.reconciliationError = `Could not reload authoritative localities: ${error.message}`;
+                results.errors.push(results.reconciliationError);
             }
         }
 
@@ -240,11 +361,7 @@ async function saveLocalityChanges() {
             alert('Some operations failed. Check the console for details.\n\n' + results.errors.join('\n'));
         }
 
-        if (results.errors.length === 0) {
-            await loadNetworkLocalities();
-        } else {
-            renderLocalitiesTable();
-        }
+        renderLocalitiesTable();
 
     } catch (error) {
         showLocalityStatus(`Error saving changes: ${error.message}`, 'error');
@@ -315,7 +432,8 @@ function handleCsvUpload(e) {
                     networks: cidrs,
                     external,
                     description,
-                    _isNew: true
+                    _isNew: true,
+                    _clientId: createLocalityDraftId()
                 });
             }
 

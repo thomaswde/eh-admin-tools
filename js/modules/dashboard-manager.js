@@ -57,10 +57,161 @@ async function loadDashboardSharing(dashboard) {
 
     try {
         const sharing = await window.apiClient.getDashboardSharing(dashboard.id);
-        dashboard.sharing = sharing;
+        dashboard.sharing = normalizeDashboardSharing(sharing);
+        delete dashboard._sharingError;
     } catch (e) {
-        dashboard.sharing = { anyone: false, users: {}, groups: {} };
+        delete dashboard.sharing;
+        dashboard._sharingError = e?.message || 'Sharing details could not be retrieved.';
     }
+}
+
+function normalizeDashboardSharing(sharing) {
+    return {
+        anyone: sharing?.anyone === 'viewer' ? 'viewer' : null,
+        users: { ...(sharing?.users || {}) },
+        groups: { ...(sharing?.groups || {}) }
+    };
+}
+
+function buildCompleteDashboardSharingPayload(currentSharing, changes = {}) {
+    const current = normalizeDashboardSharing(currentSharing);
+    const hasAnyoneChange = Object.prototype.hasOwnProperty.call(changes, 'anyone');
+
+    return {
+        anyone: hasAnyoneChange
+            ? (changes.anyone === 'viewer' ? 'viewer' : null)
+            : current.anyone,
+        users: { ...current.users, ...(changes.users || {}) },
+        groups: { ...current.groups, ...(changes.groups || {}) }
+    };
+}
+
+async function mergeAndUpdateDashboardSharing(dashboardId, changes) {
+    const currentSharing = await window.apiClient.getDashboardSharing(dashboardId);
+    const payload = buildCompleteDashboardSharingPayload(currentSharing, changes);
+    await window.apiClient.updateDashboardSharing(dashboardId, payload);
+    return payload;
+}
+
+function newDashboardMutationResults() {
+    return {
+        mutations: 0,
+        ownerChanges: 0,
+        sharingChanges: 0,
+        deletions: 0,
+        items: [],
+        errors: []
+    };
+}
+
+function describeDashboardMutationError(dashboardId, operation, error) {
+    return `Dashboard ${dashboardId} ${operation} failed: ${error?.message || error}`;
+}
+
+function findDashboardById(dashboardId) {
+    return state.dashboards.find(item => String(item.id) === String(dashboardId));
+}
+
+async function refreshDashboardsAfterMutations(results) {
+    if (results.mutations === 0) return;
+
+    try {
+        await loadDashboards();
+    } catch (error) {
+        results.errors.push(`Dashboard refresh failed: ${error?.message || error}`);
+    }
+}
+
+async function performDashboardOwnerChanges(dashboardIds, newOwner, grantAccess) {
+    const results = newDashboardMutationResults();
+
+    for (const id of dashboardIds) {
+        const dashboard = findDashboardById(id);
+        const oldOwner = dashboard?.owner;
+        let ownerChanged = false;
+        const itemResult = {
+            id,
+            owner: { status: 'pending' },
+            sharing: { status: grantAccess && oldOwner ? 'pending' : 'not_requested' }
+        };
+        results.items.push(itemResult);
+
+        try {
+            await window.apiClient.updateDashboard(id, { owner: newOwner });
+            ownerChanged = true;
+            results.ownerChanges++;
+            results.mutations++;
+            itemResult.owner.status = 'succeeded';
+        } catch (error) {
+            const message = describeDashboardMutationError(id, 'owner change', error);
+            itemResult.owner = { status: 'failed', error: message };
+            if (itemResult.sharing.status === 'pending') itemResult.sharing.status = 'skipped';
+            results.errors.push(message);
+        }
+
+        if (ownerChanged && grantAccess && oldOwner) {
+            try {
+                await mergeAndUpdateDashboardSharing(id, {
+                    users: { [oldOwner]: 'editor' }
+                });
+                results.sharingChanges++;
+                results.mutations++;
+                itemResult.sharing.status = 'succeeded';
+            } catch (error) {
+                const message = describeDashboardMutationError(id, 'old-owner access update', error);
+                itemResult.sharing = { status: 'failed', error: message };
+                results.errors.push(message);
+            }
+        }
+    }
+
+    await refreshDashboardsAfterMutations(results);
+    return results;
+}
+
+async function performDashboardSharingChanges(dashboardIds, changes) {
+    const results = newDashboardMutationResults();
+
+    for (const id of dashboardIds) {
+        const itemResult = { id, sharing: { status: 'pending' } };
+        results.items.push(itemResult);
+        try {
+            await mergeAndUpdateDashboardSharing(id, changes);
+            results.sharingChanges++;
+            results.mutations++;
+            itemResult.sharing.status = 'succeeded';
+        } catch (error) {
+            const message = describeDashboardMutationError(id, 'sharing update', error);
+            itemResult.sharing = { status: 'failed', error: message };
+            results.errors.push(message);
+        }
+    }
+
+    await refreshDashboardsAfterMutations(results);
+    return results;
+}
+
+async function performDashboardDeletes(dashboardIds) {
+    const results = newDashboardMutationResults();
+
+    for (const id of dashboardIds) {
+        const itemResult = { id, deletion: { status: 'pending' } };
+        results.items.push(itemResult);
+        try {
+            const deleted = await window.apiClient.deleteDashboard(id);
+            if (!deleted) throw new Error('API did not confirm deletion');
+            results.deletions++;
+            results.mutations++;
+            itemResult.deletion.status = 'succeeded';
+        } catch (error) {
+            const message = describeDashboardMutationError(id, 'deletion', error);
+            itemResult.deletion = { status: 'failed', error: message };
+            results.errors.push(message);
+        }
+    }
+
+    await refreshDashboardsAfterMutations(results);
+    return results;
 }
 
 function populateUserDropdowns() {
@@ -158,6 +309,35 @@ function renderRoleBadges(entries) {
     return list.map(([name, role]) => roleBadge(name, role)).join('');
 }
 
+function renderDashboardSharingSection(dashboard) {
+    if (dashboard._loadingSharing) {
+        return '<p class="small muted">Loading sharing details…</p>';
+    }
+
+    if (dashboard._sharingError) {
+        return '<p class="small muted">Sharing details unavailable.</p>';
+    }
+
+    if (!dashboard.sharing) {
+        return '<p class="small muted">Sharing details not loaded.</p>';
+    }
+
+    const sharing = dashboard.sharing;
+    const anyoneBubble = sharing.anyone
+        ? roleBadge('All users', sharing.anyone)
+        : '<span class="small muted">No public access</span>';
+    const userBubbles = renderRoleBadges(sharing.users);
+    const groupBubbles = renderRoleBadges(sharing.groups);
+
+    return `
+        <div class="stack-sm">
+            <div><span class="label">Public access</span><div class="row-tight" style="margin-top: 4px;">${anyoneBubble}</div></div>
+            <div><span class="label">Users</span><div class="row-tight" style="margin-top: 4px;">${userBubbles}</div></div>
+            <div><span class="label">Groups</span><div class="row-tight" style="margin-top: 4px;">${groupBubbles}</div></div>
+        </div>
+    `;
+}
+
 function renderDashboards() {
     const tbody = document.getElementById('dashboardsTableBody');
     const pageData = getCurrentPageDashboards();
@@ -219,29 +399,7 @@ function renderDashboards() {
                 ? `<div class="grid-fields">${metaItems.join('')}</div>`
                 : '';
 
-            let sharingSection;
-            if (dashboard._loadingSharing) {
-                sharingSection = '<p class="small muted">Loading sharing details…</p>';
-            } else if (dashboard.sharing) {
-                const sharing = dashboard.sharing;
-
-                const anyoneBubble = sharing.anyone
-                    ? roleBadge('All users', sharing.anyone)
-                    : '<span class="small muted">No public access</span>';
-
-                const userBubbles = renderRoleBadges(sharing.users);
-                const groupBubbles = renderRoleBadges(sharing.groups);
-
-                sharingSection = `
-                    <div class="stack-sm">
-                        <div><span class="label">Public access</span><div class="row-tight" style="margin-top: 4px;">${anyoneBubble}</div></div>
-                        <div><span class="label">Users</span><div class="row-tight" style="margin-top: 4px;">${userBubbles}</div></div>
-                        <div><span class="label">Groups</span><div class="row-tight" style="margin-top: 4px;">${groupBubbles}</div></div>
-                    </div>
-                `;
-            } else {
-                sharingSection = '<p class="small muted">Sharing details not loaded.</p>';
-            }
+            const sharingSection = renderDashboardSharingSection(dashboard);
 
             const detailsContent = `
                 <div class="detail-panel stack-sm" style="margin: 4px 0 10px;">
@@ -326,30 +484,15 @@ async function confirmChangeOwner() {
     }
 
     const dashboardIds = Array.from(state.selectedDashboards);
-    let successCount = 0;
+    const results = await performDashboardOwnerChanges(dashboardIds, newOwner, grantAccess);
 
-    try {
-        for (const id of dashboardIds) {
-            const dashboard = state.dashboards.find(d => d.id === id);
-            const oldOwner = dashboard.owner;
-
-            await window.apiClient.updateDashboard(id, { owner: newOwner });
-
-            if (grantAccess && oldOwner) {
-                await window.apiClient.updateDashboardSharing(id, {
-                    users: { [oldOwner]: 'editor' }
-                });
-            }
-
-            successCount++;
-        }
-
-        alert(`Successfully changed owner for ${successCount} dashboard(s)`);
+    if (results.ownerChanges > 0) {
         hideModal('changeOwnerModal');
-        loadDashboards();
-    } catch (error) {
-        alert(`Error: ${error.message}. Changed ${successCount} of ${dashboardIds.length} dashboards.`);
     }
+
+    const accessSummary = grantAccess ? `; granted old-owner access on ${results.sharingChanges}` : '';
+    const errorSummary = results.errors.length > 0 ? ` ${results.errors.length} operation(s) failed.` : '';
+    alert(`Changed owner for ${results.ownerChanges} of ${dashboardIds.length} dashboard(s)${accessSummary}.${errorSummary}`);
 }
 
 async function handleBulkShare() {
@@ -362,33 +505,19 @@ async function confirmModifySharing() {
     const selectedEditors = Array.from(editorsSelect.selectedOptions).map(opt => opt.value);
 
     const dashboardIds = Array.from(state.selectedDashboards);
-    let successCount = 0;
-
-    try {
-        for (const id of dashboardIds) {
-            const sharingPayload = {};
-
-            if (shareWithAll) {
-                sharingPayload.anyone = 'viewer';
-            }
-
-            if (selectedEditors.length > 0) {
-                sharingPayload.users = {};
-                selectedEditors.forEach(username => {
-                    sharingPayload.users[username] = 'editor';
-                });
-            }
-
-            await window.apiClient.updateDashboardSharing(id, sharingPayload);
-            successCount++;
-        }
-
-        alert(`Successfully updated sharing for ${successCount} dashboard(s)`);
-        hideModal('modifySharingModal');
-        loadDashboards();
-    } catch (error) {
-        alert(`Error: ${error.message}. Updated ${successCount} of ${dashboardIds.length} dashboards.`);
+    const sharingChanges = {};
+    if (shareWithAll) sharingChanges.anyone = 'viewer';
+    if (selectedEditors.length > 0) {
+        sharingChanges.users = Object.fromEntries(selectedEditors.map(username => [username, 'editor']));
     }
+
+    const results = await performDashboardSharingChanges(dashboardIds, sharingChanges);
+    if (results.sharingChanges > 0) {
+        hideModal('modifySharingModal');
+    }
+
+    const errorSummary = results.errors.length > 0 ? ` ${results.errors.length} update(s) failed.` : '';
+    alert(`Updated sharing for ${results.sharingChanges} of ${dashboardIds.length} dashboard(s).${errorSummary}`);
 }
 
 async function handleBulkDelete() {
@@ -399,25 +528,25 @@ async function handleBulkDelete() {
 
 async function confirmDelete() {
     const dashboardIds = Array.from(state.selectedDashboards);
-    let successCount = 0;
+    const results = await performDashboardDeletes(dashboardIds);
 
-    try {
-        for (const id of dashboardIds) {
-            const success = await window.apiClient.deleteDashboard(id);
-            if (success) successCount++;
-        }
-
-        alert(`Successfully deleted ${successCount} dashboard(s)`);
+    if (results.deletions > 0) {
         hideModal('deleteConfirmModal');
-        state.selectedDashboards.clear();
-        loadDashboards();
-    } catch (error) {
-        alert(`Error: ${error.message}. Deleted ${successCount} of ${dashboardIds.length} dashboards.`);
+        results.deletions === dashboardIds.length
+            ? state.selectedDashboards.clear()
+            : dashboardIds.forEach(id => {
+                if (!findDashboardById(id)) {
+                    state.selectedDashboards.delete(id);
+                }
+            });
     }
+
+    const errorSummary = results.errors.length > 0 ? ` ${results.errors.length} deletion(s) failed.` : '';
+    alert(`Deleted ${results.deletions} of ${dashboardIds.length} dashboard(s).${errorSummary}`);
 }
 
 function handleDashboardRowClick(dashboardId) {
-    const dashboard = state.dashboards.find(d => d.id === dashboardId);
+    const dashboard = findDashboardById(dashboardId);
     if (!dashboard) return;
 
     // Toggle expanded state
@@ -440,9 +569,6 @@ function handleDashboardRowClick(dashboardId) {
     renderDashboards();
 
     loadDashboardSharing(dashboard)
-        .catch(() => {
-            // loadDashboardSharing already set a fallback sharing object on error
-        })
         .finally(() => {
             dashboard._loadingSharing = false;
             renderDashboards();
@@ -501,7 +627,7 @@ function initDashboardsModule() {
 
         document.getElementById('dashboardsTableBody').addEventListener('change', (e) => {
             if (e.target.classList.contains('dashboard-checkbox')) {
-                const id = parseInt(e.target.dataset.id);
+                const id = e.target.dataset.id;
                 if (e.target.checked) {
                     state.selectedDashboards.add(id);
                 } else {
@@ -522,14 +648,14 @@ function initDashboardsModule() {
             const deleteBtn = e.target.closest('.delete-btn');
 
             if (changeOwnerBtn) {
-                const id = parseInt(changeOwnerBtn.dataset.id, 10);
+                const id = changeOwnerBtn.dataset.id;
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
                 updateBulkActions();
                 syncSelectAllCheckbox();
                 handleBulkChangeOwner();
             } else if (deleteBtn) {
-                const id = parseInt(deleteBtn.dataset.id, 10);
+                const id = deleteBtn.dataset.id;
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
                 updateBulkActions();
@@ -538,7 +664,7 @@ function initDashboardsModule() {
             } else {
                 const row = e.target.closest('tr');
                 if (!row || !row.dataset.id) return;
-                const id = parseInt(row.dataset.id, 10);
+                const id = row.dataset.id;
                 handleDashboardRowClick(id);
             }
         });
