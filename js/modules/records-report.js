@@ -310,8 +310,11 @@ function buildCRSSummary(applianceData, capacityData, dayCount) {
     const rows = applianceData || [];
     const validDayCount = Number(dayCount) > 0 ? Number(dayCount) : null;
     const measuredAppliances = rows.filter(row => Number.isFinite(row.recordBytesGB));
-    const collectionComplete = rows.length > 0 && measuredAppliances.length === rows.length;
+    const measuredApplianceCount = measuredAppliances.length;
+    const applianceCount = rows.length;
+    const collectionComplete = applianceCount > 0 && measuredApplianceCount === applianceCount;
     const measuredRecordBytesGB = measuredAppliances.reduce((sum, row) => sum + row.recordBytesGB, 0);
+    const recordBytesDisplayGB = measuredApplianceCount > 0 ? measuredRecordBytesGB : null;
     const totalRecordBytesGB = collectionComplete ? measuredRecordBytesGB : null;
     const averageDailyRecordBytesGB = collectionComplete && validDayCount
         ? totalRecordBytesGB / validDayCount
@@ -321,16 +324,31 @@ function buildCRSSummary(applianceData, capacityData, dayCount) {
         : null;
     const compressionUnavailableReason = ratio !== null
         ? null
-        : !collectionComplete
-            ? 'Incomplete metric coverage; review sensor collection statuses'
-            : !capacityData
-                ? 'Add capacity data to calculate'
+        : !capacityData
+            ? 'Add capacity data to calculate'
+            : !collectionComplete
+                ? 'Incomplete metric coverage; review sensor collection statuses'
                 : !(averageDailyRecordBytesGB > 0)
                     ? 'No measured record bytes in the selected window'
                     : 'Utilized capacity must be greater than zero';
+    const recordBytesLabel = collectionComplete
+        ? 'Total uncompressed record bytes'
+        : measuredApplianceCount > 0
+            ? 'Measured uncompressed record bytes'
+            : 'Uncompressed record bytes';
+    const recordBytesSubtext = collectionComplete
+        ? `From all ${applianceCount} discover ${applianceCount === 1 ? 'appliance' : 'appliances'}`
+        : measuredApplianceCount > 0
+            ? `Measured subtotal from ${measuredApplianceCount} of ${applianceCount} discover appliances; review collection statuses`
+            : `No metrics collected from ${applianceCount} discover ${applianceCount === 1 ? 'appliance' : 'appliances'}; review collection statuses`;
     return {
         totalRecordBytesGB,
         measuredRecordBytesGB,
+        recordBytesDisplayGB,
+        recordBytesLabel,
+        recordBytesSubtext,
+        measuredApplianceCount,
+        applianceCount,
         averageDailyRecordBytesGB,
         collectionComplete,
         compressionRatio: ratio,
@@ -360,7 +378,6 @@ async function generateCRSReport() {
         const capacityData = getCapacityData(reportWindow);
         const applianceData = await fetchCRSData(reportWindow);
         const summary = buildCRSSummary(applianceData, capacityData, reportWindow.dayCount);
-        const totalRecordBytesGB = summary.totalRecordBytesGB;
         const compressionRatio = summary.compressionRatio === null ? null : summary.compressionRatio.toFixed(2);
         const utilizationPercent = summary.utilizationPercent === null ? null : summary.utilizationPercent.toFixed(1);
         const compressedData = summary.applianceData;
@@ -375,7 +392,9 @@ async function generateCRSReport() {
             document.getElementById('compressionRatioSubtext').textContent = summary.compressionUnavailableReason;
         }
         
-        document.getElementById('totalRecordBytes').textContent = formatGBWithUnits(totalRecordBytesGB);
+        document.getElementById('recordBytesLabel').textContent = summary.recordBytesLabel;
+        document.getElementById('totalRecordBytes').textContent = formatGBWithUnits(summary.recordBytesDisplayGB);
+        document.getElementById('totalRecordBytesSubtext').textContent = summary.recordBytesSubtext;
         
         if (utilizationPercent !== null) {
             document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;

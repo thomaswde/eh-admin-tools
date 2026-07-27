@@ -85,6 +85,9 @@ test('compares average daily record bytes with average daily utilized capacity',
     ], { utilized: 50, reserved: 100, aggregationMode: 'daily_average' }, 7)));
 
     assert.equal(summary.totalRecordBytesGB, 700);
+    assert.equal(summary.recordBytesDisplayGB, 700);
+    assert.equal(summary.recordBytesLabel, 'Total uncompressed record bytes');
+    assert.equal(summary.recordBytesSubtext, 'From all 2 discover appliances');
     assert.equal(summary.averageDailyRecordBytesGB, 100);
     assert.equal(summary.compressionRatio, 2);
     assert.equal(summary.applianceData[0].compressedGB, 30);
@@ -142,11 +145,37 @@ test('uses one batched total-by-object XID query and preserves zero, empty, and 
     const summary = JSON.parse(JSON.stringify(api.buildCRSSummary(result, { utilized: 10, reserved: 20 }, 1)));
     assert.equal(summary.collectionComplete, false);
     assert.equal(summary.totalRecordBytesGB, null);
+    assert.equal(summary.recordBytesDisplayGB, 0);
+    assert.equal(summary.recordBytesLabel, 'Measured uncompressed record bytes');
+    assert.equal(
+        summary.recordBytesSubtext,
+        'Measured subtotal from 1 of 4 discover appliances; review collection statuses'
+    );
     assert.equal(summary.compressionRatio, null);
     assert.equal(
         summary.compressionUnavailableReason,
         'Incomplete metric coverage; review sensor collection statuses'
     );
+});
+
+test('shows a measured subtotal while keeping partial compression calculations unavailable', () => {
+    const api = recordsApi(loadRecords());
+    const summary = JSON.parse(JSON.stringify(api.buildCRSSummary([
+        { id: '1', recordBytesGB: 420, collectionStatus: { status: 'complete' } },
+        { id: '2', recordBytesGB: null, collectionStatus: { status: 'offline' } }
+    ], null, 7)));
+
+    assert.equal(summary.collectionComplete, false);
+    assert.equal(summary.totalRecordBytesGB, null);
+    assert.equal(summary.measuredRecordBytesGB, 420);
+    assert.equal(summary.recordBytesDisplayGB, 420);
+    assert.equal(summary.recordBytesLabel, 'Measured uncompressed record bytes');
+    assert.equal(
+        summary.recordBytesSubtext,
+        'Measured subtotal from 1 of 2 discover appliances; review collection statuses'
+    );
+    assert.equal(summary.compressionRatio, null);
+    assert.equal(summary.compressionUnavailableReason, 'Add capacity data to calculate');
 });
 
 test('records an aggregate request failure instead of substituting zero', async () => {
