@@ -66,6 +66,24 @@ test('firmware collection failure remains distinct from no eligible upgrade', ()
     assert.equal(empty['7'].status, 'no-upgrade');
 });
 
+test('local firmware releases are merged into appliance zero availability', () => {
+    const management = loadManagement();
+    const availability = management.mergeLocalFirmwareAvailability(
+        { '0': { status: 'not-applicable', versions: [] }, '7': { status: 'no-upgrade', versions: [] } },
+        [{ release: '26.3', versions: ['26.3.1.100', '26.3.1.100', '26.3.2.200'] }]
+    );
+
+    assert.deepEqual(plain(availability['0']), {
+        status: 'available',
+        versions: [
+            { release: '26.3', version: '26.3.1.100' },
+            { release: '26.3', version: '26.3.2.200' }
+        ],
+        error: null
+    });
+    assert.equal(availability['7'].status, 'no-upgrade');
+});
+
 test('console detection, job locations, and product-key masking are conservative', () => {
     const management = loadManagement();
 
@@ -77,6 +95,14 @@ test('console detection, job locations, and product-key masking are conservative
     const masked = management.maskProductKey('AAAA-BBBB-CCCC');
     assert.equal(masked.endsWith('CCCC'), true);
     assert.equal(masked.includes('AAAA'), false);
+    assert.deepEqual(
+        plain(management.normalizeProductKeys({ product_key: 'LOCAL-KEY' })),
+        ['LOCAL-KEY']
+    );
+    assert.deepEqual(
+        plain(management.normalizeProductKeys([{ product_key: 'REMOTE-KEY' }])),
+        ['REMOTE-KEY']
+    );
 });
 
 test('job polling reports updates and stops on documented DONE status', async () => {
@@ -100,6 +126,31 @@ test('job polling reports updates and stops on documented DONE status', async ()
 
     assert.equal(result.state, 'done');
     assert.deepEqual(updates, ['RUNNING', 'DONE']);
+});
+
+test('a failed remote appliance job makes a completed console job fail', async () => {
+    const management = loadManagement();
+    const job = {
+        status: 'DONE',
+        remote_jobs: [{
+            system_id: '7',
+            status: 'FAILED',
+            step_description: 'HTTP 422 Unprocessable Entity',
+            details: 'Firmware download was rejected by the remote appliance.'
+        }]
+    };
+
+    const result = await management.pollFirmwareJob({
+        location: '/api/v1/jobs/job-remote-failed',
+        fetchJob: async () => job
+    });
+
+    assert.equal(result.state, 'failed');
+    assert.equal(management.classifyFirmwareJob(job), 'failed');
+    assert.match(
+        management.summarizeRemoteJobs(job),
+        /FAILED — HTTP 422 Unprocessable Entity — Firmware download was rejected/
+    );
 });
 
 test('job polling returns an explicit timeout without treating it as success', async () => {

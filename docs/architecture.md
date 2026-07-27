@@ -10,7 +10,7 @@ The proxy also forms a data contract. Upstream error details are converted to lo
 
 ## Deployment capabilities
 
-`js/utils/deployment-capabilities.js` is the explicit capability matrix for deployment types. Navigation, module loading, and API wrappers must consult the same matrix. Unsupported features are hidden or rejected before an API call; 401, 403, and 404 responses are not capability discovery. At present, the `/users` family, User Manager, appliance cloud-services status, and appliance product keys are self-managed-only; appliance firmware discovery and upgrade are available for both deployment types. Add future differences to the matrix with endpoint-contract evidence and tests.
+`js/utils/deployment-capabilities.js` is the explicit capability matrix for deployment types. Navigation, module loading, and API wrappers must consult the same matrix. Unsupported features are hidden or rejected before an API call; 401, 403, and 404 responses are not capability discovery. At present, the `/users` family, User Manager, appliance cloud-services status, appliance product keys, and local-appliance firmware endpoints are self-managed-only; remote-appliance firmware discovery and upgrade are available for both deployment types. Connected Appliances routes local product keys through `/license/productkey`, local firmware through `/extrahop/firmware/*`, and connected targets through `/appliances/*`. Add future differences to the matrix with endpoint-contract evidence and tests.
 
 ## Identifier contract
 

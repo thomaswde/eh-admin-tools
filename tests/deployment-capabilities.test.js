@@ -43,6 +43,8 @@ test('capability matrix marks User Manager self-managed-only', () => {
     assert.equal(vm.runInContext("deploymentSupportsModule('360', 'system-health')", context), true);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('enterprise', 'applianceFirmware')", context), true);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('360', 'applianceFirmware')", context), true);
+    assert.equal(vm.runInContext("deploymentSupportsApiFamily('enterprise', 'localApplianceFirmware')", context), true);
+    assert.equal(vm.runInContext("deploymentSupportsApiFamily('360', 'localApplianceFirmware')", context), false);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('enterprise', 'applianceCloudServices')", context), true);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('360', 'applianceCloudServices')", context), false);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('enterprise', 'applianceProductKeys')", context), true);

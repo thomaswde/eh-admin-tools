@@ -374,6 +374,11 @@ class ExtraHopAPI {
         return this.request(`/appliances/firmware/next${query}`, options);
     }
 
+    async getLocalApplianceFirmwareVersions(options = {}) {
+        this.assertApiFamilySupported('localApplianceFirmware');
+        return this.request('/extrahop/firmware/next', options);
+    }
+
     async upgradeApplianceFirmware(systemIds, version, options = {}) {
         this.assertApiFamilySupported('applianceFirmware');
         const normalizedIds = ExtraHopAPI.validateOpaqueIds(systemIds, MAX_FIRMWARE_APPLIANCE_IDS);
@@ -398,6 +403,26 @@ class ExtraHopAPI {
         };
     }
 
+    async upgradeLocalApplianceFirmware(version, options = {}) {
+        this.assertApiFamilySupported('localApplianceFirmware');
+        const normalizedVersion = String(version || '').trim();
+        if (!normalizedVersion || normalizedVersion.length > 128) {
+            throw new TypeError('A valid firmware version is required.');
+        }
+
+        const response = await this.requestResponse('/extrahop/firmware/download/version', {
+            ...options,
+            method: 'POST',
+            body: JSON.stringify({ version: normalizedVersion, upgrade: true })
+        });
+        const data = await this.parseResponse(response);
+        return {
+            data,
+            status: response.status,
+            location: response.headers?.get?.('location') || null
+        };
+    }
+
     async getApplianceCloudServices(options = {}) {
         this.assertApiFamilySupported('applianceCloudServices');
         return this.request('/appliances/0/cloudservices', options);
@@ -406,7 +431,10 @@ class ExtraHopAPI {
     async getApplianceProductKeys(applianceId, options = {}) {
         this.assertApiFamilySupported('applianceProductKeys');
         const [normalizedId] = ExtraHopAPI.validateOpaqueIds([applianceId], 1);
-        return this.request(`/appliances/${encodeURIComponent(normalizedId)}/productkey`, options);
+        const endpoint = normalizedId === '0'
+            ? '/license/productkey'
+            : `/appliances/${encodeURIComponent(normalizedId)}/productkey`;
+        return this.request(endpoint, options);
     }
 
     async getFirmwareUpgradeJob(location, options = {}) {

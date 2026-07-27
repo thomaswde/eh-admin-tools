@@ -251,13 +251,26 @@ async function loadAppliances() {
         nodemapState.firmwareAvailability = Object.fromEntries(
             nodemapState.appliances.map(appliance => [
                 String(appliance.id),
-                { status: String(appliance.id) === '0' ? 'not-applicable' : 'loading', versions: [] }
+                {
+                    status: String(appliance.id) === '0' && !deploymentSupportsApiFamily(
+                        state.apiConfig?.type,
+                        'localApplianceFirmware'
+                    ) ? 'not-applicable' : 'loading',
+                    versions: []
+                }
             ])
         );
 
         const firmwarePromise = window.apiClient.getApplianceFirmwareVersions([], {
             signal: controller.signal
         });
+        const localFirmwareSupported = deploymentSupportsApiFamily(
+            state.apiConfig?.type,
+            'localApplianceFirmware'
+        );
+        const localFirmwarePromise = localFirmwareSupported
+            ? window.apiClient.getLocalApplianceFirmwareVersions({ signal: controller.signal })
+            : Promise.resolve(null);
         const cloudSupported = deploymentSupportsApiFamily(
             state.apiConfig?.type,
             'applianceCloudServices'
@@ -281,8 +294,9 @@ async function loadAppliances() {
             return [];
         })();
 
-        const [firmwareResult, cloudResult, catalogResult] = await Promise.allSettled([
+        const [firmwareResult, localFirmwareResult, cloudResult, catalogResult] = await Promise.allSettled([
             firmwarePromise,
+            localFirmwarePromise,
             cloudPromise,
             catalogPromise
         ]);
@@ -298,6 +312,14 @@ async function loadAppliances() {
                 nodemapState.appliances,
                 [],
                 firmwareResult.reason
+            );
+        }
+
+        if (localFirmwareSupported) {
+            nodemapState.firmwareAvailability = ApplianceManagement.mergeLocalFirmwareAvailability(
+                nodemapState.firmwareAvailability,
+                localFirmwareResult.status === 'fulfilled' ? localFirmwareResult.value : [],
+                localFirmwareResult.status === 'rejected' ? localFirmwareResult.reason : null
             );
         }
 
@@ -919,7 +941,7 @@ function renderFirmwareManagement(record) {
     let body = '';
 
     if (availability.status === 'not-applicable') {
-        body = '<p class="muted xsmall">Local appliance upgrades use the separate appliance firmware workflow and are not managed from Connected Appliances.</p>';
+        body = '<p class="muted xsmall">Local appliance firmware management is unavailable for this deployment.</p>';
     } else if (availability.status === 'available') {
         const options = availability.versions.map(candidate => `
             <option value="${escapeAttribute(candidate.version)}">${escapeHtml(candidate.version)}${candidate.release ? ` · ${escapeHtml(candidate.release)}` : ''}</option>
@@ -973,11 +995,13 @@ function renderFirmwareJob(job) {
                 : job.state === 'paused'
                     ? 'Monitoring paused'
                     : job.status || 'Upgrade accepted';
-    const step = job.stepDescription || job.details || '';
+    const step = String(job.stepDescription || '').trim();
+    const details = String(job.details || '').trim();
     return `
         <div class="firmware-job" aria-live="polite">
             <span class="badge ${tone}">${escapeHtml(label)}</span>
             ${step ? `<p class="field-hint">${escapeHtml(step)}</p>` : ''}
+            ${details && details !== step ? `<p class="field-hint">${escapeHtml(details)}</p>` : ''}
         </div>
     `;
 }
@@ -1105,19 +1129,33 @@ async function checkApplianceFirmware(record) {
     nodemapState.firmwareAvailability[id] = { status: 'loading', versions: [] };
     renderSelectedApplianceDetails();
     try {
-        const releases = await window.apiClient.getApplianceFirmwareVersions([id]);
-        nodemapState.firmwareAvailability = ApplianceManagement.mergeSingleFirmwareAvailability(
-            nodemapState.firmwareAvailability,
-            id,
-            releases
-        );
+        if (id === '0') {
+            const releases = await window.apiClient.getLocalApplianceFirmwareVersions();
+            nodemapState.firmwareAvailability = ApplianceManagement.mergeLocalFirmwareAvailability(
+                nodemapState.firmwareAvailability,
+                releases
+            );
+        } else {
+            const releases = await window.apiClient.getApplianceFirmwareVersions([id]);
+            nodemapState.firmwareAvailability = ApplianceManagement.mergeSingleFirmwareAvailability(
+                nodemapState.firmwareAvailability,
+                id,
+                releases
+            );
+        }
     } catch (error) {
-        nodemapState.firmwareAvailability = ApplianceManagement.mergeSingleFirmwareAvailability(
-            nodemapState.firmwareAvailability,
-            id,
-            [],
-            error
-        );
+        nodemapState.firmwareAvailability = id === '0'
+            ? ApplianceManagement.mergeLocalFirmwareAvailability(
+                nodemapState.firmwareAvailability,
+                [],
+                error
+            )
+            : ApplianceManagement.mergeSingleFirmwareAvailability(
+                nodemapState.firmwareAvailability,
+                id,
+                [],
+                error
+            );
     }
     renderNodemap();
     renderSelectedApplianceDetails();
@@ -1139,9 +1177,7 @@ async function loadProductKeys(record) {
         nodemapState.productKeys = {
             applianceId: id,
             status: 'available',
-            values: (Array.isArray(response) ? response : [])
-                .map(item => String(item?.product_key || ''))
-                .filter(Boolean),
+            values: ApplianceManagement.normalizeProductKeys(response),
             revealed: false,
             error: null
         };
@@ -1163,7 +1199,7 @@ function openFirmwareUpgrade(record, version) {
     const stillEligible = record.firmwareAvailability.versions.some(candidate =>
         candidate.version === version
     );
-    if (!stillEligible || id === '0') return;
+    if (!stillEligible) return;
 
     const requiresIngestConfirmation = String(record.appliance.platform || '').toLowerCase() === 'explore';
     nodemapState.upgradeTarget = {
@@ -1172,6 +1208,7 @@ function openFirmwareUpgrade(record, version) {
         role: roleLabels[record.role] || record.role,
         currentVersion: record.firmware,
         version,
+        isLocal: id === '0',
         requiresIngestConfirmation
     };
 
@@ -1192,15 +1229,12 @@ function closeFirmwareUpgradeModal() {
 }
 
 function firmwareJobProjection(job, fallbackState = 'polling') {
-    const remote = Array.isArray(job?.remote_jobs) ? job.remote_jobs : [];
-    const remoteSummary = remote
-        .map(item => `${item.status || 'Unknown'}${item.step_description ? ` — ${item.step_description}` : ''}`)
-        .join('; ');
+    const remoteSummary = ApplianceManagement.summarizeRemoteJobs(job);
     return {
         state: fallbackState,
         status: String(job?.status || 'Upgrade in progress'),
-        stepDescription: job?.step_description || remoteSummary || '',
-        details: job?.details || '',
+        stepDescription: job?.step_description || '',
+        details: [job?.details, remoteSummary].filter(Boolean).join(' — '),
         location: null
     };
 }
@@ -1282,7 +1316,9 @@ async function submitFirmwareUpgrade(event) {
     renderSelectedApplianceDetails();
 
     try {
-        const response = await window.apiClient.upgradeApplianceFirmware([target.id], target.version);
+        const response = target.isLocal
+            ? await window.apiClient.upgradeLocalApplianceFirmware(target.version)
+            : await window.apiClient.upgradeApplianceFirmware([target.id], target.version);
         const location = response.location;
         const applianceId = target.id;
         const applianceName = target.name;

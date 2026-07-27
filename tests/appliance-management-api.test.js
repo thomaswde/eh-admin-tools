@@ -69,6 +69,36 @@ test('firmware upgrade keeps browser IDs as strings and returns accepted-job met
     });
 });
 
+test('local firmware uses the self-managed ExtraHop workflow transparently', async () => {
+    const location = '/api/v1/jobs/local-upgrade';
+    const { api, calls } = loadApi('enterprise', (url, _options) =>
+        url.endsWith('/extrahop/firmware/next')
+            ? response([{ release: '26.3', versions: ['26.3.1.100'] }])
+            : response({}, { status: 202, location })
+    );
+
+    await api.getLocalApplianceFirmwareVersions();
+    const result = await api.upgradeLocalApplianceFirmware('26.3.1.100');
+
+    assert.equal(calls[0].url, '/backend/extrahop/api/v1/extrahop/firmware/next');
+    assert.equal(calls[1].url, '/backend/extrahop/api/v1/extrahop/firmware/download/version');
+    assert.deepEqual(JSON.parse(calls[1].options.body), {
+        version: '26.3.1.100',
+        upgrade: true
+    });
+    assert.equal(result.location, location);
+});
+
+test('product keys route the local appliance through the license endpoint', async () => {
+    const { api, calls } = loadApi('enterprise', () => response({ product_key: 'key' }));
+
+    await api.getApplianceProductKeys('0');
+    await api.getApplianceProductKeys('7');
+
+    assert.equal(calls[0].url, '/backend/extrahop/api/v1/license/productkey');
+    assert.equal(calls[1].url, '/backend/extrahop/api/v1/appliances/7/productkey');
+});
+
 test('RevealX 360 rejects self-managed appliance data before transport', async () => {
     const { api, calls } = loadApi('360', () => response({}));
 
@@ -76,6 +106,9 @@ test('RevealX 360 rejects self-managed appliance data before transport', async (
         error.code === 'UNSUPPORTED_DEPLOYMENT_CAPABILITY'
     );
     await assert.rejects(api.getApplianceProductKeys('7'), error =>
+        error.code === 'UNSUPPORTED_DEPLOYMENT_CAPABILITY'
+    );
+    await assert.rejects(api.getLocalApplianceFirmwareVersions(), error =>
         error.code === 'UNSUPPORTED_DEPLOYMENT_CAPABILITY'
     );
     assert.equal(calls.length, 0);

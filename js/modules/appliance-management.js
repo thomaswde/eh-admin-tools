@@ -43,6 +43,22 @@ const ApplianceManagement = (() => {
         return { ...availability, [id]: single[id] };
     }
 
+    function mergeLocalFirmwareAvailability(availability, releases, error = null) {
+        const local = emptyFirmwareState(error ? 'failed' : 'no-upgrade', error);
+        if (!error) {
+            for (const release of Array.isArray(releases) ? releases : []) {
+                const releaseName = String(release?.release || '');
+                for (const candidate of Array.isArray(release?.versions) ? release.versions : []) {
+                    const version = String(candidate || '').trim();
+                    if (!version || local.versions.some(item => item.version === version)) continue;
+                    local.versions.push({ release: releaseName, version });
+                    local.status = 'available';
+                }
+            }
+        }
+        return { ...availability, '0': local };
+    }
+
     function isConsoleInventory(appliances) {
         return (appliances || []).some(appliance =>
             String(appliance.id) === '0' && String(appliance.platform || '').toLowerCase() === 'command'
@@ -56,8 +72,47 @@ const ApplianceManagement = (() => {
         return `${'•'.repeat(Math.max(4, Math.min(12, text.length - visible.length)))}${visible}`;
     }
 
+    function normalizeProductKeys(response) {
+        const items = Array.isArray(response) ? response : [response];
+        return items
+            .map(item => typeof item === 'string' ? item : item?.product_key)
+            .map(value => String(value || '').trim())
+            .filter(Boolean);
+    }
+
     function isSafeJobLocation(location) {
         return /^\/api\/v1\/jobs\/[A-Za-z0-9._~-]+$/.test(String(location || ''));
+    }
+
+    function classifyFirmwareJob(job) {
+        const status = String(job?.status || '').toUpperCase();
+        const remoteStatuses = (Array.isArray(job?.remote_jobs) ? job.remote_jobs : [])
+            .map(item => String(item?.status || '').toUpperCase())
+            .filter(Boolean);
+        if (TERMINAL_FAILURE.has(status) || remoteStatuses.some(item => TERMINAL_FAILURE.has(item))) {
+            return 'failed';
+        }
+        if (
+            TERMINAL_SUCCESS.has(status)
+            && remoteStatuses.every(item => TERMINAL_SUCCESS.has(item))
+        ) {
+            return 'done';
+        }
+        return null;
+    }
+
+    function summarizeRemoteJobs(job) {
+        return (Array.isArray(job?.remote_jobs) ? job.remote_jobs : [])
+            .map(item => {
+                const status = item?.status || 'Unknown';
+                const step = String(item?.step_description || '').trim();
+                const details = String(item?.details || '').trim();
+                const messages = [step, details].filter((value, index, values) =>
+                    value && values.indexOf(value) === index
+                );
+                return `${status}${messages.length ? ` — ${messages.join(' — ')}` : ''}`;
+            })
+            .join('; ');
     }
 
     function waitForPoll(milliseconds, signal) {
@@ -107,9 +162,8 @@ const ApplianceManagement = (() => {
             }
             lastJob = await fetchJob(location, { signal });
             onUpdate(lastJob);
-            const status = String(lastJob?.status || '').toUpperCase();
-            if (TERMINAL_SUCCESS.has(status)) return { state: 'done', job: lastJob };
-            if (TERMINAL_FAILURE.has(status)) return { state: 'failed', job: lastJob };
+            const terminalState = classifyFirmwareJob(lastJob);
+            if (terminalState) return { state: terminalState, job: lastJob };
             if (now() >= deadline) break;
             await wait(Math.min(intervalMs, Math.max(0, deadline - now())), signal);
         }
@@ -119,9 +173,13 @@ const ApplianceManagement = (() => {
     return Object.freeze({
         buildFirmwareAvailability,
         mergeSingleFirmwareAvailability,
+        mergeLocalFirmwareAvailability,
         isConsoleInventory,
         maskProductKey,
+        normalizeProductKeys,
         isSafeJobLocation,
+        classifyFirmwareJob,
+        summarizeRemoteJobs,
         pollFirmwareJob
     });
 })();

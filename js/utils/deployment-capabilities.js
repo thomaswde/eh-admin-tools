@@ -5,6 +5,7 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
         apiFamilies: Object.freeze({
             users: true,
             applianceFirmware: true,
+            localApplianceFirmware: true,
             applianceCloudServices: true,
             applianceProductKeys: true
         }),
@@ -23,6 +24,7 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
         apiFamilies: Object.freeze({
             users: false,
             applianceFirmware: true,
+            localApplianceFirmware: false,
             applianceCloudServices: false,
             applianceProductKeys: false
         }),
