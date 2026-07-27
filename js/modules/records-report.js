@@ -4,7 +4,15 @@ const crsState = {
     selectedPeriod: 'yesterday',
     inputMethod: 'manual',
     csvData: null,
+    lastReport: null,
     chartInstances: {}
+};
+
+const CRS_DAY_MS = 24 * 60 * 60 * 1000;
+const CRS_PERIOD_DAYS = {
+    yesterday: 1,
+    week: 7,
+    month: 30
 };
 
 // Model capacity mapping
@@ -92,7 +100,10 @@ function bytesToGB(bytes) {
 }
 
 function formatGBWithUnits(valueGB) {
-    if (!valueGB || valueGB <= 0) {
+    if (!Number.isFinite(valueGB)) {
+        return 'N/A';
+    }
+    if (valueGB <= 0) {
         return '0.00 GB';
     }
 
@@ -108,37 +119,63 @@ function formatGBWithUnits(valueGB) {
     return `${value.toFixed(2)} ${unit}`;
 }
 
-function getDateUnixTimes(dateStr) {
-    const date = new Date(dateStr);
-    const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
-    return {
-        from: Math.floor(startOfDay.getTime()),
-        until: Math.floor(endOfDay.getTime())
-    };
-}
-
-function getYesterday() {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    return yesterday.toISOString().split('T')[0];
-}
-
-function getDateRange(period) {
-    const end = new Date();
-    end.setDate(end.getDate() - 1); // Yesterday
-    const start = new Date(end);
-    
-    if (period === 'week') {
-        start.setDate(start.getDate() - 6);
-    } else if (period === 'month') {
-        start.setDate(start.getDate() - 29);
+function parseCRSCalendarDate(dateStr) {
+    const value = String(dateStr || '').trim();
+    let match = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\b|T)/);
+    let year;
+    let month;
+    let day;
+    if (match) {
+        [, year, month, day] = match;
+    } else {
+        match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\b|\s)/);
+        if (!match) throw new Error(`Invalid Summary Date UTC value: ${value || '(blank)'}`);
+        [, month, day, year] = match;
     }
-    
+    const timestamp = Date.UTC(Number(year), Number(month) - 1, Number(day));
+    const parsed = new Date(timestamp);
+    if (parsed.getUTCFullYear() !== Number(year)
+        || parsed.getUTCMonth() !== Number(month) - 1
+        || parsed.getUTCDate() !== Number(day)) {
+        throw new Error(`Invalid Summary Date UTC value: ${value}`);
+    }
+    return parsed.toISOString().slice(0, 10);
+}
+
+function getDateUnixTimes(dateStr) {
+    const isoDate = parseCRSCalendarDate(dateStr);
+    const from = Date.parse(`${isoDate}T00:00:00.000Z`);
     return {
-        start: start.toISOString().split('T')[0],
-        end: end.toISOString().split('T')[0]
+        from,
+        until: from + CRS_DAY_MS
     };
+}
+
+function buildCRSReportWindow(period, nowMs = Date.now()) {
+    const dayCount = CRS_PERIOD_DAYS[period];
+    if (!dayCount) throw new Error(`Unsupported Records Report period: ${period}`);
+    const now = new Date(nowMs);
+    if (!Number.isFinite(now.getTime())) throw new Error('Unable to determine the Records Report time window');
+    const todayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const untilMs = todayStartMs;
+    const fromMs = untilMs - (dayCount * CRS_DAY_MS);
+    const dates = Array.from({ length: dayCount }, (_, index) =>
+        new Date(fromMs + (index * CRS_DAY_MS)).toISOString().slice(0, 10)
+    );
+    return {
+        start: dates[0],
+        end: dates[dates.length - 1],
+        dates,
+        dayCount,
+        fromMs,
+        untilMs,
+        timezone: 'UTC',
+        untilExclusive: true
+    };
+}
+
+function getDateRange(period, nowMs = Date.now()) {
+    return buildCRSReportWindow(period, nowMs);
 }
 
 // Parse CSV data
@@ -159,18 +196,36 @@ function parseCSV(csvText) {
         const values = lines[i].split(',').map(v => v.replace(/"/g, '').trim());
         if (values.length < 3) continue;
         
-        data.push({
-            date: values[dateIdx],
-            utilized: parseFloat(values[utilizedIdx]),
-            reserved: parseFloat(values[reservedIdx])
-        });
+        const utilized = Number(values[utilizedIdx]);
+        const reserved = Number(values[reservedIdx]);
+        if (!Number.isFinite(utilized) || utilized < 0 || !Number.isFinite(reserved) || reserved <= 0) {
+            throw new Error(`Invalid Utilized or Reserved capacity on CSV row ${i + 1}`);
+        }
+        data.push({ date: parseCRSCalendarDate(values[dateIdx]), utilized, reserved });
     }
-    
+    if (!data.length) throw new Error('CSV does not contain any capacity rows');
     return data;
 }
 
+function selectCRSCapacityRows(csvData, reportWindow) {
+    const rowsByDate = new Map();
+    (csvData || []).forEach(row => {
+        const date = parseCRSCalendarDate(row.date);
+        if (!reportWindow.dates.includes(date)) return;
+        if (rowsByDate.has(date)) {
+            throw new Error(`CSV contains more than one capacity row for ${date}`);
+        }
+        rowsByDate.set(date, { ...row, date });
+    });
+    const missingDates = reportWindow.dates.filter(date => !rowsByDate.has(date));
+    if (missingDates.length) {
+        throw new Error(`CSV does not cover the selected UTC window; missing ${missingDates.join(', ')}`);
+    }
+    return reportWindow.dates.map(date => rowsByDate.get(date));
+}
+
 // Get capacity data based on input method
-function getCapacityData() {
+function getCapacityData(reportWindow = buildCRSReportWindow(crsState.selectedPeriod)) {
     if (crsState.inputMethod === 'manual') {
         const reserved = parseFloat(document.getElementById('reservedCapacity').value);
         const utilized = parseFloat(document.getElementById('utilizedCapacity').value);
@@ -185,33 +240,34 @@ function getCapacityData() {
             throw new Error('Please enter both reserved and utilized capacity values, or leave both blank');
         }
         
-        return { reserved, utilized };
+        return { reserved, utilized, dayCount: 1, aggregationMode: 'daily_manual' };
     } else {
         // CSV mode - capacity data is optional
         if (!crsState.csvData || crsState.csvData.length === 0) {
             return null; // No CSV = no capacity data, which is fine
         }
         
-        // Sort by date to get most recent
-        const sortedData = [...crsState.csvData].sort((a, b) => 
-            new Date(b.date) - new Date(a.date)
-        );
+        const selectedRows = selectCRSCapacityRows(crsState.csvData, reportWindow);
+        const sortedData = [...selectedRows].sort((a, b) => b.date.localeCompare(a.date));
         
         // Use reserved from most recent day (may have changed over time)
         // Use average utilized across the period
-        const avgUtilized = crsState.csvData.reduce((sum, d) => sum + d.utilized, 0) / crsState.csvData.length;
+        const avgUtilized = selectedRows.reduce((sum, d) => sum + d.utilized, 0) / selectedRows.length;
         const mostRecentReserved = sortedData[0].reserved;
         
         return {
             reserved: mostRecentReserved,
             utilized: avgUtilized,
-            isAveraged: true // Flag to show in UI
+            isAveraged: true,
+            dayCount: selectedRows.length,
+            aggregationMode: 'daily_average',
+            coveredDates: selectedRows.map(row => row.date)
         };
     }
 }
 
 // Fetch appliances and metrics
-async function fetchCRSData(dateRange) {
+async function fetchCRSData(reportWindow) {
     const appliances = await window.apiClient.getAppliances();
     
     // Filter for all discover appliances (EDA, EFC, IDS, etc.)
@@ -219,57 +275,96 @@ async function fetchCRSData(dateRange) {
         a.platform === 'discover'
     );
     
-    const results = [];
-    
-    // Use the full selected date range for the metrics query so that
-    // multi-day periods (week/month) return aggregated record bytes
-    const startTimes = getDateUnixTimes(dateRange.start);
-    const endTimes = getDateUnixTimes(dateRange.end);
-    
-    for (const appliance of discoverAppliances) {
-        // Skip appliances that are not online to avoid failed API calls
-        if ((appliance.status_message || '').toLowerCase().trim() !== 'online') {
-            continue;
-        }
-        
-        const metricPayload = {
-            cycle: 'auto',
-            from: startTimes.from,
-            until: endTimes.until,
-            metric_category: 'capture',
-            metric_specs: [{ name: 'record_bytes' }],
-            object_ids: [appliance.id],
-            object_type: 'system'
-        };
-        
+    const appliancesById = Object.fromEntries(discoverAppliances.map(appliance => [String(appliance.id), appliance]));
+    const eligibleAppliances = discoverAppliances.filter(appliance =>
+        String(appliance.status_message || '').trim().toLowerCase() === 'online'
+        && appliance.data_access !== false
+    );
+    const metricPayload = SystemHealthCollection.buildMetricRequest({
+        cycle: 'auto',
+        fromMs: reportWindow.fromMs,
+        untilMs: reportWindow.untilMs,
+        objectIds: eligibleAppliances.map(appliance => appliance.id),
+        metricNames: ['record_bytes'],
+        metricCategory: 'capture'
+    });
+    let rows = [];
+    let coverage;
+    if (!eligibleAppliances.length) {
+        coverage = SystemHealthCollection.buildSensorCoverage(discoverAppliances, rows);
+    } else {
         try {
-            const metricResponse = await window.apiClient.request('/metrics/total', {
-                method: 'POST',
-                body: JSON.stringify(metricPayload)
-            });
-            
-            const recordBytes = metricResponse.stats?.[0]?.values?.[0] || 0;
-            
-            results.push({
-                name: appliance.display_name,
-                model: appliance.license_platform,
-                recordBytes: recordBytes,
-                recordBytesGB: bytesToGB(recordBytes),
-                capacity: CRS_CAPACITIES[appliance.license_platform] || 0
+            const collected = await SystemHealthCollection.collectMetricEndpoint(
+                (path, options) => window.apiClient.request(path, options),
+                '/metrics/totalbyobject',
+                metricPayload
+            );
+            rows = SystemHealthCollection.normalizeAggregateChunks(
+                collected.chunks,
+                appliancesById,
+                ['record_bytes']
+            ).rows;
+            coverage = SystemHealthCollection.buildSensorCoverage(discoverAppliances, rows, {
+                sensorFailures: collected.sensor_failures
             });
         } catch (error) {
-            console.error(`Error fetching metrics for ${appliance.display_name}:`, error);
-            results.push({
-                name: appliance.display_name,
-                model: appliance.license_platform,
-                recordBytes: 0,
-                recordBytesGB: 0,
-                capacity: CRS_CAPACITIES[appliance.license_platform] || 0
-            });
+            console.error('Error fetching Records Report metrics:', error);
+            coverage = SystemHealthCollection.buildSensorCoverage(discoverAppliances, rows, { error });
         }
     }
-    
-    return results;
+    const summary = SystemHealthCollection.summarizeAggregateRows(rows);
+    return discoverAppliances.map(appliance => {
+        const id = String(appliance.id);
+        const recordBytes = Object.prototype.hasOwnProperty.call(summary.totals, id)
+            ? summary.totals[id]
+            : null;
+        return {
+            id,
+            name: appliance.display_name,
+            model: appliance.license_platform,
+            recordBytes,
+            recordBytesGB: recordBytes === null ? null : bytesToGB(recordBytes),
+            capacity: CRS_CAPACITIES[appliance.license_platform] || 0,
+            collectionStatus: coverage[id] || { status: 'empty', row_count: 0 },
+            aggregationMode: 'total_by_object',
+            reportFromMs: reportWindow.fromMs,
+            reportUntilMs: reportWindow.untilMs
+        };
+    });
+}
+
+function buildCRSSummary(applianceData, capacityData, dayCount) {
+    const rows = applianceData || [];
+    const validDayCount = Number(dayCount) > 0 ? Number(dayCount) : null;
+    const measuredAppliances = rows.filter(row => Number.isFinite(row.recordBytesGB));
+    const collectionComplete = rows.length > 0 && measuredAppliances.length === rows.length;
+    const measuredRecordBytesGB = measuredAppliances.reduce((sum, row) => sum + row.recordBytesGB, 0);
+    const totalRecordBytesGB = collectionComplete ? measuredRecordBytesGB : null;
+    const averageDailyRecordBytesGB = collectionComplete && validDayCount
+        ? totalRecordBytesGB / validDayCount
+        : null;
+    const ratio = capacityData && averageDailyRecordBytesGB > 0 && capacityData.utilized > 0
+        ? averageDailyRecordBytesGB / capacityData.utilized
+        : null;
+    return {
+        totalRecordBytesGB,
+        measuredRecordBytesGB,
+        averageDailyRecordBytesGB,
+        collectionComplete,
+        compressionRatio: ratio,
+        utilizationPercent: capacityData && capacityData.reserved > 0
+            ? (capacityData.utilized / capacityData.reserved) * 100
+            : null,
+        applianceData: rows.map(row => ({
+            ...row,
+            averageDailyRecordBytesGB: Number.isFinite(row.recordBytesGB) && validDayCount
+                ? row.recordBytesGB / validDayCount
+                : null,
+            compressedGB: ratio && Number.isFinite(row.recordBytesGB) && validDayCount
+                ? (row.recordBytesGB / validDayCount) / ratio
+                : row.recordBytesGB
+        }))
+    };
 }
 
 // Generate report
@@ -278,39 +373,18 @@ async function generateCRSReport() {
     document.getElementById('crsResults').style.display = 'none';
     
     try {
-        const dateRange = getDateRange(crsState.selectedPeriod);
-        const capacityData = getCapacityData(); // Can be null
-        const applianceData = await fetchCRSData(dateRange);
-        
-        // Calculate totals
-        const totalRecordBytesGB = applianceData.reduce((sum, a) => sum + a.recordBytesGB, 0);
-        
-        let compressionRatio = null; // string for display (e.g., '3.21')
-        let utilizationPercent = null;
-        let compressedData = applianceData;
-        
-        if (capacityData) {
-            const ratio = totalRecordBytesGB > 0 ? (totalRecordBytesGB / capacityData.utilized) : null;
-            compressionRatio = ratio ? ratio.toFixed(2) : 'N/A';
-            utilizationPercent = ((capacityData.utilized / capacityData.reserved) * 100).toFixed(1);
-            
-            // Calculate compressed values
-            compressedData = applianceData.map(a => ({
-                ...a,
-                // Store numeric GB for charts; we'll format for display later
-                compressedGB: ratio ? (a.recordBytesGB / ratio) : 0
-            }));
-        } else {
-            // No capacity data - use raw record bytes
-            compressedData = applianceData.map(a => ({
-                ...a,
-                // Keep numeric GB so charts can include small non-zero values
-                compressedGB: a.recordBytesGB
-            }));
-        }
+        const reportWindow = buildCRSReportWindow(crsState.selectedPeriod);
+        const capacityData = getCapacityData(reportWindow);
+        const applianceData = await fetchCRSData(reportWindow);
+        const summary = buildCRSSummary(applianceData, capacityData, reportWindow.dayCount);
+        const totalRecordBytesGB = summary.totalRecordBytesGB;
+        const compressionRatio = summary.compressionRatio === null ? null : summary.compressionRatio.toFixed(2);
+        const utilizationPercent = summary.utilizationPercent === null ? null : summary.utilizationPercent.toFixed(1);
+        const compressedData = summary.applianceData;
+        crsState.lastReport = { reportWindow, capacityData, ...summary };
         
         // Update KPIs
-        if (compressionRatio) {
+        if (compressionRatio !== null) {
             document.getElementById('compressionRatio').textContent = compressionRatio;
             document.getElementById('compressionRatioSubtext').textContent = '1 GB stored : ' + compressionRatio + ' GB ingested';
         } else {
@@ -320,9 +394,9 @@ async function generateCRSReport() {
         
         document.getElementById('totalRecordBytes').textContent = formatGBWithUnits(totalRecordBytesGB);
         
-        if (utilizationPercent) {
+        if (utilizationPercent !== null) {
             document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
-            const subtext = capacityData.isAveraged ? 'Of reserved (avg utilized from CSV)' : 'Of reserved capacity';
+            const subtext = capacityData.isAveraged ? 'Of reserved (selected-window daily average)' : 'Of reserved capacity';
             document.getElementById('capacityUtilizationSubtext').textContent = subtext;
         } else {
             document.getElementById('capacityUtilization').textContent = 'N/A';
@@ -332,7 +406,7 @@ async function generateCRSReport() {
         // Update chart title based on whether we have capacity data
         const stackedChartTitle = document.getElementById('stackedChartTitle');
         const barChartTitle = document.getElementById('barChartTitle');
-        if (capacityData) {
+        if (compressionRatio !== null) {
             stackedChartTitle.textContent = 'Capacity Consumption by Sensor';
             barChartTitle.textContent = 'Utilization by Sensor';
         } else {
@@ -341,7 +415,7 @@ async function generateCRSReport() {
         }
         
         // Render charts
-        renderStackedBarChart(compressedData, capacityData ? capacityData.reserved : null);
+        renderStackedBarChart(compressedData, compressionRatio !== null ? capacityData.reserved : null);
         renderSensorBarChart(compressedData);
         renderDataTable(compressedData, compressionRatio);
         
@@ -364,13 +438,15 @@ function renderStackedBarChart(data, reservedCapacity) {
         crsState.chartInstances.stacked.destroy();
     }
     
-    const consumed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0);
+    const consumed = data.reduce((sum, d) =>
+        sum + (Number.isFinite(d.compressedGB) ? d.compressedGB : 0), 0
+    );
     
     const datasets = data
-        .filter(d => parseFloat(d.compressedGB) > 0)
+        .filter(d => Number.isFinite(d.compressedGB) && d.compressedGB > 0)
         .map((d, i) => ({
             label: d.name,
-            data: [parseFloat(d.compressedGB)],
+            data: [d.compressedGB],
             backgroundColor: genericChartPaletteColor(i)
         }));
     
@@ -419,9 +495,12 @@ function renderSensorBarChart(data) {
         crsState.chartInstances.bar.destroy();
     }
     
-    const sortedData = [...data].sort((a, b) => parseFloat(b.compressedGB) - parseFloat(a.compressedGB));
+    const sortedData = [...data].sort((a, b) =>
+        (Number.isFinite(b.compressedGB) ? b.compressedGB : -1)
+        - (Number.isFinite(a.compressedGB) ? a.compressedGB : -1)
+    );
     const labels = sortedData.map(d => d.name);
-    const values = sortedData.map(d => parseFloat(d.compressedGB));
+    const values = sortedData.map(d => Number.isFinite(d.compressedGB) ? d.compressedGB : null);
     
     crsState.chartInstances.bar = new Chart(ctx, {
         type: 'bar',
@@ -467,19 +546,24 @@ function renderDataTable(data, compressionRatio) {
     tableHeader.innerHTML = `
         <th>Sensor Name</th>
         <th>Platform</th>
-        <th>Record Bytes (GB)</th>
-        ${hasCompression ? '<th>After Compression (GB)</th>' : ''}
+        <th>Period Record Bytes (GB)</th>
+        ${hasCompression ? '<th>Average Daily Stored (GB)</th>' : ''}
+        <th>Collection Status</th>
     `;
     
-    const sortedData = [...data].sort((a, b) => parseFloat(b.compressedGB) - parseFloat(a.compressedGB));
+    const sortedData = [...data].sort((a, b) =>
+        (Number.isFinite(b.compressedGB) ? b.compressedGB : -1)
+        - (Number.isFinite(a.compressedGB) ? a.compressedGB : -1)
+    );
     
     sortedData.forEach(d => {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${escapeHtml(d.name)}</td>
             <td>${escapeHtml(d.model)}</td>
-            <td>${d.recordBytesGB.toFixed(2)}</td>
-            ${hasCompression ? `<td>${d.compressedGB.toFixed(2)}</td>` : ''}
+            <td>${Number.isFinite(d.recordBytesGB) ? d.recordBytesGB.toFixed(2) : '&mdash;'}</td>
+            ${hasCompression ? `<td>${Number.isFinite(d.compressedGB) ? d.compressedGB.toFixed(2) : '&mdash;'}</td>` : ''}
+            <td>${escapeHtml(String(d.collectionStatus?.status || 'unknown').replaceAll('_', ' '))}</td>
         `;
         tbody.appendChild(row);
     });
@@ -488,12 +572,14 @@ function renderDataTable(data, compressionRatio) {
     const totalRow = document.createElement('tr');
     totalRow.style.fontWeight = 'bold';
     totalRow.style.borderTop = '2px solid var(--border-color)';
-    const totalRecordBytes = data.reduce((sum, d) => sum + d.recordBytesGB, 0).toFixed(2);
-    const totalCompressed = data.reduce((sum, d) => sum + parseFloat(d.compressedGB), 0).toFixed(2);
+    const totalRecordBytes = data.reduce((sum, d) => sum + (Number.isFinite(d.recordBytesGB) ? d.recordBytesGB : 0), 0).toFixed(2);
+    const totalCompressed = data.reduce((sum, d) => sum + (Number.isFinite(d.compressedGB) ? d.compressedGB : 0), 0).toFixed(2);
+    const totalLabel = data.every(d => Number.isFinite(d.recordBytesGB)) ? 'TOTAL' : 'MEASURED SUBTOTAL';
     totalRow.innerHTML = `
-        <td colspan="2">TOTAL</td>
+        <td colspan="2">${totalLabel}</td>
         <td>${totalRecordBytes}</td>
         ${hasCompression ? `<td>${totalCompressed}</td>` : ''}
+        <td></td>
     `;
     tbody.appendChild(totalRow);
 }

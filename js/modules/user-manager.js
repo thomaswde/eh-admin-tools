@@ -653,6 +653,10 @@ async function loadUsers(options = {}) {
         alert('Please connect to your ExtraHop instance first');
         return;
     }
+    if (!deploymentSupportsApiFamily(state.apiConfig?.type, 'users')) {
+        showStatus('User Manager is available only for self-managed RevealX Enterprise deployments.', true);
+        return;
+    }
 
     const loadBtn = document.getElementById('loadUsersBtn');
     const loadingDiv = document.getElementById('usersLoading');
@@ -980,6 +984,9 @@ function activateUsersModule() {
     if (!state.connected) {
         return;
     }
+    if (!deploymentSupportsApiFamily(state.apiConfig?.type, 'users')) {
+        return;
+    }
 
     if (userManagerState.isLoaded && state.users.length > 0) {
         applyUserFilters();
@@ -991,6 +998,9 @@ function activateUsersModule() {
 }
 
 function initUsersModule() {
+    if (!deploymentSupportsApiFamily(state.apiConfig?.type, 'users')) {
+        return;
+    }
     if (document.getElementById('loadUsersBtn').hasAttribute('data-listener-added')) {
         return;
     }

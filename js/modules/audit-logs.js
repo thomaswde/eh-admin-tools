@@ -2,9 +2,11 @@
 
 const auditLogState = {
     rawData: [],
+    filteredEntries: [],
     operations: {},
     dateRange: [],
     actualDateRange: [], // Actual dates that have data
+    reportWindow: null,
     shouldStop: false,
     charts: {
         eventTypes: null,
@@ -34,17 +36,8 @@ async function loadAuditLog() {
         loadingStatus.style.display = 'block';
         auditLogState.shouldStop = false;
         
-        // Build date range
-        auditLogState.dateRange = [];
-        const today = new Date();
-        for (let i = 0; i < lookbackDays; i++) {
-            const date = new Date(today);
-            date.setDate(date.getDate() - i);
-            auditLogState.dateRange.push(formatDate(date));
-        }
-        auditLogState.dateRange.reverse();
-
-        const cutoffDate = auditLogState.dateRange[0];
+        auditLogState.reportWindow = buildAuditLogWindow(lookbackDays);
+        auditLogState.dateRange = auditLogState.reportWindow.dates;
 
         // Fetch audit log in batches
         auditLogState.rawData = [];
@@ -79,7 +72,7 @@ async function loadAuditLog() {
         loadingText.textContent = 'Processing audit log data...';
 
         // Process the data
-        processAuditLogData(cutoffDate);
+        processAuditLogData(auditLogState.reportWindow);
 
         // Populate operation type dropdown
         populateOperationTypeDropdown();
@@ -90,7 +83,10 @@ async function loadAuditLog() {
 
         // Show status
         if (!auditLogState.shouldStop) {
-            showAuditLogStatus(`Successfully loaded ${auditLogState.rawData.length} audit log entries`, 'success');
+            showAuditLogStatus(
+                `Loaded ${auditLogState.filteredEntries.length} entries in the selected window (${auditLogState.rawData.length} fetched)`,
+                'success'
+            );
         }
         
         // Show charts and export
@@ -112,27 +108,43 @@ function stopAuditLogLoad() {
     showAuditLogStatus('Stopping audit log load...', 'warning');
 }
 
-function processAuditLogData(cutoffDate) {
+function buildAuditLogWindow(lookbackDays, nowMs = Date.now()) {
+    const days = Number(lookbackDays);
+    if (!Number.isInteger(days) || days < 1) throw new Error('Audit log lookback must be at least one day');
+    const now = new Date(nowMs);
+    if (!Number.isFinite(now.getTime())) throw new Error('Unable to determine the audit log time window');
+    const todayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const fromMs = todayStartMs - ((days - 1) * 24 * 60 * 60 * 1000);
+    const dates = Array.from({ length: days }, (_, index) =>
+        new Date(fromMs + (index * 24 * 60 * 60 * 1000)).toISOString().slice(0, 10)
+    );
+    return { fromMs, untilMs: now.getTime(), dates, timezone: 'UTC' };
+}
+
+function processAuditLogData(reportWindow) {
     auditLogState.operations = {};
+    auditLogState.filteredEntries = [];
     const datesWithData = new Set();
 
     for (const item of auditLogState.rawData) {
-        const entry = { ...item.body };
+        const entry = { ...(item.body || {}) };
         entry.id = item.id;
         entry.time = item.occur_time;
-        
-        const dateObj = new Date(entry.time);
+        entry.timeMs = Number(item.occur_time);
+        if (!Number.isFinite(entry.timeMs)
+            || entry.timeMs < reportWindow.fromMs
+            || entry.timeMs > reportWindow.untilMs) continue;
+
+        const dateObj = new Date(entry.timeMs);
         const dateStr = formatDate(dateObj);
+        entry.date = dateStr;
         entry.datetime = formatDateTime(dateObj);
-        
-        // Filter by date range
-        if (dateStr < cutoffDate) continue;
 
         // Track dates that have data
         datesWithData.add(dateStr);
 
         // Normalize operation names
-        let operation = entry.operation;
+        let operation = String(entry.operation || 'Unknown');
         if (operation.startsWith('Remove fngr-')) {
             operation = 'Remove Node';
         } else if (operation.startsWith('Disable node')) {
@@ -140,6 +152,8 @@ function processAuditLogData(cutoffDate) {
         } else if (operation.startsWith('Enable node')) {
             operation = 'Enable Node';
         }
+        entry.normalizedOperation = operation;
+        auditLogState.filteredEntries.push(entry);
 
         if (!auditLogState.operations[operation]) {
             auditLogState.operations[operation] = [];
@@ -252,8 +266,7 @@ function generateLoginPerDayChart() {
     });
 
     auditLogState.operations['Login'].forEach(log => {
-        const dateObj = new Date(log.time);
-        const dateStr = formatDate(dateObj);
+        const dateStr = log.date;
         if (dateStr in loginsByDay) {
             loginsByDay[dateStr]++;
         }
@@ -364,8 +377,7 @@ function generateActivityByUserChart() {
             if (!log.user || log.user === 'unknown') return;
             
             const user = log.user;
-            const dateObj = new Date(log.time);
-            const dateStr = formatDate(dateObj);
+            const dateStr = log.date;
             
             if (!userActivity[user]) {
                 userActivity[user] = {};
@@ -477,20 +489,11 @@ function generateActivityByUserChart() {
 }
 
 function formatDate(date) {
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const year = String(date.getFullYear()).slice(-2);
-    return `${month}-${day}-${year}`;
+    return date.toISOString().slice(0, 10);
 }
 
 function formatDateTime(date) {
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const year = String(date.getFullYear()).slice(-2);
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-    return `${month}-${day}-${year} ${hours}:${minutes}:${seconds}`;
+    return date.toISOString().replace('T', ' ').replace('.000Z', ' UTC');
 }
 
 function showAuditLogStatus(message, type = 'success') {
@@ -517,54 +520,21 @@ function showAuditLogStatus(message, type = 'success') {
 }
 
 function exportAuditLogCsv() {
-    if (auditLogState.rawData.length === 0) {
+    if (auditLogState.filteredEntries.length === 0) {
         alert('No audit log data to export');
         return;
     }
 
     const operationType = document.getElementById('exportOperationType').value;
-    let dataToExport = [];
-
-    if (operationType === 'all') {
-        dataToExport = auditLogState.rawData;
-    } else {
-        // Filter by operation type
-        const operationEntries = auditLogState.operations[operationType];
-        if (!operationEntries || operationEntries.length === 0) {
+    const dataToExport = selectAuditLogEntriesForExport(operationType);
+    if (dataToExport.length === 0) {
+        if (operationType !== 'all') {
             alert(`No entries found for operation type: ${operationType}`);
-            return;
         }
-        
-        // Map back to raw data format
-        dataToExport = operationEntries.map(entry => ({
-            id: entry.id,
-            occur_time: entry.time,
-            body: entry
-        }));
+        return;
     }
 
-    // Prepare CSV data
-    const headers = ['ID', 'Date/Time', 'Operation', 'User', 'Details'];
-    const rows = [headers];
-
-    dataToExport.forEach(item => {
-        const entry = item.body;
-        const dateObj = new Date(item.occur_time);
-        const dateTime = formatDateTime(dateObj);
-        
-        const details = JSON.stringify(entry).replace(/"/g, '""');
-        
-        rows.push([
-            item.id,
-            dateTime,
-            entry.operation || '',
-            entry.user || 'unknown',
-            `"${details}"`
-        ]);
-    });
-
-    // Convert to CSV string
-    const csvContent = rows.map(row => row.join(',')).join('\n');
+    const csvContent = buildAuditLogCsv(dataToExport);
 
     // Download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -587,6 +557,30 @@ function exportAuditLogCsv() {
         ? `CSV export completed (${dataToExport.length} entries)`
         : `CSV export completed for ${operationType} (${dataToExport.length} entries)`;
     showAuditLogStatus(statusMsg, 'success');
+}
+
+function selectAuditLogEntriesForExport(operationType) {
+    if (operationType === 'all') return auditLogState.filteredEntries;
+    return auditLogState.operations[operationType] || [];
+}
+
+function escapeAuditLogCsvCell(value) {
+    const text = String(value ?? '');
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function buildAuditLogCsv(entries) {
+    const rows = [['ID', 'Date/Time', 'Operation', 'User', 'Details']];
+    (entries || []).forEach(entry => {
+        rows.push([
+            entry.id,
+            entry.datetime || formatDateTime(new Date(entry.timeMs ?? entry.time)),
+            entry.operation || '',
+            entry.user || 'unknown',
+            JSON.stringify(entry)
+        ]);
+    });
+    return rows.map(row => row.map(escapeAuditLogCsvCell).join(',')).join('\n');
 }
 
 // Audit Logs module initialization function

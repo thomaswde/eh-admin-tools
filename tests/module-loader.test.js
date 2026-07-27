@@ -62,3 +62,30 @@ test('concurrent module loads share one dependency and module script sequence', 
     assert.equal(await loader.loadModule('system-health'), true);
     assert.equal(scripts.length, 4);
 });
+
+test('Records Report loads the shared XID-aware metric collector before its module', async () => {
+    const source = fs.readFileSync(
+        path.join(__dirname, '..', 'js', 'utils', 'module-loader.js'),
+        'utf8'
+    );
+    const scripts = [];
+    const document = {
+        head: {
+            appendChild(script) {
+                scripts.push(script);
+                queueMicrotask(() => script.onload());
+            }
+        },
+        createElement() { return { dataset: {}, remove() {} }; },
+        querySelector() { return null; }
+    };
+    const context = vm.createContext({ console, document, switchModule() {} });
+    vm.runInContext(source, context);
+    const loader = vm.runInContext('new ModuleLoader()', context);
+
+    assert.equal(await loader.loadModule('crs-usage'), true);
+    assert.deepEqual(
+        scripts.map(script => script.src.replace(/\?v=\d+$/, '')),
+        ['js/modules/system-health-collection.js', 'js/modules/records-report.js']
+    );
+});

@@ -28,6 +28,8 @@ function showConnectedState() {
     const chip = document.getElementById('apiConfigToggle');
     const is360 = state.apiConfig.type === '360';
 
+    syncDeploymentCapabilityNavigation(state.apiConfig.type);
+
     document.getElementById('connectedState').classList.remove('hidden');
     document.getElementById('configForm').style.display = 'none';
     document.getElementById('moduleSelection').style.display = 'block';

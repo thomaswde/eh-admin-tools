@@ -139,6 +139,19 @@ class ExtraHopAPI {
         return ExtraHopAPI.parseStaticResponse(response);
     }
 
+    assertApiFamilySupported(familyName) {
+        if (
+            typeof deploymentSupportsApiFamily === 'function'
+            && !deploymentSupportsApiFamily(this.config?.type, familyName)
+        ) {
+            const error = new Error(
+                `${familyName === 'users' ? 'User management' : familyName} is not supported for this deployment type.`
+            );
+            error.code = 'UNSUPPORTED_DEPLOYMENT_CAPABILITY';
+            throw error;
+        }
+    }
+
     static async backendFetch(url, options = {}) {
         const fetchOptions = { ...options };
         const callerSignal = fetchOptions.signal;
@@ -288,6 +301,7 @@ class ExtraHopAPI {
 
     async listUsers({ suppressErrors = false } = {}) {
         try {
+            this.assertApiFamilySupported('users');
             return await this.request('/users');
         } catch (error) {
             if (suppressErrors) {
@@ -303,10 +317,12 @@ class ExtraHopAPI {
     }
 
     async getUser(username) {
+        this.assertApiFamilySupported('users');
         return this.request(`/users/${encodeURIComponent(username)}`);
     }
 
     async createUser(body) {
+        this.assertApiFamilySupported('users');
         return this.request('/users', {
             method: 'POST',
             body: JSON.stringify(body)
@@ -314,6 +330,7 @@ class ExtraHopAPI {
     }
 
     async updateUser(username, body) {
+        this.assertApiFamilySupported('users');
         return this.request(`/users/${encodeURIComponent(username)}`, {
             method: 'PATCH',
             body: JSON.stringify(body)
@@ -321,6 +338,7 @@ class ExtraHopAPI {
     }
 
     async deleteUser(username, destUser) {
+        this.assertApiFamilySupported('users');
         const query = destUser
             ? `?dest_user=${encodeURIComponent(destUser)}`
             : '';
@@ -331,14 +349,17 @@ class ExtraHopAPI {
     }
 
     async getUserApiKeys(username) {
+        this.assertApiFamilySupported('users');
         return this.request(`/users/${encodeURIComponent(username)}/apikeys`);
     }
 
     async getUserLockStatus(username) {
+        this.assertApiFamilySupported('users');
         return this.request(`/users/${encodeURIComponent(username)}/lock`);
     }
 
     async unlockUser(username) {
+        this.assertApiFamilySupported('users');
         return this.request(`/users/${encodeURIComponent(username)}/lock`, {
             method: 'DELETE'
         });

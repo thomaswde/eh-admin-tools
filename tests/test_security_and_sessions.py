@@ -1,7 +1,9 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
+import httpx
 
 import main
 from backend.connection_store import ConnectionStorageError
@@ -144,7 +146,10 @@ class SessionStoreTests(unittest.TestCase):
 class BackendRouteSecurityTests(unittest.TestCase):
     def setUp(self):
         main.sessions = SessionStore(ttl_seconds=60, max_sessions=8)
-        self.client = TestClient(main.app, base_url="http://127.0.0.1")
+        original_store = main.connection_store
+        main.connection_store = DummyConnectionStore()
+        self.addCleanup(setattr, main, "connection_store", original_store)
+        self.client = self.enterContext(TestClient(main.app, base_url="http://127.0.0.1"))
 
     def test_validation_error_does_not_echo_credentials(self):
         secret = "do-not-echo-this-secret"
@@ -187,6 +192,62 @@ class BackendRouteSecurityTests(unittest.TestCase):
     def test_catalog_requires_session(self):
         response = self.client.get("/backend/system-health/catalog")
         self.assertEqual(response.status_code, 401)
+
+    def test_proxy_preserves_int64_identifiers_as_strings_for_browser_json(self):
+        unsafe_id = 9007199254740993
+        upstream_payload = {
+            "id": unsafe_id,
+            "node_id": unsafe_id + 2,
+            "xid": [unsafe_id + 4],
+            "from": 1785067200000,
+            "until": 1785067260000,
+            "clock": 1785067260123,
+            "edges": [{"from": unsafe_id + 10, "to": unsafe_id + 12, "weight": 42}],
+            "stats": [
+                {
+                    "oid": unsafe_id + 6,
+                    "time": 1785067200000,
+                    "duration": 60000,
+                    "values": [[unsafe_id + 8]],
+                }
+            ],
+        }
+
+        def upstream_response(request):
+            return httpx.Response(
+                200,
+                json=upstream_payload,
+                headers={"content-type": "application/json"},
+                request=request,
+            )
+
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream_response))
+        session_id = main.sessions.create(client)
+        self.client.cookies.set(main.SESSION_COOKIE, session_id)
+        self.addCleanup(lambda: asyncio.run(client.aclose()))
+
+        response = self.client.get("/backend/extrahop/api/v1/metrics")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["id"], str(unsafe_id))
+        self.assertEqual(data["node_id"], str(unsafe_id + 2))
+        self.assertEqual(data["xid"], [str(unsafe_id + 4)])
+        self.assertEqual(data["stats"][0]["oid"], str(unsafe_id + 6))
+        self.assertEqual(data["edges"][0]["from"], str(unsafe_id + 10))
+        self.assertEqual(data["edges"][0]["to"], str(unsafe_id + 12))
+        self.assertIsInstance(data["edges"][0]["weight"], int)
+        self.assertIsInstance(data["from"], int)
+        self.assertIsInstance(data["stats"][0]["time"], int)
+        self.assertIsInstance(data["stats"][0]["duration"], int)
+        self.assertIsInstance(data["stats"][0]["values"][0][0], int)
 
     def test_index_disables_browser_caching(self):
         response = self.client.get("/")

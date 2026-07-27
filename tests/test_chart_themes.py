@@ -26,7 +26,7 @@ class ChartThemeApiTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(self.temp.cleanup)
-        self.client = TestClient(main.app, base_url="http://127.0.0.1")
+        self.client = self.enterContext(TestClient(main.app, base_url="http://127.0.0.1"))
 
     def save(self, theme_id, name="Corporate", colors=None):
         return self.client.put(

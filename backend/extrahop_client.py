@@ -19,6 +19,42 @@ MAX_REQUEST_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
+# JavaScript cannot represent API int64 identifiers above 2**53 exactly.  These
+# names come from the bundled ExtraHop OpenAPI schema.  Normalize identifiers at
+# the Python/browser boundary, before FastAPI serializes them as JSON numbers.
+# Time, duration, capacity, and metric-value fields intentionally stay numeric.
+IDENTIFIER_FIELD_NAMES = frozenset({
+    "id",
+    "keyid",
+    "oid",
+    "sid",
+    "xid",
+})
+IDENTIFIER_ARRAY_FIELD_NAMES = frozenset({"detections"})
+
+
+def normalize_api_identifiers(value: Any, *, identifier_value: bool = False) -> Any:
+    """Return API JSON with documented identifier values represented as strings."""
+    if isinstance(value, dict):
+        normalized: dict[Any, Any] = {}
+        is_topology_edge = "from" in value and "to" in value and "weight" in value
+        for key, item in value.items():
+            field_name = str(key).lower()
+            is_identifier = (
+                field_name in IDENTIFIER_FIELD_NAMES
+                or field_name.endswith("_id")
+                or field_name.endswith("_ids")
+                or field_name in IDENTIFIER_ARRAY_FIELD_NAMES
+                or (is_topology_edge and field_name in {"from", "to"})
+            )
+            normalized[key] = normalize_api_identifiers(item, identifier_value=is_identifier)
+        return normalized
+    if isinstance(value, list):
+        return [normalize_api_identifiers(item, identifier_value=identifier_value) for item in value]
+    if identifier_value and isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return value
+
 
 class ExtraHopApiError(Exception):
     def __init__(self, message: str, status_code: int = 502, details: dict[str, Any] | None = None):
@@ -174,7 +210,7 @@ class ExtraHopClient:
         content_type_header = response.headers.get("content-type", "")
         if "application/json" in content_type_header:
             try:
-                return response.json()
+                return normalize_api_identifiers(response.json())
             except ValueError as error:
                 raise self._malformed_response_error(response, "API response was not valid JSON") from error
         return response.text

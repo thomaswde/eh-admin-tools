@@ -15,6 +15,7 @@ class ModuleLoader {
             'nodemap': 'nodemap.js'
         };
         this.moduleDependencies = {
+            'crs-usage': ['system-health-collection.js'],
             'system-health': ['chart-theme.js', 'system-health-collection.js', 'system-health-pptx.js']
         };
     }
@@ -109,6 +110,12 @@ class ModuleLoader {
     }
 
     async switchToModule(moduleName) {
+        const deploymentType = window.state?.apiConfig?.type;
+        if (!deploymentSupportsModule(deploymentType, moduleName)) {
+            console.warn(`Module '${moduleName}' is unavailable for deployment type '${deploymentType || 'unknown'}'`);
+            return false;
+        }
+
         // First, ensure the module is loaded
         let loaded = false;
         try {
