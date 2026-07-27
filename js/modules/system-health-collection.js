@@ -27,7 +27,6 @@
     const MAX_SCALAR_POINTS_PER_REPORT = 500_000;
     const DEFAULT_XID_DEADLINE_MS = 5 * 60 * 1000;
     const DEFAULT_PENDING_RETRIES = 120;
-    const DEFAULT_RETRY_ATTEMPTS = 4;
 
     class SystemHealthIncompleteResultError extends Error {
         constructor(message, details = {}) {
@@ -152,25 +151,6 @@
         return xid;
     }
 
-    function retryAfterMs(error) {
-        const raw = error && (
-            error.retryAfter
-            || error.retry_after
-            || (error.details && (error.details.retry_after || error.details.retryAfter))
-        );
-        if (raw === null || raw === undefined || raw === '') return null;
-        const seconds = Number(raw);
-        if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-        const dateMs = Date.parse(String(raw));
-        return Number.isFinite(dateMs) ? Math.max(0, dateMs - Date.now()) : null;
-    }
-
-    function retryableError(error) {
-        const status = Number(error && error.status);
-        return status === 429 || status === 502 || status === 503 || status === 504
-            || (error && error.name === 'TypeError');
-    }
-
     function errorResponseMessage(error) {
         const details = error && error.details;
         const response = details && details.response !== undefined ? details.response : details;
@@ -209,44 +189,22 @@
         };
     }
 
-    async function requestWithRetry(request, endpoint, options, retryOptions = {}) {
-        const sleep = retryOptions.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
-        const random = retryOptions.random || Math.random;
-        const maxAttempts = retryOptions.maxAttempts || DEFAULT_RETRY_ATTEMPTS;
-        let lastError = null;
-
-        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-            try {
-                return await request(endpoint, options);
-            } catch (error) {
-                lastError = error;
-                if (!retryableError(error) || attempt >= maxAttempts - 1) throw error;
-                const serverDelay = retryAfterMs(error);
-                const exponentialDelay = Math.min(10_000, 500 * (2 ** attempt));
-                const delay = serverDelay === null
-                    ? Math.round(exponentialDelay * (0.8 + random() * 0.4))
-                    : serverDelay;
-                await sleep(delay);
-            }
-        }
-        throw lastError;
-    }
-
     async function collectMetricEndpoint(request, endpoint, body, options = {}) {
         const now = options.now || Date.now;
         const sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
         const deadlineMs = options.deadlineMs || DEFAULT_XID_DEADLINE_MS;
         const maxPendingRetries = options.maxPendingRetries || DEFAULT_PENDING_RETRIES;
+        // HTTP retry/backoff belongs to the backend client. The browser owns only
+        // continuation polling and one absolute collection deadline, beginning
+        // before the initial POST rather than after it returns.
+        const deadline = now() + deadlineMs;
         const requestOptions = {
             method: 'POST',
             body: JSON.stringify(body),
-            signal: options.signal
+            signal: options.signal,
+            timeoutMs: Math.max(1, deadline - now())
         };
-        const initial = await requestWithRetry(request, endpoint, requestOptions, {
-            sleep,
-            random: options.random,
-            maxAttempts: options.maxRetryAttempts
-        });
+        const initial = await request(endpoint, requestOptions);
         const chunks = [];
         const sensorFailures = {};
         if (initial && typeof initial === 'object' && Array.isArray(initial.stats)) chunks.push(initial);
@@ -254,7 +212,6 @@
         const xid = responseXid(initial);
         if (xid === null) return { chunks, xid: null, complete: true, sensor_failures: sensorFailures };
 
-        const deadline = now() + deadlineMs;
         let pendingRetries = 0;
         let resultChunks = 0;
         while (true) {
@@ -266,11 +223,13 @@
             }
             let chunk;
             try {
-                chunk = await requestWithRetry(
-                    request,
+                chunk = await request(
                     `/metrics/next/${encodeURIComponent(idKey(xid))}`,
-                    { method: 'GET', signal: options.signal },
-                    { sleep, random: options.random, maxAttempts: options.maxRetryAttempts }
+                    {
+                        method: 'GET',
+                        signal: options.signal,
+                        timeoutMs: Math.max(1, deadline - now())
+                    }
                 );
             } catch (error) {
                 const sensorFailure = metricSensorFailure(error);
@@ -295,7 +254,8 @@
                         { xid: idKey(xid), result_chunks: resultChunks, pending_retries: pendingRetries }
                     );
                 }
-                await sleep(Math.min(5000, 500 * (2 ** Math.min(4, pendingRetries - 1))));
+                const pendingDelay = Math.min(5000, 500 * (2 ** Math.min(4, pendingRetries - 1)));
+                await sleep(Math.min(pendingDelay, Math.max(0, deadline - now())));
                 continue;
             }
             if (!chunk || typeof chunk !== 'object' || !Array.isArray(chunk.stats)) {
@@ -611,7 +571,6 @@
         chooseCyclePolicy,
         buildMetricRequest,
         metricSensorFailure,
-        requestWithRetry,
         isPacketstoreProbeMiss,
         hasMetricValue,
         collectMetricEndpoint,

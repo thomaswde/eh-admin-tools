@@ -169,21 +169,41 @@ test('raises an explicit incomplete-result error after repeated again responses'
     );
 });
 
-test('retries a 429 using Retry-After before succeeding', async () => {
+test('uses one absolute deadline for the initial request and all XID continuations', async () => {
+    let clock = 100;
+    const requests = [];
+    const responses = [{ xid: 77 }, 'again', null];
+    const result = await health.collectMetricEndpoint(async (endpoint, options) => {
+        requests.push({ endpoint, timeoutMs: options.timeoutMs });
+        clock += 100;
+        return responses.shift();
+    }, '/metrics', {}, {
+        deadlineMs: 1000,
+        now: () => clock,
+        sleep: async delay => { clock += delay; }
+    });
+
+    assert.equal(result.complete, true);
+    assert.deepEqual(requests, [
+        { endpoint: '/metrics', timeoutMs: 1000 },
+        { endpoint: '/metrics/next/77', timeoutMs: 900 },
+        { endpoint: '/metrics/next/77', timeoutMs: 300 }
+    ]);
+});
+
+test('does not multiply backend retry attempts in the browser collector', async () => {
     let attempts = 0;
-    const delays = [];
-    const result = await health.requestWithRetry(async () => {
-        attempts += 1;
-        if (attempts === 1) {
-            const error = new Error('rate limited');
-            error.status = 429;
-            error.details = { retry_after: '2' };
-            throw error;
-        }
-        return { ok: true };
-    }, '/metrics', {}, { sleep: async delay => delays.push(delay) });
-    assert.deepEqual(result, { ok: true });
-    assert.deepEqual(delays, [2000]);
+    const rateLimit = new Error('rate limited');
+    rateLimit.status = 429;
+
+    await assert.rejects(
+        health.collectMetricEndpoint(async () => {
+            attempts += 1;
+            throw rateLimit;
+        }, '/metrics', {}, { now: () => 0 }),
+        error => error === rateLimit
+    );
+    assert.equal(attempts, 1);
 });
 
 test('supports an XID returned by total-by-object and keeps totals out of peaks', async () => {
