@@ -125,6 +125,11 @@ class ApiResponseLogger:
             return status_code < 200 or status_code >= 300
         return True
 
+    def wants_request_body(self) -> bool:
+        """Return whether the caller should pay to decode a request payload."""
+        with self._state_lock:
+            return not self._closed and self.verbosity == "full"
+
     def log_response(
         self,
         *,

@@ -11,10 +11,16 @@ from backend.extrahop_client import ExtraHopApiError
 
 
 class ReceiveStream:
-    def __init__(self):
-        self.messages = deque([
-            {"type": "http.request", "body": b"", "more_body": False},
-        ])
+    def __init__(self, chunks=None):
+        chunks = [b""] if chunks is None else chunks
+        self.messages = deque(
+            {
+                "type": "http.request",
+                "body": chunk,
+                "more_body": index < len(chunks) - 1,
+            }
+            for index, chunk in enumerate(chunks)
+        )
         self.next_message = asyncio.Queue()
         self.waiting = asyncio.Event()
         self.active_waiters = 0
@@ -37,18 +43,18 @@ class ReceiveStream:
         await self.next_message.put({"type": "http.disconnect"})
 
 
-def build_request(stream):
+def build_request(stream, *, method="GET", headers=None):
     return Request(
         {
             "type": "http",
             "asgi": {"version": "3.0"},
             "http_version": "1.1",
-            "method": "GET",
+            "method": method,
             "scheme": "http",
             "path": "/backend/extrahop/api/v1/metrics/next/198865",
             "raw_path": b"/backend/extrahop/api/v1/metrics/next/198865",
             "query_string": b"",
-            "headers": [],
+            "headers": headers or [],
             "client": ("127.0.0.1", 12345),
             "server": ("127.0.0.1", 8000),
         },
@@ -59,6 +65,15 @@ def build_request(stream):
 class ImmediateSuccessClient:
     async def request(self, *args, **kwargs):
         return {"stats": []}
+
+
+class RecordingClient(ImmediateSuccessClient):
+    def __init__(self):
+        self.calls = []
+
+    async def request(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return await super().request(*args, **kwargs)
 
 
 class ImmediateErrorClient:
@@ -85,12 +100,12 @@ class SlowClient:
 
 
 class ProxyDisconnectTests(unittest.IsolatedAsyncioTestCase):
-    async def call_proxy(self, stream, client):
+    async def call_proxy(self, stream, client, *, method="GET", headers=None):
         with patch("main.get_session_client", return_value=client):
             return await asyncio.wait_for(
                 main.proxy_extrahop_request(
                     "api/v1/metrics/next/198865",
-                    build_request(stream),
+                    build_request(stream, method=method, headers=headers),
                     "session-id",
                 ),
                 timeout=1,
@@ -137,6 +152,53 @@ class ProxyDisconnectTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(stream.cancelled_waiters, 1)
         self.assertEqual(stream.active_waiters, 0)
+
+    async def test_streamed_request_over_limit_returns_413_without_forwarding(self):
+        stream = ReceiveStream([b"a" * 40, b"b" * 30])
+        client = RecordingClient()
+
+        with patch.object(main, "PROXY_MAX_REQUEST_BYTES", 64):
+            with self.assertRaises(HTTPException) as raised:
+                await self.call_proxy(stream, client, method="POST")
+
+        self.assertEqual(raised.exception.status_code, 413)
+        self.assertIn("64-byte limit", str(raised.exception.detail))
+        self.assertEqual(client.calls, [])
+        self.assertEqual(stream.active_waiters, 0)
+
+    async def test_request_at_limit_is_forwarded_intact(self):
+        stream = ReceiveStream([b"a" * 32, b"b" * 32])
+        client = RecordingClient()
+
+        with patch.object(main, "PROXY_MAX_REQUEST_BYTES", 64):
+            result = await self.call_proxy(
+                stream,
+                client,
+                method="POST",
+                headers=[(b"content-type", b"application/octet-stream")],
+            )
+
+        self.assertEqual(result, {"stats": []})
+        self.assertEqual(len(client.calls), 1)
+        _, kwargs = client.calls[0]
+        self.assertEqual(kwargs["body"], b"a" * 32 + b"b" * 32)
+        self.assertEqual(kwargs["content_type"], "application/octet-stream")
+
+    async def test_declared_request_over_limit_returns_413_before_streaming(self):
+        stream = ReceiveStream([b"small"])
+        client = RecordingClient()
+
+        with patch.object(main, "PROXY_MAX_REQUEST_BYTES", 64):
+            with self.assertRaises(HTTPException) as raised:
+                await self.call_proxy(
+                    stream,
+                    client,
+                    method="POST",
+                    headers=[(b"content-length", b"65")],
+                )
+
+        self.assertEqual(raised.exception.status_code, 413)
+        self.assertEqual(client.calls, [])
 
 
 if __name__ == "__main__":

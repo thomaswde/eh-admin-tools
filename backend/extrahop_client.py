@@ -240,6 +240,15 @@ class ExtraHopClient:
         if query_string:
             url = f"{url}?{query_string}"
 
+        request_body_for_log = (
+            self._request_body_for_log(
+                body,
+                content_type,
+                max_bytes=self.response_logger.max_preview_bytes,
+            )
+            if self.response_logger and self.response_logger.wants_request_body()
+            else None
+        )
         last_error: httpx.RequestError | None = None
         for attempt in range(MAX_REQUEST_ATTEMPTS):
             started_at = time.perf_counter()
@@ -272,7 +281,7 @@ class ExtraHopClient:
                     endpoint=endpoint,
                     response=response,
                     started_at=started_at,
-                    request_body=self._request_body_for_log(body, content_type),
+                    request_body=request_body_for_log,
                 )
 
             if (
@@ -447,9 +456,23 @@ class ExtraHopClient:
         return None
 
     @staticmethod
-    def _request_body_for_log(body: bytes | None, content_type: str | None) -> Any:
+    def _request_body_for_log(
+        body: bytes | None,
+        content_type: str | None,
+        *,
+        max_bytes: int,
+    ) -> Any:
         if not body:
             return None
+
+        limit = max(1, int(max_bytes))
+        if len(body) > limit:
+            return {
+                "type": "truncated_request_preview",
+                "request_bytes": len(body),
+                "preview_bytes": limit,
+                "preview": body[:limit].decode("utf-8", errors="replace"),
+            }
 
         if content_type and "application/json" in content_type:
             try:

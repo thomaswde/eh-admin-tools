@@ -76,6 +76,16 @@ class ApiResponseLoggerTests(unittest.TestCase):
             self.assertEqual(entry["response_shape"]["error_message"], "string")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    def test_only_full_logging_requests_body_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "responses.jsonl"
+            logger = self.make_logger(path, "errors")
+            self.assertFalse(logger.wants_request_body())
+            logger.configure("metadata")
+            self.assertFalse(logger.wants_request_body())
+            logger.configure("full")
+            self.assertTrue(logger.wants_request_body())
+
     def test_oversized_json_response_is_truncated_and_never_parsed(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "responses.jsonl"

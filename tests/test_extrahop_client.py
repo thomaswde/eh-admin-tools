@@ -1,15 +1,61 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
-import main
+from backend import system_health_pdf as pdf
 from backend.extrahop_client import ExtraHopApiError, ExtraHopClient
 from backend.session_store import SessionStore
 
 
 class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
+    def test_request_log_body_parser_bounds_before_json_decoding(self):
+        body = b'{"key":"' + (b"x" * 10_000) + b'"}'
+        preview = ExtraHopClient._request_body_for_log(
+            body,
+            "application/json",
+            max_bytes=64,
+        )
+
+        self.assertEqual(preview["type"], "truncated_request_preview")
+        self.assertEqual(preview["request_bytes"], len(body))
+        self.assertEqual(preview["preview_bytes"], 64)
+        self.assertLessEqual(len(preview["preview"].encode()), 64)
+
+    async def test_non_full_logging_does_not_decode_request_body(self):
+        async def handler(_request):
+            return httpx.Response(200, json={"ok": True})
+
+        logger = Mock()
+        logger.max_preview_bytes = 64
+        logger.wants_request_body.return_value = False
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            },
+            logger,
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        with patch.object(
+            ExtraHopClient,
+            "_request_body_for_log",
+            wraps=ExtraHopClient._request_body_for_log,
+        ) as parser:
+            await client.request(
+                "POST",
+                "/metrics",
+                body=b'{"metric":"record_bytes"}',
+                content_type="application/json",
+            )
+
+        parser.assert_not_called()
+        logger.log_response.assert_called_once()
+        await client.aclose()
+
     async def test_reuses_one_http_client_and_closes_it(self):
         requests = []
 
@@ -17,11 +63,13 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
             requests.append(request)
             return httpx.Response(200, json={"ok": True})
 
-        client = ExtraHopClient({
-            "type": "enterprise",
-            "host": "sensor.example.test",
-            "apiKey": "key",
-        })
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
         client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         shared_client = client._http_client
 
@@ -41,21 +89,26 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
             nonlocal api_attempts, token_attempts
             if request.url.path == "/oauth2/token":
                 token_attempts += 1
-                return httpx.Response(200, json={
-                    "access_token": f"token-{token_attempts}",
-                    "expires_in": 3600,
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "access_token": f"token-{token_attempts}",
+                        "expires_in": 3600,
+                    },
+                )
             api_attempts += 1
             if api_attempts == 1:
                 return httpx.Response(401, json={"error": "expired"})
             return httpx.Response(200, json={"ok": True})
 
-        client = ExtraHopClient({
-            "type": "360",
-            "tenant": "tenant",
-            "apiId": "id",
-            "apiSecret": "secret",
-        })
+        client = ExtraHopClient(
+            {
+                "type": "360",
+                "tenant": "tenant",
+                "apiId": "id",
+                "apiSecret": "secret",
+            }
+        )
         client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         client.access_token = "stale"
         client.access_token_expires_at = 10**12
@@ -77,11 +130,13 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(429, headers={"Retry-After": "2"}, json={"error": "busy"})
             return httpx.Response(200, json={"ok": True})
 
-        client = ExtraHopClient({
-            "type": "enterprise",
-            "host": "sensor.example.test",
-            "apiKey": "key",
-        })
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
         client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         with patch("backend.extrahop_client.asyncio.sleep", new=AsyncMock()) as sleep:
             result = await client.request(
@@ -106,11 +161,13 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
                 json={"error_message": '"sensor-7" (ID 7 at 10.0.0.7): failed to get sessionid'},
             )
 
-        client = ExtraHopClient({
-            "type": "enterprise",
-            "host": "sensor.example.test",
-            "apiKey": "key",
-        })
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
         client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         with patch("backend.extrahop_client.asyncio.sleep", new=AsyncMock()) as sleep:
             with self.assertRaisesRegex(ExtraHopApiError, "failed to get sessionid"):
@@ -121,11 +178,13 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         await client.aclose()
 
     async def test_cancellation_is_not_retried_or_wrapped(self):
-        client = ExtraHopClient({
-            "type": "enterprise",
-            "host": "sensor.example.test",
-            "apiKey": "key",
-        })
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
         mock_client = AsyncMock()
         mock_client.is_closed = False
         mock_client.request.side_effect = asyncio.CancelledError()
@@ -137,11 +196,13 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         mock_client.request.assert_awaited_once()
 
     async def test_retries_a_transient_network_failure(self):
-        client = ExtraHopClient({
-            "type": "enterprise",
-            "host": "sensor.example.test",
-            "apiKey": "key",
-        })
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
         request = httpx.Request("GET", "https://sensor.example.test/api/v1/appliances")
         mock_client = AsyncMock()
         mock_client.is_closed = False
@@ -159,23 +220,29 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         sleep.assert_awaited_once()
 
     async def test_untrusted_tls_setting_is_scoped_to_one_enterprise_session(self):
-        untrusted = ExtraHopClient({
-            "type": "enterprise",
-            "host": "lab.example.test",
-            "apiKey": "key",
-            "verifyTls": False,
-        })
-        default = ExtraHopClient({
-            "type": "enterprise",
-            "host": "prod.example.test",
-            "apiKey": "key",
-        })
-        cloud = ExtraHopClient({
-            "type": "360",
-            "tenant": "tenant",
-            "apiId": "id",
-            "apiSecret": "secret",
-        })
+        untrusted = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "lab.example.test",
+                "apiKey": "key",
+                "verifyTls": False,
+            }
+        )
+        default = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "prod.example.test",
+                "apiKey": "key",
+            }
+        )
+        cloud = ExtraHopClient(
+            {
+                "type": "360",
+                "tenant": "tenant",
+                "apiId": "id",
+                "apiSecret": "secret",
+            }
+        )
         self.assertFalse(untrusted.verify_tls)
         self.assertTrue(default.verify_tls)
         self.assertTrue(cloud.verify_tls)
@@ -226,18 +293,20 @@ class SystemHealthPdfProjectionTests(unittest.TestCase):
     def test_pdf_uses_aligned_trigger_bucket_and_license_capacity_projection(self):
         report = {
             "cycle": "auto",
-            "appliances": [{
-                "id": "7",
-                "name": "sensor-7",
-                "online": True,
-                "license_platform": "EDA 9300",
-                "capacity": {
-                    "base_packetrate": 100,
-                    "base_gbps": 10,
-                    "advanced_analysis": 1200,
-                    "standard_analysis": 3800,
-                },
-            }],
+            "appliances": [
+                {
+                    "id": "7",
+                    "name": "sensor-7",
+                    "online": True,
+                    "license_platform": "EDA 9300",
+                    "capacity": {
+                        "base_packetrate": 100,
+                        "base_gbps": 10,
+                        "advanced_analysis": 1200,
+                        "standard_analysis": 3800,
+                    },
+                }
+            ],
             "device_analysis": {
                 "7": {"advanced": 100, "standard": 200, "discovery": 0, "status": "complete"},
             },
@@ -275,45 +344,59 @@ class SystemHealthPdfProjectionTests(unittest.TestCase):
             },
         }
 
-        row = main.system_health_pdf_rows(report)[0]
+        row = pdf.system_health_pdf_rows(report)[0]
 
         self.assertEqual(row["trigger_cycles_peak"], 90)
         self.assertEqual(row["trigger_cycles_avail"], 100)
         self.assertEqual(row["advanced_capacity"], 1200)
         self.assertEqual(row["standard_capacity"], 3800)
-        self.assertEqual(main.system_health_pdf_cycle_label(report), "1sec")
+        self.assertEqual(pdf.system_health_pdf_cycle_label(report), "1sec")
 
     def test_pdf_counts_slow_write_packet_drops_as_capture_loss(self):
-        summary = main.system_health_pdf_summary([], {}, [{
-            "packet_drops": 0,
-            "slow_write_drops": 4,
-            "interface_drops": 0,
-            "secret_drops": 0,
-        }])
+        summary = pdf.system_health_pdf_summary(
+            [],
+            {},
+            [
+                {
+                    "packet_drops": 0,
+                    "slow_write_drops": 4,
+                    "interface_drops": 0,
+                    "secret_drops": 0,
+                }
+            ],
+        )
 
-        self.assertIn("<span>PCAP Loss</span><b>1</b>", summary)
+        self.assertIn("<span>PCAP Loss</span><b>1 / 1</b>", summary)
 
-        block_summary = main.system_health_pdf_summary([], {}, [{
-            "packet_drops": 0,
-            "slow_write_drops": 0,
-            "interface_drops": 0,
-            "blocks_dropped": 3,
-            "secret_drops": 0,
-        }])
-        self.assertIn("<span>PCAP Loss</span><b>1</b>", block_summary)
+        block_summary = pdf.system_health_pdf_summary(
+            [],
+            {},
+            [
+                {
+                    "packet_drops": 0,
+                    "slow_write_drops": 0,
+                    "interface_drops": 0,
+                    "blocks_dropped": 3,
+                    "secret_drops": 0,
+                }
+            ],
+        )
+        self.assertIn("<span>PCAP Loss</span><b>1 / 1</b>", block_summary)
 
     def test_pdf_lists_offline_sensors_without_empty_chart_rows(self):
-        html_output = main.system_health_pdf_page(
+        html_output = pdf.system_health_pdf_page(
             "Packet Rate",
             "Peak rate",
             "EDA",
-            [{
-                "name": "Reporting sensor",
-                "online": True,
-                "packet_peak": 50,
-                "packet_capacity": 100,
-                "metric_status": {"pkts": "complete"},
-            }],
+            [
+                {
+                    "name": "Reporting sensor",
+                    "online": True,
+                    "packet_peak": 50,
+                    "packet_capacity": 100,
+                    "metric_status": {"pkts": "complete"},
+                }
+            ],
             1,
             1,
             "packet_peak",
@@ -326,7 +409,7 @@ class SystemHealthPdfProjectionTests(unittest.TestCase):
         self.assertIn('<div class="offline-names">Alpha sensor, Zulu sensor</div>', html_output)
         self.assertEqual(html_output.count('class="row"'), 1)
 
-        packetstore_html = main.system_health_pdf_packetstore_page(
+        packetstore_html = pdf.system_health_pdf_packetstore_page(
             [],
             1,
             1,

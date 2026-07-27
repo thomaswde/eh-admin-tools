@@ -89,6 +89,7 @@ Full response logs can still contain sensitive operational data. Review them bef
 - API credentials remain server-side, password fields are cleared, and successful manual
   connections are persisted through macOS Keychain or Linux Secret Service.
 - Product-catalog file overrides are accepted only through the startup environment variable `EH_CATALOG_PATH`.
+- Proxied ExtraHop request bodies are capped at 64 MiB because the proxy buffers them before forwarding. Set `EH_PROXY_MAX_REQUEST_BYTES` to a positive byte count when an intentional binary upload, such as firmware, requires a different ceiling.
 
 ## Theme
 

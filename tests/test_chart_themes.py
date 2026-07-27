@@ -7,6 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import main
+from backend import system_health_pdf as pdf
 
 
 VALID_COLORS = {
@@ -133,7 +134,7 @@ class PdfStyleColorTests(unittest.TestCase):
             "mid": "#222222",
             "high": "#333333",
         }
-        colors = main.system_health_pdf_style_colors({"colors": palette, "transparent": True})
+        colors = pdf.system_health_pdf_style_colors({"colors": palette, "transparent": True})
 
         self.assertEqual(colors["bg"], "#101010")
         self.assertEqual(colors["border"], palette["grid"])
@@ -142,14 +143,14 @@ class PdfStyleColorTests(unittest.TestCase):
         self.assertTrue(colors["transparent"])
 
     def test_falls_back_per_key_when_the_palette_is_incomplete_or_invalid(self):
-        colors = main.system_health_pdf_style_colors({"colors": {"bg": "not-a-color", "high": "#123456"}})
-        self.assertEqual(colors["bg"], main.SYSTEM_HEALTH_PDF_FALLBACK_COLORS["bg"])
+        colors = pdf.system_health_pdf_style_colors({"colors": {"bg": "not-a-color", "high": "#123456"}})
+        self.assertEqual(colors["bg"], pdf.SYSTEM_HEALTH_PDF_FALLBACK_COLORS["bg"])
         self.assertEqual(colors["high"], "#123456")
         self.assertFalse(colors["transparent"])
 
     def test_missing_style_renders_the_light_theme(self):
-        colors = main.system_health_pdf_style_colors(None)
-        for key, value in main.SYSTEM_HEALTH_PDF_FALLBACK_COLORS.items():
+        colors = pdf.system_health_pdf_style_colors(None)
+        for key, value in pdf.SYSTEM_HEALTH_PDF_FALLBACK_COLORS.items():
             self.assertEqual(colors[key], value)
 
 

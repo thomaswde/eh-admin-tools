@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from starlette.requests import Request
 
 import main
+from backend import system_health_pdf as pdf
 
 
 def minimal_pdf_payload() -> dict:
@@ -109,45 +110,43 @@ class FakePlaywrightContext:
 
 class PdfRequestValidationTests(unittest.IsolatedAsyncioTestCase):
     def test_accepts_compact_summary_projection(self):
-        payload = main.SystemHealthPdfRequest.model_validate(minimal_pdf_payload())
+        payload = pdf.SystemHealthPdfRequest.model_validate(minimal_pdf_payload())
 
         self.assertEqual(payload.report["appliances"], [])
         self.assertEqual(payload.style["colors"]["bg"], "#ffffff")
 
     def test_rejects_raw_time_series_rows_and_unknown_top_level_fields(self):
         raw_rows = minimal_pdf_payload()
-        raw_rows["report"]["metrics"] = {
-            "pkts": {"rows": [{"timestamp_ms": 1, "value": 2}], "summary": {}}
-        }
+        raw_rows["report"]["metrics"] = {"pkts": {"rows": [{"timestamp_ms": 1, "value": 2}], "summary": {}}}
         with self.assertRaisesRegex(ValidationError, "send summaries only"):
-            main.SystemHealthPdfRequest.model_validate(raw_rows)
+            pdf.SystemHealthPdfRequest.model_validate(raw_rows)
 
         unknown = minimal_pdf_payload()
         unknown["report"]["raw_response"] = {"large": "structure"}
         with self.assertRaisesRegex(ValidationError, "unsupported report fields"):
-            main.SystemHealthPdfRequest.model_validate(unknown)
+            pdf.SystemHealthPdfRequest.model_validate(unknown)
 
     def test_rejects_oversized_collections_and_strings(self):
         too_many_appliances = minimal_pdf_payload()
         too_many_appliances["report"]["appliances"] = [
-            {"id": str(index)} for index in range(main.MAX_PDF_APPLIANCES + 1)
+            {"id": str(index)} for index in range(pdf.MAX_PDF_APPLIANCES + 1)
         ]
         with self.assertRaisesRegex(ValidationError, "appliances exceeds"):
-            main.SystemHealthPdfRequest.model_validate(too_many_appliances)
+            pdf.SystemHealthPdfRequest.model_validate(too_many_appliances)
 
         oversized_string = minimal_pdf_payload()
-        oversized_string["report"]["errors"] = ["x" * (main.MAX_PDF_STRING_LENGTH + 1)]
+        oversized_string["report"]["errors"] = ["x" * (pdf.MAX_PDF_STRING_LENGTH + 1)]
         with self.assertRaisesRegex(ValidationError, "character limit"):
-            main.SystemHealthPdfRequest.model_validate(oversized_string)
+            pdf.SystemHealthPdfRequest.model_validate(oversized_string)
 
     async def test_streamed_body_limit_is_enforced_before_json_validation(self):
         request = request_with_chunks(
             [b"x" * 40, b"y" * 30],
             [(b"content-type", b"application/json")],
         )
-        with patch.object(main, "MAX_PDF_REQUEST_BYTES", 64):
+        with patch.object(pdf, "MAX_PDF_REQUEST_BYTES", 64):
             with self.assertRaises(HTTPException) as raised:
-                await main.parse_system_health_pdf_request(request)
+                await pdf.parse_system_health_pdf_request(request)
 
         self.assertEqual(raised.exception.status_code, 413)
 
@@ -160,7 +159,7 @@ class PdfRendererLifecycleTests(unittest.IsolatedAsyncioTestCase):
         def factory():
             return FakePlaywrightContext(browser)
 
-        result = await main.render_system_health_pdf_bytes("<html></html>", playwright_factory=factory)
+        result = await pdf.render_system_health_pdf_bytes("<html></html>", playwright_factory=factory)
         return result, page, browser
 
     async def test_success_closes_page_and_browser(self):
@@ -180,7 +179,7 @@ class PdfRendererLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     return FakePlaywrightContext(browser)
 
                 with self.assertRaises(RuntimeError):
-                    await main.render_system_health_pdf_bytes("<html></html>", playwright_factory=factory)
+                    await pdf.render_system_health_pdf_bytes("<html></html>", playwright_factory=factory)
 
                 self.assertTrue(page.closed)
                 self.assertTrue(browser.closed)
@@ -192,7 +191,7 @@ class PdfRendererLifecycleTests(unittest.IsolatedAsyncioTestCase):
         def factory():
             return FakePlaywrightContext(browser)
 
-        result = await main.render_system_health_pdf_bytes("<html></html>", playwright_factory=factory)
+        result = await pdf.render_system_health_pdf_bytes("<html></html>", playwright_factory=factory)
 
         self.assertEqual(result, b"%PDF-fake")
         self.assertTrue(page.closed)
@@ -201,8 +200,8 @@ class PdfRendererLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_busy_semaphore_times_out_without_calling_renderer(self):
         renderer = AsyncMock(return_value=b"never")
 
-        with self.assertRaises(main.PdfRenderBusyError):
-            await main.render_system_health_pdf_bounded(
+        with self.assertRaises(pdf.PdfRenderBusyError):
+            await pdf.render_system_health_pdf_bounded(
                 "<html></html>",
                 renderer=renderer,
                 semaphore=asyncio.Semaphore(0),
@@ -218,8 +217,8 @@ class PdfRendererLifecycleTests(unittest.IsolatedAsyncioTestCase):
         async def never_finishes(_):
             await asyncio.Event().wait()
 
-        with self.assertRaises(main.PdfRenderTimeoutError):
-            await main.render_system_health_pdf_bounded(
+        with self.assertRaises(pdf.PdfRenderTimeoutError):
+            await pdf.render_system_health_pdf_bounded(
                 "<html></html>",
                 renderer=never_finishes,
                 semaphore=semaphore,
@@ -253,14 +252,14 @@ class PdfRouteResponseTests(unittest.TestCase):
         with (
             patch("main.get_session_client", return_value=object()),
             patch(
-                "main.render_system_health_pdf_bounded",
-                new=AsyncMock(side_effect=main.PdfRenderBusyError("busy")),
+                "backend.system_health_pdf.render_system_health_pdf_bounded",
+                new=AsyncMock(side_effect=pdf.PdfRenderBusyError("busy")),
             ),
         ):
             response = self.client.post("/backend/system-health/pdf", json=minimal_pdf_payload())
 
         self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.headers["retry-after"], str(max(1, round(main.PDF_RENDER_ACQUIRE_TIMEOUT_SECONDS))))
+        self.assertEqual(response.headers["retry-after"], str(max(1, round(pdf.PDF_RENDER_ACQUIRE_TIMEOUT_SECONDS))))
 
     def test_raw_rows_are_rejected_before_renderer_runs(self):
         payload = minimal_pdf_payload()
@@ -268,7 +267,7 @@ class PdfRouteResponseTests(unittest.TestCase):
         renderer = AsyncMock(return_value=b"%PDF-fake")
         with (
             patch("main.get_session_client", return_value=object()),
-            patch("main.render_system_health_pdf_bounded", new=renderer),
+            patch("backend.system_health_pdf.render_system_health_pdf_bounded", new=renderer),
         ):
             response = self.client.post("/backend/system-health/pdf", json=payload)
 
