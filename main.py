@@ -1,8 +1,9 @@
 import asyncio
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 import html
 import json
+import math
 import os
 import re
 import subprocess
@@ -12,7 +13,7 @@ from fastapi import Cookie, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.api_response_logger import ApiResponseLogger, LOG_VERBOSITIES
@@ -33,6 +34,49 @@ CHART_THEME_RESERVED_IDS = {"auto", "draft", "light", "dark", "midnight", "slate
 VERSION_PATH = APP_ROOT.parent / "VERSION" if APP_ROOT.name == "app" else APP_ROOT / "VERSION"
 APP_VERSION = VERSION_PATH.read_text(encoding="utf-8").strip() if VERSION_PATH.exists() else "development"
 COMMIT_PATH = VERSION_PATH.with_name("COMMIT")
+MAX_PDF_REQUEST_BYTES = 2 * 1024 * 1024
+MAX_PDF_JSON_DEPTH = 12
+MAX_PDF_JSON_NODES = 250_000
+MAX_PDF_COLLECTION_ITEMS = 5_000
+MAX_PDF_STRING_LENGTH = 4_096
+MAX_PDF_APPLIANCES = 1_000
+MAX_PDF_METRICS = 32
+PDF_RENDER_MAX_CONCURRENCY = max(1, int(os.environ.get("EH_PDF_RENDER_MAX_CONCURRENCY", "1")))
+PDF_RENDER_ACQUIRE_TIMEOUT_SECONDS = max(
+    0.1,
+    float(os.environ.get("EH_PDF_RENDER_ACQUIRE_TIMEOUT_SECONDS", "2")),
+)
+PDF_RENDER_TIMEOUT_SECONDS = max(1.0, float(os.environ.get("EH_PDF_RENDER_TIMEOUT_SECONDS", "120")))
+PDF_REPORT_FIELDS = frozenset({
+    "source_type",
+    "generated_at",
+    "target",
+    "window",
+    "requested_cycle",
+    "cycle",
+    "cycle_policy",
+    "capacity_catalog_loaded",
+    "appliances",
+    "device_analysis",
+    "metrics",
+    "trigger_utilization",
+    "packetstore",
+    "errors",
+})
+PDF_STYLE_FIELDS = frozenset({"transparent", "colors"})
+PDF_STYLE_COLOR_FIELDS = frozenset({
+    "bg",
+    "text",
+    "subtle",
+    "muted",
+    "grid",
+    "track",
+    "altRow",
+    "low",
+    "mid",
+    "high",
+})
+PDF_RAW_SERIES_FIELDS = frozenset({"rows", "stats", "chunks", "result_chunks", "values"})
 
 
 def resolve_app_commit() -> str:
@@ -72,7 +116,19 @@ def is_worktree_dirty() -> bool:
 
 APP_COMMIT = resolve_app_commit()
 
-app = FastAPI(title="ExtraHop Admin Tools")
+
+@asynccontextmanager
+async def app_lifespan(_: FastAPI):
+    try:
+        yield
+    finally:
+        try:
+            await sessions.aclose()
+        finally:
+            await asyncio.to_thread(api_response_logger.close)
+
+
+app = FastAPI(title="ExtraHop Admin Tools", lifespan=app_lifespan)
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["127.0.0.1", "localhost", "[::1]"],
@@ -83,6 +139,7 @@ api_response_logger = ApiResponseLogger(
     os.environ.get("EH_API_LOG_VERBOSITY", "errors"),
 )
 connection_store = ConnectionStore(APP_ROOT)
+pdf_render_semaphore = asyncio.Semaphore(PDF_RENDER_MAX_CONCURRENCY)
 
 app.mount("/css", StaticFiles(directory=APP_ROOT / "css"), name="css")
 app.mount("/js", StaticFiles(directory=APP_ROOT / "js"), name="js")
@@ -147,11 +204,88 @@ class ApiLoggingConfig(BaseModel):
     path: str | None = None
 
 
+def validate_pdf_json_tree(value: Any, path: str) -> None:
+    node_count = 0
+
+    def visit(item: Any, item_path: str, depth: int) -> None:
+        nonlocal node_count
+        node_count += 1
+        if node_count > MAX_PDF_JSON_NODES:
+            raise ValueError(f"{path} exceeds the {MAX_PDF_JSON_NODES:,} value limit")
+        if depth > MAX_PDF_JSON_DEPTH:
+            raise ValueError(f"{item_path} exceeds the maximum nesting depth")
+
+        if isinstance(item, dict):
+            if len(item) > MAX_PDF_COLLECTION_ITEMS:
+                raise ValueError(f"{item_path} exceeds the {MAX_PDF_COLLECTION_ITEMS:,} field limit")
+            for key, child in item.items():
+                if len(key) > 128:
+                    raise ValueError(f"{item_path} contains an oversized field name")
+                child_path = f"{item_path}.{key}"
+                if key in PDF_RAW_SERIES_FIELDS and child not in (None, [], {}):
+                    raise ValueError(f"{child_path} contains raw collection data; send summaries only")
+                visit(child, child_path, depth + 1)
+            return
+
+        if isinstance(item, list):
+            if len(item) > MAX_PDF_COLLECTION_ITEMS:
+                raise ValueError(f"{item_path} exceeds the {MAX_PDF_COLLECTION_ITEMS:,} item limit")
+            for index, child in enumerate(item):
+                visit(child, f"{item_path}[{index}]", depth + 1)
+            return
+
+        if isinstance(item, str) and len(item) > MAX_PDF_STRING_LENGTH:
+            raise ValueError(f"{item_path} exceeds the {MAX_PDF_STRING_LENGTH:,} character limit")
+        if isinstance(item, float) and not math.isfinite(item):
+            raise ValueError(f"{item_path} must be a finite number")
+        if item is not None and not isinstance(item, (str, int, float, bool)):
+            raise ValueError(f"{item_path} contains an unsupported value")
+
+    visit(value, path, 0)
+
+
 class SystemHealthPdfRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     report: dict[str, Any]
     style: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("report")
+    @classmethod
+    def validate_report(cls, value: dict[str, Any]) -> dict[str, Any]:
+        unknown = set(value) - PDF_REPORT_FIELDS
+        if unknown:
+            raise ValueError(f"unsupported report fields: {', '.join(sorted(unknown))}")
+        if not isinstance(value.get("appliances"), list):
+            raise ValueError("report.appliances must be an array")
+        if len(value["appliances"]) > MAX_PDF_APPLIANCES:
+            raise ValueError(f"report.appliances exceeds the {MAX_PDF_APPLIANCES} item limit")
+        if not isinstance(value.get("metrics"), dict):
+            raise ValueError("report.metrics must be an object")
+        if len(value["metrics"]) > MAX_PDF_METRICS:
+            raise ValueError(f"report.metrics exceeds the {MAX_PDF_METRICS} item limit")
+        validate_pdf_json_tree(value, "report")
+        return value
+
+    @field_validator("style")
+    @classmethod
+    def validate_style(cls, value: dict[str, Any]) -> dict[str, Any]:
+        unknown = set(value) - PDF_STYLE_FIELDS
+        if unknown:
+            raise ValueError(f"unsupported style fields: {', '.join(sorted(unknown))}")
+        if "transparent" in value and not isinstance(value["transparent"], bool):
+            raise ValueError("style.transparent must be a boolean")
+        colors = value.get("colors", {})
+        if not isinstance(colors, dict):
+            raise ValueError("style.colors must be an object")
+        unknown_colors = set(colors) - PDF_STYLE_COLOR_FIELDS
+        if unknown_colors:
+            raise ValueError(f"unsupported style colors: {', '.join(sorted(unknown_colors))}")
+        for name, color in colors.items():
+            if not isinstance(color, str) or re.fullmatch(HEX_PATTERN, color) is None:
+                raise ValueError(f"style.colors.{name} must be a six-digit hex color")
+        validate_pdf_json_tree(value, "style")
+        return value
 
 
 class ChartThemeColors(BaseModel):
@@ -521,42 +655,163 @@ async def system_health_catalog_lookup(
     return {key: catalog[key] for key in ("loaded", "path", "lookup")}
 
 
-@app.post("/backend/system-health/pdf")
-async def system_health_pdf(
-    payload: SystemHealthPdfRequest,
-    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
-) -> StreamingResponse:
-    get_session_client(eh_admin_session)
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError as error:
+class PdfRendererUnavailable(RuntimeError):
+    pass
+
+
+class PdfRenderBusyError(RuntimeError):
+    pass
+
+
+class PdfRenderTimeoutError(RuntimeError):
+    pass
+
+
+async def parse_system_health_pdf_request(request: Request) -> SystemHealthPdfRequest:
+    content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
+    if content_type != "application/json":
         raise HTTPException(
-            status_code=501,
-            detail={
-                "message": "Playwright is not installed. Run `pip install -r requirements.txt` and `python3 -m playwright install chromium` to enable PDF export.",
-            },
+            status_code=415,
+            detail={"message": "System Health PDF requests must use application/json."},
+        )
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_PDF_REQUEST_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"message": f"System Health PDF request exceeds {MAX_PDF_REQUEST_BYTES:,} bytes."},
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "System Health PDF request has an invalid Content-Length header."},
+            ) from None
+
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_PDF_REQUEST_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail={"message": f"System Health PDF request exceeds {MAX_PDF_REQUEST_BYTES:,} bytes."},
+            )
+
+    try:
+        return SystemHealthPdfRequest.model_validate_json(bytes(body))
+    except ValidationError as error:
+        safe_errors = [
+            {key: value for key, value in item.items() if key not in {"input", "ctx", "url"}}
+            for item in error.errors()
+        ]
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "System Health PDF request validation failed.", "errors": safe_errors},
         ) from error
 
-    html_text = render_system_health_pdf_html(payload.report, payload.style)
-    try:
-        async with async_playwright() as playwright:
+
+async def close_playwright_resource(resource: Any) -> None:
+    if resource is None:
+        return
+    with suppress(BaseException):
+        await resource.close()
+
+
+async def render_system_health_pdf_bytes(
+    html_text: str,
+    *,
+    playwright_factory: Any = None,
+) -> bytes:
+    if playwright_factory is None:
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as error:
+            raise PdfRendererUnavailable(
+                "Playwright is not installed. Run `pip install -r requirements.txt` and "
+                "`python3 -m playwright install chromium` to enable PDF export."
+            ) from error
+        playwright_factory = async_playwright
+
+    browser = None
+    page = None
+    async with playwright_factory() as playwright:
+        try:
             browser = await playwright.chromium.launch()
             page = await browser.new_page(viewport={"width": 1280, "height": 960}, device_scale_factor=1)
             await page.set_content(html_text, wait_until="networkidle")
-            pdf_bytes = await page.pdf(
+            return await page.pdf(
                 format="Letter",
                 print_background=True,
                 margin={"top": "0.35in", "right": "0.35in", "bottom": "0.35in", "left": "0.35in"},
                 prefer_css_page_size=True,
             )
-            await browser.close()
+        finally:
+            await close_playwright_resource(page)
+            await close_playwright_resource(browser)
+
+
+async def render_system_health_pdf_bounded(
+    html_text: str,
+    *,
+    renderer: Any = None,
+    semaphore: asyncio.Semaphore | None = None,
+    acquire_timeout: float | None = None,
+    render_timeout: float | None = None,
+) -> bytes:
+    renderer = renderer or render_system_health_pdf_bytes
+    semaphore = semaphore or pdf_render_semaphore
+    acquire_timeout = PDF_RENDER_ACQUIRE_TIMEOUT_SECONDS if acquire_timeout is None else acquire_timeout
+    render_timeout = PDF_RENDER_TIMEOUT_SECONDS if render_timeout is None else render_timeout
+
+    try:
+        await asyncio.wait_for(semaphore.acquire(), timeout=acquire_timeout)
+    except TimeoutError as error:
+        raise PdfRenderBusyError("Another PDF export is already rendering. Retry shortly.") from error
+
+    try:
+        try:
+            return await asyncio.wait_for(renderer(html_text), timeout=render_timeout)
+        except TimeoutError as error:
+            raise PdfRenderTimeoutError(
+                f"System Health PDF rendering exceeded {render_timeout:g} seconds."
+            ) from error
+    finally:
+        semaphore.release()
+
+
+@app.post("/backend/system-health/pdf")
+async def system_health_pdf(
+    request: Request,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> StreamingResponse:
+    get_session_client(eh_admin_session)
+    payload = await parse_system_health_pdf_request(request)
+    html_text = render_system_health_pdf_html(payload.report, payload.style)
+    try:
+        pdf_bytes = await render_system_health_pdf_bounded(html_text)
+    except PdfRendererUnavailable as error:
+        raise HTTPException(
+            status_code=501,
+            detail={"message": str(error)},
+        ) from error
+    except PdfRenderBusyError as error:
+        raise HTTPException(
+            status_code=503,
+            detail={"message": str(error)},
+            headers={"Retry-After": str(max(1, round(PDF_RENDER_ACQUIRE_TIMEOUT_SECONDS)))},
+        ) from error
+    except PdfRenderTimeoutError as error:
+        raise HTTPException(status_code=504, detail={"message": str(error)}) from error
     except Exception as error:
         raise HTTPException(
             status_code=500,
             detail={"message": f"Could not render system health PDF: {error}"},
         ) from error
 
-    filename = f"system-health-report-{payload.report.get('generated_at', 'export')[:10]}.pdf"
+    generated = str(payload.report.get("generated_at") or "")
+    report_day = generated[:10] if re.fullmatch(r"\d{4}-\d{2}-\d{2}", generated[:10]) else "export"
+    filename = f"system-health-report-{report_day}.pdf"
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
@@ -572,18 +827,6 @@ async def delete_session(
     await sessions.adelete(eh_admin_session)
     response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
     return {"connected": False}
-
-
-@app.post("/backend/session/refresh")
-async def refresh_session(
-    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
-) -> dict[str, bool]:
-    client = get_session_client(eh_admin_session)
-    try:
-        await client.refresh_if_needed()
-    except ExtraHopApiError as error:
-        raise http_exception(error) from error
-    return {"refreshed": True}
 
 
 @app.api_route(
@@ -633,11 +876,6 @@ async def wait_for_client_disconnect(request: Request) -> None:
         message = await request.receive()
         if message["type"] == "http.disconnect":
             return
-
-
-@app.on_event("shutdown")
-async def close_session_clients() -> None:
-    await sessions.aclose()
 
 
 # Used only when the browser sends an incomplete palette. These are the built-in
@@ -1044,11 +1282,6 @@ def metric_peak(report: dict[str, Any], metric: str, sid: str) -> float:
 
 def metric_total(report: dict[str, Any], metric: str, sid: str) -> float:
     return float((((report.get("metrics") or {}).get(metric) or {}).get("summary") or {}).get("totals", {}).get(sid) or 0)
-
-
-def metric_capacity(report: dict[str, Any], metric: str, sid: str) -> float:
-    summary = (((report.get("metrics") or {}).get(metric) or {}).get("summary") or {})
-    return float((summary.get("peak_values") or {}).get(sid) or (summary.get("latest_values") or {}).get(sid) or (summary.get("avg_values") or {}).get(sid) or 0)
 
 
 def metric_peak_rate(report: dict[str, Any], metric: str, sid: str) -> float:
