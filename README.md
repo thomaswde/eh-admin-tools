@@ -76,9 +76,9 @@ Use the API Logging control in the sidebar to write proxied ExtraHop API respons
 - `Off`: no response log entries.
 - `Errors`: failed API responses and network errors only.
 - `Metadata`: every response with status, timing, byte count, and response shape.
-- `Full`: every response with parsed response bodies and credential-shaped fields redacted.
+- `Full`: every response with bounded request and response previews and credential-shaped fields redacted.
 
-Full response logs can still contain sensitive operational data. Review them before sharing. API response logging defaults to `Errors`; the default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
+Full response logs can still contain sensitive operational data. Review them before sharing. Preview and entry sizes are bounded, oversized JSON is not parsed solely for logging, and the log rotates by bytes with a fixed backup count. API response logging defaults to `Errors`; the default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
 
 ## Security defaults
 
@@ -119,3 +119,10 @@ step and no utility-class framework.
 - `backend/session_store.py` keeps bounded, expiring server-side sessions keyed by an HTTP-only browser cookie.
 - `js/api-client/extrahop-api.js` preserves the existing frontend API surface while calling the local backend.
 - `scripts/build_dist.py` creates the end-user ZIP from an explicit file allowlist.
+
+Cross-cutting contracts and design history:
+
+- [Architecture](docs/architecture.md)
+- [Current repository overhaul decision](docs/decisions/2026-07-26-repository-overhaul.md)
+- [Historical System Health REST audit](docs/audits/2026-07-26-system-health-rest-api-audit.md)
+- [Prototype artifact retention decision](docs/decisions/2026-07-26-prototype-artifacts.md)
