@@ -7,7 +7,8 @@ const deviceDiscoveryState = {
     applianceMap: {},
     includeEfc: false,
     includeDiscovery: false,
-    shouldStop: false
+    shouldStop: false,
+    abortController: null
 };
 
 const DEVICE_ANALYSIS = {
@@ -83,19 +84,19 @@ function isEfcNode(nodeId, applianceMap) {
     return platform.startsWith('EFC');
 }
 
-async function loadAppliancesForDeviceModule() {
-    if (deviceDiscoveryState.appliances.length) {
-        return deviceDiscoveryState.appliances;
-    }
-    const appliances = await window.apiClient.getAppliances();
+async function loadAppliancesForDeviceModule(signal) {
+    // Inventory is health and topology data, not static catalog data. Refresh it
+    // for every report so reconnects and appliance state changes are visible.
+    const appliances = await window.apiClient.getAppliances({ signal });
     deviceDiscoveryState.appliances = appliances;
     deviceDiscoveryState.applianceMap = ensureApplianceMap(appliances);
     return appliances;
 }
 
-async function fetchDevicesBatch(range) {
+async function fetchDevicesBatch(range, signal) {
     const aggregate = {};
-    const perLevelTotals = { advanced: 0, standard: 0, discovery: 0 };
+    const perLevelTotals = { advanced: 0, standard: 0, discovery: 0, flow_log: 0 };
+    const seenDeviceIds = new Set();
     let offset = 0;
     let totalDevices = 0;
     const loadingText = document.getElementById('deviceLoadingText');
@@ -130,16 +131,31 @@ async function fetchDevicesBatch(range) {
             rules: filterRules
         };
 
-        const response = await window.apiClient.request('/devices/search', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
+        let response;
+        try {
+            response = await window.apiClient.request('/devices/search', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                signal
+            });
+        } catch (error) {
+            if (deviceDiscoveryState.shouldStop || signal?.aborted) {
+                return { aggregate, perLevelTotals, totalDevices, incomplete: true };
+            }
+            throw error;
+        }
 
         const devices = Array.isArray(response) ? response : (response?.devices || []);
 
         if (!devices.length) break;
 
         devices.forEach(device => {
+            const deviceId = device?.id;
+            if (deviceId !== null && typeof deviceId !== 'undefined') {
+                const stableId = String(deviceId);
+                if (seenDeviceIds.has(stableId)) return;
+                seenDeviceIds.add(stableId);
+            }
             const nodeId = device.node_id ?? 'unassigned';
             const analysisKey = device.analysis;
             if (!aggregate[nodeId]) {
@@ -258,6 +274,7 @@ function renderDeviceDiscoveryTable(sortedNodes, applianceMap) {
             <td>${node.counts.advanced.toLocaleString()}</td>
             <td>${node.counts.standard.toLocaleString()}</td>
             <td>${node.counts.discovery.toLocaleString()}</td>
+            <td>${node.counts.flow_log.toLocaleString()}</td>
             <td>${node.counts.total.toLocaleString()}</td>
         `;
         tbody.appendChild(tr);
@@ -267,9 +284,10 @@ function renderDeviceDiscoveryTable(sortedNodes, applianceMap) {
         acc.advanced += node.counts.advanced;
         acc.standard += node.counts.standard;
         acc.discovery += node.counts.discovery;
+        acc.flow_log += node.counts.flow_log;
         acc.total += node.counts.total;
         return acc;
-    }, { advanced: 0, standard: 0, discovery: 0, total: 0 });
+    }, { advanced: 0, standard: 0, discovery: 0, flow_log: 0, total: 0 });
 
     const totalRow = document.createElement('tr');
     totalRow.style.fontWeight = '600';
@@ -278,6 +296,7 @@ function renderDeviceDiscoveryTable(sortedNodes, applianceMap) {
         <td>${totals.advanced.toLocaleString()}</td>
         <td>${totals.standard.toLocaleString()}</td>
         <td>${totals.discovery.toLocaleString()}</td>
+        <td>${totals.flow_log.toLocaleString()}</td>
         <td>${totals.total.toLocaleString()}</td>
     `;
     tbody.appendChild(totalRow);
@@ -294,6 +313,9 @@ async function generateDeviceDiscoveryReport() {
     const loadingText = document.getElementById('deviceLoadingText');
 
     deviceDiscoveryState.shouldStop = false;
+    deviceDiscoveryState.abortController?.abort(new DOMException('Superseded by a new report.', 'AbortError'));
+    const abortController = new AbortController();
+    deviceDiscoveryState.abortController = abortController;
 
     if (generateBtn) {
         generateBtn.disabled = true;
@@ -313,21 +335,21 @@ async function generateDeviceDiscoveryReport() {
     let stoppedEarly = false;
 
     try {
-        await loadAppliancesForDeviceModule();
+        await loadAppliancesForDeviceModule(abortController.signal);
         const range = getPeriodRange(deviceDiscoveryState.selectedPeriod);
         rangeInfo.textContent = `${range.label} · ${range.displayRange}`;
 
-        const data = await fetchDevicesBatch(range);
+        const data = await fetchDevicesBatch(range, abortController.signal);
         stoppedEarly = !!data.incomplete;
         const aggregateEntries = Object.entries(data.aggregate);
 
         if (!aggregateEntries.length) {
             noData.style.display = 'block';
-            updateDeviceDiscoveryKpis({ totalDevices: 0, perLevelTotals: { advanced: 0, standard: 0, discovery: 0 } }, { discoveryIncluded: deviceDiscoveryState.includeDiscovery });
+            updateDeviceDiscoveryKpis({ totalDevices: 0, perLevelTotals: { advanced: 0, standard: 0, discovery: 0, flow_log: 0 } }, { discoveryIncluded: deviceDiscoveryState.includeDiscovery });
             nodeCount.textContent = 'Nodes represented: 0';
         } else {
             let filteredEntries = aggregateEntries;
-            
+
             // Filter out EFC nodes if includeEfc is false
             if (!deviceDiscoveryState.includeEfc) {
                 filteredEntries = aggregateEntries.filter(([nodeId]) => !isEfcNode(nodeId, deviceDiscoveryState.applianceMap));
@@ -343,7 +365,7 @@ async function generateDeviceDiscoveryReport() {
             let finalData = data;
             if (!deviceDiscoveryState.includeEfc) {
                 const filteredAggregate = {};
-                const filteredPerLevelTotals = { advanced: 0, standard: 0, discovery: 0 };
+                const filteredPerLevelTotals = { advanced: 0, standard: 0, discovery: 0, flow_log: 0 };
                 let filteredTotalDevices = 0;
 
                 sortedNodes.forEach(node => {
@@ -351,6 +373,7 @@ async function generateDeviceDiscoveryReport() {
                     filteredPerLevelTotals.advanced += node.counts.advanced;
                     filteredPerLevelTotals.standard += node.counts.standard;
                     filteredPerLevelTotals.discovery += node.counts.discovery;
+                    filteredPerLevelTotals.flow_log += node.counts.flow_log;
                     filteredTotalDevices += node.counts.total;
                 });
 
@@ -373,6 +396,7 @@ async function generateDeviceDiscoveryReport() {
         loading.style.display = 'none';
         results.style.display = 'flex';
     } catch (error) {
+        if (abortController.signal.aborted) return;
         console.error('Error generating device discovery report', error);
         loading.style.display = 'none';
         alert(`Error generating Device Discovery report: ${error.message}`);
@@ -385,11 +409,15 @@ async function generateDeviceDiscoveryReport() {
             stopBtn.style.display = 'none';
         }
         deviceDiscoveryState.shouldStop = false;
+        if (deviceDiscoveryState.abortController === abortController) {
+            deviceDiscoveryState.abortController = null;
+        }
     }
 }
 
 function stopDeviceDiscoveryLoad() {
     deviceDiscoveryState.shouldStop = true;
+    deviceDiscoveryState.abortController?.abort(new DOMException('Device collection stopped by user.', 'AbortError'));
     const loadingText = document.getElementById('deviceLoadingText');
     if (loadingText) {
         loadingText.textContent = 'Stopping device load...';
