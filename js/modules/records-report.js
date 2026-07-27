@@ -15,23 +15,6 @@ const CRS_PERIOD_DAYS = {
     month: 30
 };
 
-// Model capacity mapping
-const CRS_CAPACITIES = {
-    'EDA1100V_TRACE': 20,
-    'EDA1100V': 20,
-    'EDA1200': 20,
-    'EDA4200': 100,
-    'EDA6100V_TRACE': 200,
-    'EDA6100V': 200,
-    'EDA6200': 200,
-    'EDA8200V': 500,
-    'EDA8200': 500,
-    'EDA9200': 750,
-    'EDA9300': 750,
-    'EDA10200': 1000,
-    'EDA10300': 1000
-};
-
 // Update capacity input options based on selected period
 function updateCapacityInputOptions() {
     const isMultiDay = crsState.selectedPeriod !== 'yesterday';
@@ -142,15 +125,6 @@ function parseCRSCalendarDate(dateStr) {
     return parsed.toISOString().slice(0, 10);
 }
 
-function getDateUnixTimes(dateStr) {
-    const isoDate = parseCRSCalendarDate(dateStr);
-    const from = Date.parse(`${isoDate}T00:00:00.000Z`);
-    return {
-        from,
-        until: from + CRS_DAY_MS
-    };
-}
-
 function buildCRSReportWindow(period, nowMs = Date.now()) {
     const dayCount = CRS_PERIOD_DAYS[period];
     if (!dayCount) throw new Error(`Unsupported Records Report period: ${period}`);
@@ -172,10 +146,6 @@ function buildCRSReportWindow(period, nowMs = Date.now()) {
         timezone: 'UTC',
         untilExclusive: true
     };
-}
-
-function getDateRange(period, nowMs = Date.now()) {
-    return buildCRSReportWindow(period, nowMs);
 }
 
 // Parse CSV data
@@ -328,7 +298,6 @@ async function fetchCRSData(reportWindow) {
             model: appliance.license_platform,
             recordBytes,
             recordBytesGB: recordBytes === null ? null : bytesToGB(recordBytes),
-            capacity: CRS_CAPACITIES[appliance.license_platform] || 0,
             collectionStatus: coverage[id] || { status: 'empty', row_count: 0 },
             aggregationMode: 'total_by_object',
             reportFromMs: reportWindow.fromMs,
@@ -350,12 +319,22 @@ function buildCRSSummary(applianceData, capacityData, dayCount) {
     const ratio = capacityData && averageDailyRecordBytesGB > 0 && capacityData.utilized > 0
         ? averageDailyRecordBytesGB / capacityData.utilized
         : null;
+    const compressionUnavailableReason = ratio !== null
+        ? null
+        : !collectionComplete
+            ? 'Incomplete metric coverage; review sensor collection statuses'
+            : !capacityData
+                ? 'Add capacity data to calculate'
+                : !(averageDailyRecordBytesGB > 0)
+                    ? 'No measured record bytes in the selected window'
+                    : 'Utilized capacity must be greater than zero';
     return {
         totalRecordBytesGB,
         measuredRecordBytesGB,
         averageDailyRecordBytesGB,
         collectionComplete,
         compressionRatio: ratio,
+        compressionUnavailableReason,
         utilizationPercent: capacityData && capacityData.reserved > 0
             ? (capacityData.utilized / capacityData.reserved) * 100
             : null,
@@ -393,7 +372,7 @@ async function generateCRSReport() {
             document.getElementById('compressionRatioSubtext').textContent = '1 GB stored : ' + compressionRatio + ' GB ingested';
         } else {
             document.getElementById('compressionRatio').textContent = 'N/A';
-            document.getElementById('compressionRatioSubtext').textContent = 'Add capacity data to calculate';
+            document.getElementById('compressionRatioSubtext').textContent = summary.compressionUnavailableReason;
         }
         
         document.getElementById('totalRecordBytes').textContent = formatGBWithUnits(totalRecordBytesGB);
@@ -656,4 +635,10 @@ function initCrsUsageModule() {
     
     // Initialize the UI state
     updateCapacityInputOptions();
+}
+
+if (typeof featureRegistry !== 'undefined') {
+    featureRegistry.register('crs-usage', {
+        initialize: initCrsUsageModule
+    });
 }

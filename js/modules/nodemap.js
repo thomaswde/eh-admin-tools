@@ -242,7 +242,7 @@ async function loadAppliances() {
                 const catalog = await response.json();
                 nodemapState.catalogData = Array.isArray(catalog.models) ? catalog.models : [];
             }
-        } catch (e) {
+        } catch {
             console.warn('Could not load catalog data, using basic platform detection');
             nodemapState.catalogData = [];
         }
@@ -920,11 +920,11 @@ function setupNodemapFilterEventListeners() {
 
 /* ------------------------------- Lifecycle ------------------------------- */
 
-function activateNodemapModule() {
+async function activateNodemapModule() {
     console.log('Activating Nodemap module');
 
     if (state.connected && nodemapState.appliances.length === 0) {
-        loadAppliances();
+        await loadAppliances();
     } else if (state.connected) {
         showNodemapControls();
         document.getElementById('graphContainer').style.display = 'flex';
@@ -939,5 +939,11 @@ function initNodemapModule() {
     console.log('Initializing Nodemap module');
 
     setupNodemapFilterEventListeners();
-    activateNodemapModule();
+}
+
+if (typeof featureRegistry !== 'undefined') {
+    featureRegistry.register('nodemap', {
+        initialize: initNodemapModule,
+        activate: activateNodemapModule
+    });
 }

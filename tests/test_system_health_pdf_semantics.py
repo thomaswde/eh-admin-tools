@@ -3,29 +3,31 @@ import unittest
 from backend import system_health_pdf as pdf
 
 
-def sensor(sensor_id: str, name: str) -> dict:
+def sensor(sensor_id: str, name: str, trigger_drops: float | None) -> dict:
     return {
         "id": sensor_id,
         "name": name,
         "online": True,
-        "capacity": {},
+        "model": "EDA",
+        "packetPeak": None,
+        "packetCapacity": 0,
+        "throughputGbps": None,
+        "throughputCapacity": 0,
+        "triggerCyclesPeak": None,
+        "triggerCyclesAvail": None,
+        "triggerUtilization": None,
+        "triggerDropsTotal": trigger_drops,
+        "advancedCapacity": 0,
+        "standardCapacity": 0,
+        "analysis": {},
+        "collectionStatus": {},
+        "healthConditions": [],
     }
 
 
 class SystemHealthPdfMissingValueTests(unittest.TestCase):
     def test_trigger_drop_total_preserves_measured_zero_and_missing(self):
-        report = {
-            "appliances": [sensor("zero", "Zero sensor"), sensor("missing", "Missing sensor")],
-            "metrics": {
-                "trigger_drops": {
-                    "sensor_status": {
-                        "zero": {"status": "zero_valued"},
-                        "missing": {"status": "empty"},
-                    },
-                    "summary": {"totals": {"zero": 0}},
-                }
-            },
-        }
+        report = {"sensor_summaries": [sensor("zero", "Zero sensor", 0), sensor("missing", "Missing sensor", None)]}
 
         rows = pdf.system_health_pdf_rows(report)
         rows_by_id = {row["id"]: row for row in rows}
@@ -39,8 +41,7 @@ class SystemHealthPdfMissingValueTests(unittest.TestCase):
 
     def test_trigger_drop_card_is_na_when_no_sensor_reported_a_total(self):
         report = {
-            "appliances": [sensor("missing", "Missing sensor")],
-            "metrics": {"trigger_drops": {"summary": {"totals": {}}}},
+            "sensor_summaries": [sensor("missing", "Missing sensor", None)],
         }
 
         summary = pdf.system_health_pdf_summary(pdf.system_health_pdf_rows(report), report)

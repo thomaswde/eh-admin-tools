@@ -13,6 +13,9 @@
 (() => {
 
 if (window.SystemHealthPptx) return;
+if (!window.SystemHealthViewModel) {
+    throw new Error('System Health view-model dependency is unavailable.');
+}
 
 const PPTXGEN_URL = 'js/vendor/pptxgen.bundle.js?v=4.0.1';
 const SLIDE_WIDTH = 13.333;
@@ -34,8 +37,7 @@ const CHART_PAGES_PER_METRIC = 3;
 const PACKETSTORE_CHART_ROWS_PER_SLIDE = 8;
 // Drawn as the guide line on every capacity chart and reused as the single
 // definition of "under pressure" so the deck never carries two conventions.
-const PROCESSING_LOAD_GUIDE = 0.8;
-const PACKETSTORE_CRITICAL_DROP_RATIO = 0.01;
+const PROCESSING_LOAD_GUIDE = window.SystemHealthViewModel.PROCESSING_LOAD_GUIDE;
 let pptxGenPromise = null;
 
 function cleanText(value, maxLength = 240) {
@@ -126,278 +128,20 @@ function mixHex(fromHex, toHex, weight) {
     return `#${channel(0)}${channel(1)}${channel(2)}`;
 }
 
-function sensorStatus(row) {
-    const states = Object.entries(row.collectionStatus || {})
-        .filter(([key]) => key !== 'device_analysis' || supportsDeviceAnalysis(row))
-        .map(([, state]) => state);
-    const incomplete = states.find(state => !['complete', 'zero_valued'].includes(state));
-    if (incomplete) return incomplete;
-    if (states.length && states.every(state => state === 'zero_valued')) return 'zero_valued';
-    return row.offline ? 'offline' : 'complete';
-}
-
-// A sensor that is offline, or online but refusing data access, has nothing
-// measurable to report. Those roll up to a single counted band rather than
-// repeating the same seven-clause sentence once per row.
-function isAbsent(row) {
-    return !!row.offline || row.data_access === false;
-}
-
-// Flow Sensors collect flow telemetry and IDS Sensors process IDS rules; neither
-// role is expected to discover devices or report device-analysis tiers.
-function applianceRole(row) {
-    const model = applianceModelLabel(row)
-        .replace(/\s+/g, '').toUpperCase();
-    const platform = cleanText(row.platform, 80).toLowerCase().replace(/[_-]+/g, ' ');
-    if (model.startsWith('EFC') || platform.includes('flow sensor') || platform.includes('flow collector')) {
-        return 'flow_sensor';
-    }
-    if (model.startsWith('IDS') || platform === 'ids' || platform.startsWith('ids ')) return 'ids';
-    return 'packet_sensor';
-}
-
-function applianceModelLabel(row) {
-    return cleanText(row && (row.license_platform || (row.capacity && row.capacity.model) || row.platform), 80)
-        || 'Unknown model';
-}
-
-function applianceNameWithModel(row) {
-    const name = cleanText(row && (row.name || row.hostname || row.id), 120) || 'Unknown sensor';
-    return `${name} (${applianceModelLabel(row)})`;
-}
-
-function supportsDeviceAnalysis(row) {
-    return applianceRole(row) === 'packet_sensor';
-}
-
-// Conditions are emitted in priority order. The first one becomes the row's
-// headline; the rest become supporting evidence on the same line. This is what
-// replaces the old semicolon-joined dump, where the one fact that mattered was
-// buried among six restatements of "offline".
-function findingForRow(row) {
-    const conditions = [];
-    const add = (severity, label, detail) => {
-        if (!label || conditions.some(item => item.label === label)) return;
-        conditions.push({ severity, label, detail: cleanText(detail, 160) });
-    };
-
-    if (row.data_access === false) add('CRITICAL', 'Data access unavailable', '');
-    if (row.offline) add('CRITICAL', 'Offline', '');
-
-    const packetRatio = safeRatio(row.packetPeak, row.packetCapacity);
-    const throughputRatio = safeRatio(row.throughputGbps, row.throughputCapacity);
-    const triggerRatio = finiteNumber(row.triggerUtilization);
-    const advancedRatio = safeRatio(row.analysis && row.analysis.advanced, row.advancedCapacity);
-    const standardRatio = safeRatio(row.analysis && row.analysis.standard, row.standardCapacity);
-    const analysis = row.analysis || {};
-
-    [
-        ['Advanced analysis', advancedRatio, tierValue(analysis.advanced, row.advancedCapacity) + ' devices'],
-        ['Standard analysis', standardRatio, tierValue(analysis.standard, row.standardCapacity) + ' devices']
-    ].forEach(([label, ratio, detail]) => {
-        if (ratio === null) return;
-        if (ratio >= 1) add('CRITICAL', `${label} full`, detail);
-        else if (ratio >= 0.8) add('WARNING', `${label} near capacity`, detail);
-    });
-
-    const drops = finiteNumber(row.triggerDropsTotal);
-    if (drops !== null && drops > 0) {
-        const load = triggerRatio === null
-            ? ''
-            : `trigger load reached ${formatPercent(triggerRatio)} of available cycles`;
-        add('CRITICAL', 'Trigger drops', [`${formatInteger(drops)} drops`, load].filter(Boolean).join('; '));
-    }
-
-    [
-        ['Packet rate', packetRatio, formatRate(row.packetPeak), formatRate(row.packetCapacity)],
-        ['Throughput', throughputRatio, formatGbps(row.throughputGbps), formatGbps(row.throughputCapacity)],
-        ['Trigger load', triggerRatio, formatCompact(row.triggerCyclesPeak), formatCompact(row.triggerCyclesAvail)]
-    ].forEach(([label, ratio, used, capacity]) => {
-        if (ratio === null) return;
-        const detail = `${used} of ${capacity}; ${formatPercent(ratio)} of capacity`;
-        if (ratio >= 1) add('CRITICAL', `${label} at capacity`, detail);
-        else if (ratio >= 0.8) add('WARNING', `High ${label.toLowerCase()}`, detail);
-    });
-
-    const discovery = finiteNumber(analysis.discovery);
-    if (discovery !== null && discovery > 0) {
-        add('WARNING', 'Devices in Discovery', `${formatInteger(discovery)} not assigned to an analysis tier`);
-    }
-
-    (row.health_conditions || []).forEach(condition => {
-        if (condition && condition.type === 'offline' && row.offline) return;
-        if (condition && condition.type === 'data_access' && row.data_access === false) return;
-        const message = cleanText(condition && condition.message, 160);
-        if (!message) return;
-        add(condition.status === 'failed' ? 'CRITICAL' : 'WARNING',
-            conditionLabel(condition), sentenceCase(message));
-    });
-
-    // Collection gaps are reported as a single condition naming the affected
-    // statistics, not one condition per statistic.
-    const collection = row.collectionStatus || {};
-    const collectionLabels = {
-        pkts: 'packet rate', bytes: 'throughput', trigger_utilization: 'trigger utilization',
-        trigger_drops: 'trigger drops', device_analysis: 'device analysis'
-    };
-    const gaps = Object.entries(collectionLabels)
-        .filter(([key]) => {
-            if (key === 'device_analysis' && !supportsDeviceAnalysis(row)) return false;
-            const status = collection[key];
-            return status && !['complete', 'zero_valued'].includes(status);
-        })
-        .map(([, label]) => label);
-    if (gaps.length) {
-        add('WARNING', 'Incomplete collection', `No data returned for ${joinList(gaps)}`);
-    }
-
-    const severity = conditions.some(item => item.severity === 'CRITICAL') ? 'CRITICAL'
-        : conditions.length ? 'WARNING' : 'OK';
-    const ordered = conditions.slice().sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
-    const primary = ordered[0] || null;
-    // Evidence quantifies the headline and then *names* the other conditions
-    // rather than restating each one in full. Concatenating every detail is how
-    // the previous export produced a seven-clause sentence per row.
-    const others = ordered.slice(1);
-    const evidence = primary
-        ? [
-            primary.detail,
-            others.length
-                ? `Other conditions: ${others.slice(0, 2).map(item => item.label.toLowerCase()).join(', ')}`
-                    + (others.length > 2 ? ` +${others.length - 2} more` : '')
-                : ''
-        ].filter(Boolean).join('. ')
-        : '';
-    const findings = ordered.map(item => [item.label, item.detail].filter(Boolean).join(': '));
-    const atCapacity = [packetRatio, throughputRatio, triggerRatio, advancedRatio, standardRatio]
-        .some(ratio => ratio !== null && ratio >= 1);
-    const worstRatio = Math.max(
-        ...[packetRatio, throughputRatio, triggerRatio, advancedRatio, standardRatio]
-            .filter(value => value !== null),
-        0
-    );
-    return {
-        id: String(row.id || ''),
-        name: cleanText(row.name || row.hostname || row.id || 'Unknown sensor', 120),
-        model: cleanText(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', 80),
-        severity,
-        condition: primary ? primary.label : '',
-        evidence,
-        findings,
-        finding_text: findings.join('; '),
-        worst_ratio: worstRatio,
-        at_capacity: atCapacity,
-        absent: isAbsent(row),
-        row
-    };
-}
-
-function conditionLabel(condition) {
-    const type = cleanText(condition && condition.type, 40).replace(/_/g, ' ');
-    return type ? sentenceCase(type) : 'Health condition';
-}
-
-function joinList(items) {
-    if (items.length <= 1) return items.join('');
-    if (items.length === 2) return `${items[0]} and ${items[1]}`;
-    return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
-}
-
-function recommendationPriority(recommendation, overview = {}) {
-    const text = String(recommendation || '');
-    if (/capture loss/i.test(text)) {
-        return overview.packetstore_loss_severity === 'critical' ? 2 : 1;
-    }
-    if (/restore(?: appliance)? connectivity|data access|trigger drops/i.test(text)) return 2;
-    if (/at or above 80%|processing load|capacity pressure|analysis assignments|licensed capacity|license|synchronization/i.test(text)) {
-        return 1;
-    }
-    return 0;
-}
-
-function recommendationsFromFindings(findings, overview = {}) {
-    const recommendations = [];
-    const has = pattern => findings.some(item => pattern.test(item.finding_text));
-    if (overview.absent) {
-        const noun = overview.absent === 1 ? 'sensor' : 'sensors';
-        recommendations.push(`Restore connectivity or data access for the ${formatInteger(overview.absent)} ${noun} that returned no data, then rerun the report.`);
-    }
-    // Capture loss outranks capacity pressure: a dropped packet cannot be
-    // recovered later, whereas a loaded sensor can still be rebalanced.
-    if (overview.packetstores_with_loss) {
-        recommendations.push(`Investigate capture loss on ${formatInteger(overview.packetstores_with_loss)} of ${formatInteger(overview.packetstores)} Packetstore sources. Compare offered load with rated capture throughput, then review slow-write, interface, block-drop, and disk-write metrics.`);
-    }
-    if (has(/trigger drops/i)) {
-        recommendations.push('Review trigger drops first. Check trigger load and trigger execution during the report window.');
-    }
-    if (has(/packet rate|throughput|trigger load/i)) {
-        recommendations.push('Review sensors at or above 80% of packet rate, throughput, or trigger capacity. Confirm that appliance sizing allows for expected traffic growth.');
-    }
-    if (!overview.packetstores_with_loss && overview.packetstores_loaded) {
-        const noun = overview.packetstores_loaded === 1 ? 'Packetstore source' : 'Packetstore sources';
-        recommendations.push(`Review processing load on ${formatInteger(overview.packetstores_loaded)} ${noun} at or above ${formatPercent(PROCESSING_LOAD_GUIDE)} before adding capture traffic or increasing retention.`);
-    }
-    if (has(/advanced analysis|standard analysis|Discovery/i)) {
-        recommendations.push('Reassign devices or increase licensed analysis capacity before moving more devices into Advanced or Standard Analysis.');
-    }
-    if (!overview.absent && has(/incomplete collection|data access/i)) {
-        recommendations.push('Restore appliance connectivity and data access, then rerun the report.');
-    }
-    if (has(/license|synchronization/i)) {
-        recommendations.push('Resolve license or synchronization warnings before using the report for capacity decisions.');
-    }
-    if (!recommendations.length) {
-        recommendations.push('Use the same report window and aggregation cycle for future reports so the results are comparable.');
-    }
-    return recommendations
-        .map((recommendation, index) => ({
-            recommendation,
-            index,
-            priority: recommendationPriority(recommendation, overview)
-        }))
-        .sort((a, b) => b.priority - a.priority || a.index - b.index)
-        .slice(0, 5)
-        .map(item => item.recommendation);
-}
-
-/* ------------------------------------------------------------ packetstore */
-
-function isPairedPacketstoreSource(row) {
-    return String(row && row.appliance_role || 'packet_sensor') !== 'all_in_one';
-}
-
-function packetstoreModelLabel(row) {
-    return applianceModelLabel(row);
-}
-
-// Loss is a fact, not a threshold: any dropped packet, secret, frame, or block counts.
-// Retention deliberately does not appear here — without a customer retention
-// target, a short lookback is an observation and not a finding.
-function hasCaptureLoss(row) {
-    return (finiteNumber(row.packetDropsTotal) || 0) > 0
-        || (finiteNumber(row.interfaceDropsTotal) || 0) > 0
-        || (finiteNumber(row.secretDropsTotal) || 0) > 0
-        || (finiteNumber(row.slowWriteDropsTotal) || 0) > 0
-        || (finiteNumber(row.blocksDroppedTotal) || 0) > 0;
-}
-
-function packetstoreDropSeverity(ratio, droppedTotal = 0) {
-    const value = finiteNumber(ratio);
-    if (value !== null && value > PACKETSTORE_CRITICAL_DROP_RATIO) return 'critical';
-    if ((value !== null && value > 0) || (finiteNumber(droppedTotal) || 0) > 0) return 'warning';
-    return 'clean';
-}
-
-function packetstoreLossSeverity(row) {
-    const packet = packetstoreDropSeverity(row && row.packetDropRatio, row && row.packetDropsTotal);
-    const secret = packetstoreDropSeverity(row && row.secretDropRatio, row && row.secretDropsTotal);
-    if (packet === 'critical' || secret === 'critical') return 'critical';
-    return packet === 'warning' || secret === 'warning'
-        || (finiteNumber(row && row.slowWriteDropsTotal) || 0) > 0
-        || (finiteNumber(row && row.interfaceDropsTotal) || 0) > 0
-        || (finiteNumber(row && row.blocksDroppedTotal) || 0) > 0
-        ? 'warning' : 'clean';
-}
+const {
+    sensorStatus,
+    isAbsent,
+    applianceModelLabel,
+    applianceNameWithModel,
+    supportsDeviceAnalysis,
+    joinList,
+    recommendationPriority,
+    packetstoreModelLabel,
+    hasCaptureLoss,
+    packetstoreDropSeverity,
+    peakProcessingLoad,
+    hasProcessingPressure
+} = window.SystemHealthViewModel;
 
 function packetstoreSeverityColor(palette, severity, cleanColor = null) {
     return severity === 'critical' ? palette.high
@@ -405,164 +149,17 @@ function packetstoreSeverityColor(palette, severity, cleanColor = null) {
             : cleanColor || palette.text;
 }
 
-// 80% reuses the guide already drawn on every capacity chart rather than
-// introducing a second convention for "under pressure".
-function peakProcessingLoad(row) {
-    const loads = [row.inputLoadPeak, row.compressionLoadPeak, row.diskWriteLoadPeak]
-        .map(finiteNumber).filter(value => value !== null);
-    return loads.length ? Math.max(...loads) / 100 : null;
-}
-
-function hasProcessingPressure(row) {
-    const load = peakProcessingLoad(row);
-    return load !== null && load >= PROCESSING_LOAD_GUIDE;
-}
-
-function hasReportedPacketstoreLookback(row) {
-    if (!row || row.offline) return false;
-    const value = finiteNumber(row.lookbackLatestSec);
-    if (value === null || value < 0) return false;
-    const status = row.collectionStatus && row.collectionStatus.est_lookback_sec;
-    return value > 0 || ['complete', 'zero_valued'].includes(status);
-}
-
-function averagePacketstoreLookback(rows) {
-    const measured = (rows || []).filter(hasReportedPacketstoreLookback);
-    return {
-        average_seconds: measured.length
-            ? measured.reduce((sum, row) => sum + finiteNumber(row.lookbackLatestSec), 0) / measured.length
-            : null,
-        reporting_sources: measured.length
-    };
-}
-
 function buildDeckModel(input) {
     const meta = { ...(input && input.meta || {}) };
     const options = resolveOptions(meta, input && input.options || {});
-    const rows = Array.isArray(input && input.rows) ? input.rows.map(row => ({ ...row })) : [];
-    const packetstoreRows = Array.isArray(input && input.packetstore_rows)
-        ? input.packetstore_rows.map(row => ({ ...row })) : [];
-    const allFindings = rows.map(findingForRow);
-
-    // Absent sensors leave the body narrative and become a counted band. They
-    // keep their full per-sensor row in the appendix, so nothing is dropped.
-    const absent = allFindings.filter(item => item.absent);
-    const findings = allFindings
-        .filter(item => !item.absent && item.severity !== 'OK')
-        .sort((a, b) => severityRank(b.severity) - severityRank(a.severity)
-            || b.worst_ratio - a.worst_ratio
-            || a.name.localeCompare(b.name));
-
-    // Packetstore metrics are emitted by sensors, so Packetstore rows are a
-    // measured subset of `rows` and must not be counted as extra appliances.
-    const modelCounts = {};
-    const countModel = row => {
-        const model = cleanText(row.license_platform || (row.capacity && row.capacity.model) || 'Unknown', 80);
-        modelCounts[model] = (modelCounts[model] || 0) + 1;
-    };
-    rows.forEach(countModel);
-
-    const totalDrops = rows.reduce((sum, row) => sum + Math.max(0, finiteNumber(row.triggerDropsTotal) || 0), 0);
-    const offline = rows.filter(row => row.offline).length;
-    const noAccess = rows.filter(row => !row.offline && row.data_access === false).length;
-    const reporting = rows.length - absent.length;
-    const atCapacity = findings.filter(item => item.at_capacity).length;
-    const allInOne = packetstoreRows.filter(row => !isPairedPacketstoreSource(row)).length;
-    const paired = packetstoreRows.length - allInOne;
-    const retention = averagePacketstoreLookback(packetstoreRows);
-    const packetstoreLossSeverities = packetstoreRows.map(packetstoreLossSeverity);
-    const packetstoreLossLevel = packetstoreLossSeverities.includes('critical') ? 'critical'
-        : packetstoreLossSeverities.includes('warning') ? 'warning' : 'clean';
-    const overview = {
-        sensors: rows.length,
-        reporting,
-        healthy: Math.max(0, reporting - findings.length),
-        offline,
-        no_access: noAccess,
-        absent: absent.length,
-        attention: findings.length,
-        at_capacity: atCapacity,
-        trigger_drops: totalDrops,
-        packetstores: packetstoreRows.length,
-        packetstores_all_in_one: allInOne,
-        packetstores_paired: paired,
-        packetstores_with_loss: packetstoreRows.filter(hasCaptureLoss).length,
-        packetstores_with_critical_loss: packetstoreLossSeverities.filter(level => level === 'critical').length,
-        packetstore_loss_severity: packetstoreLossLevel,
-        packetstores_loaded: packetstoreRows.filter(hasProcessingPressure).length,
-        packetstore_lookback_average_sec: retention.average_seconds,
-        packetstore_lookback_reporting_sources: retention.reporting_sources,
-        model_counts: Object.entries(modelCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    };
     return {
         options,
         meta,
         palette: normalizedPalette(input && input.palette),
-        rows,
-        packetstore_rows: packetstoreRows,
-        findings,
-        absent,
-        overview,
-        verdict: verdictFor(overview),
-        recommendations: recommendationsFromFindings(findings, overview),
+        ...window.SystemHealthViewModel.buildNarrativeModel(input || {}),
         filename: deckFilename(meta, options)
     };
 }
-
-// One deterministic sentence naming the dominant condition. A reader who stops
-// after the second slide should still leave with the right conclusion.
-function verdictFor(overview) {
-    const packetstores = packetstoreVerdictClause(overview);
-    if (!overview.sensors) {
-        const none = 'No sensors were returned for this report window.';
-        return packetstores ? `${none} ${packetstores}` : none;
-    }
-    return [sensorVerdict(overview), packetstores].filter(Boolean).join(' ');
-}
-
-function sensorVerdict(overview) {
-    const absentShare = overview.absent / overview.sensors;
-    if (absentShare >= 0.5) {
-        return `${formatInteger(overview.absent)} of ${formatInteger(overview.sensors)} sensors returned no data. `
-            + 'Resolve connectivity or data-access issues before evaluating capacity.';
-    }
-    if (overview.at_capacity) {
-        return `${formatInteger(overview.at_capacity)} `
-            + `${overview.at_capacity === 1 ? 'sensor is' : 'sensors are'} at or over a capacity limit `
-            + 'and should be addressed before further devices are assigned.';
-    }
-    if (overview.attention) {
-        return `${formatInteger(overview.attention)} of ${formatInteger(overview.reporting)} reporting sensors `
-            + 'need review. No sensor reached a capacity limit.';
-    }
-    if (overview.absent) {
-        return `All ${formatInteger(overview.reporting)} reporting sensors are within capacity. `
-            + `${formatInteger(overview.absent)} returned no data.`;
-    }
-    return `All ${formatInteger(overview.sensors)} sensors are reporting and within capacity thresholds.`;
-}
-
-// Capture loss is evidence lost for good, so it is stated in the headline even
-// when every sensor is healthy — otherwise the verdict reads as an all-clear.
-function packetstoreVerdictClause(overview) {
-    if (!overview.packetstores) return '';
-    if (overview.packetstores_with_loss) {
-        return `${formatInteger(overview.packetstores_with_loss)} of ${formatInteger(overview.packetstores)} `
-            + 'Packetstore sources reported capture loss.';
-    }
-    if (overview.packetstores_loaded) {
-        return `${formatInteger(overview.packetstores_loaded)} Packetstore `
-            + `${overview.packetstores_loaded === 1 ? 'source' : 'sources'} reached at least `
-            + `${formatPercent(PROCESSING_LOAD_GUIDE)} processing load. No capture loss was reported.`;
-    }
-    if (overview.packetstores === 1) return 'The Packetstore source reported no capture loss.';
-    return `No capture loss was reported by any of the ${formatInteger(overview.packetstores)} Packetstore sources.`;
-}
-
-function severityRank(value) {
-    return value === 'CRITICAL' ? 2 : value === 'WARNING' ? 1 : 0;
-}
-
 function deckFilename(meta, options) {
     const target = slug(options.customer || meta.target_label || 'system-health');
     const day = cleanText(meta.generated_at, 10) || new Date().toISOString().slice(0, 10);
@@ -575,11 +172,6 @@ function slug(value) {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 60) || 'system-health';
-}
-
-function sentenceCase(value) {
-    const text = cleanText(value);
-    return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
 }
 
 function formatInteger(value) {
@@ -713,7 +305,7 @@ function gradientBackground(width = 2000, height = 1125) {
     ctx.fillRect(0, 0, width, height);
     try {
         return canvas.toDataURL('image/png');
-    } catch (error) {
+    } catch {
         return '';
     }
 }
@@ -888,7 +480,14 @@ function addOverview(model, assets) {
         [formatInteger(overview.sensors), 'Sensors', 'Included in this report', palette.text],
         [formatInteger(overview.reporting), 'Sensors with data', `${formatPercent(overview.sensors ? overview.reporting / overview.sensors : 0)} of sensors`, palette.text],
         [formatInteger(overview.at_capacity), 'At or over capacity', 'Across measured limits', overview.at_capacity ? palette.high : palette.text],
-        [formatCompact(overview.trigger_drops), 'Trigger drops', 'Total for the report window', overview.trigger_drops ? palette.high : palette.text]
+        [
+            formatCompact(overview.trigger_drops),
+            'Trigger drops',
+            overview.trigger_drops === null
+                ? 'No sensors reported this total'
+                : `${formatInteger(overview.trigger_drops_reporting)} of ${formatInteger(overview.sensors)} sensors reporting`,
+            overview.trigger_drops ? palette.high : overview.trigger_drops === null ? palette.muted : palette.text
+        ]
     ];
     if (overview.packetstores) {
         // These are metric-producing sensors, split by integrated versus paired
@@ -900,7 +499,7 @@ function addOverview(model, assets) {
         stats.push([
             formatInteger(overview.packetstores_with_loss),
             'Packetstore sources with loss',
-            `Of ${formatInteger(overview.packetstores)} sources; ${formatInteger(overview.packetstores_with_critical_loss)} above 1%; ${composition}`,
+            `Of ${formatInteger(overview.packetstores)} sources; ${formatInteger(overview.packetstores_with_critical_loss)} above 1%; ${formatInteger(overview.packetstores_loss_unavailable)} unavailable; ${composition}`,
             packetstoreSeverityColor(palette, overview.packetstore_loss_severity)
         ]);
     }

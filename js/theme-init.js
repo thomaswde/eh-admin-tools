@@ -5,7 +5,7 @@
         var pref = localStorage.getItem('eh-admin-theme') || 'system';
         var dark = pref === 'dark' || (pref === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-    } catch (error) {
+    } catch {
         // Storage or matchMedia unavailable (private mode, old browser). Light is the default.
     }
 })();

@@ -975,12 +975,12 @@ async function copyCreatedApiKey() {
     try {
         await navigator.clipboard.writeText(apiKey);
         alert('API key copied to clipboard.');
-    } catch (error) {
+    } catch {
         alert('Unable to copy API key automatically. Please copy it manually.');
     }
 }
 
-function activateUsersModule() {
+async function activateUsersModule() {
     if (!state.connected) {
         return;
     }
@@ -994,7 +994,7 @@ function activateUsersModule() {
         return;
     }
 
-    loadUsers();
+    await loadUsers();
 }
 
 function initUsersModule() {
@@ -1087,4 +1087,11 @@ function initUsersModule() {
     });
 
     document.getElementById('loadUsersBtn').setAttribute('data-listener-added', 'true');
+}
+
+if (typeof featureRegistry !== 'undefined') {
+    featureRegistry.register('users', {
+        initialize: initUsersModule,
+        activate: activateUsersModule
+    });
 }

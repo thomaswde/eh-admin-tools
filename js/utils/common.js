@@ -1,3 +1,6 @@
+/* exported showStatus, toggleApiConfig, showConnectedState, hideConnectedState, showErrorModal,
+switchModule, openConnectedAppliances, hideModal, detailItem, escapeAttribute,
+genericChartPrimaryColor, genericChartPaletteColor, stateIndicatorColor */
 // Shared utility functions
 
 function showStatus(message, isError = false) {
@@ -89,21 +92,6 @@ function switchModule(moduleName) {
     document.getElementById(`${moduleName}Module`).style.display = 'block';
 
     state.currentModule = moduleName;
-
-    // Call module-specific activation function if it exists
-    const camelCaseName = moduleName.split('-').map((part, index) => 
-        index === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : 
-                     part.charAt(0).toUpperCase() + part.slice(1)
-    ).join('');
-    const activationFunctionName = `activate${camelCaseName}Module`;
-    
-    if (typeof window[activationFunctionName] === 'function') {
-        try {
-            window[activationFunctionName]();
-        } catch (error) {
-            console.error(`Error activating module '${moduleName}':`, error);
-        }
-    }
 }
 
 async function openConnectedAppliances() {

@@ -1,3 +1,4 @@
+/* exported initTheme */
 // Theme control: light, dark, or follow the operating system.
 // The initial value is applied by js/theme-init.js before first paint.
 
@@ -7,7 +8,7 @@ const themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 function getThemePref() {
     try {
         return localStorage.getItem(THEME_KEY) || 'system';
-    } catch (error) {
+    } catch {
         return 'system';
     }
 }
@@ -28,7 +29,7 @@ function applyTheme(pref) {
 function setTheme(pref) {
     try {
         localStorage.setItem(THEME_KEY, pref);
-    } catch (error) {
+    } catch {
         // Preference will not survive a reload, but the current session still updates.
     }
     applyTheme(pref);

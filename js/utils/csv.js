@@ -8,7 +8,7 @@
     const FORMULA_PREFIX = /^[=+\-@]/;
 
     function rowIsEmpty(row) {
-        return row.every(cell => cell === '');
+        return row.every((cell) => cell === '');
     }
 
     function parseRows(input, options = {}) {
@@ -70,10 +70,10 @@
     function parseObjects(input, options = {}) {
         const rows = parseRows(input, { skipEmptyRows: options.skipEmptyRows !== false });
         if (!rows.length) return [];
-        const headers = rows.shift().map(header => options.trimHeaders ? header.trim() : header);
-        return rows.map(row => Object.fromEntries(
-            headers.map((header, index) => [header, row[index] === undefined ? '' : row[index]])
-        ));
+        const headers = rows.shift().map((header) => (options.trimHeaders ? header.trim() : header));
+        return rows.map((row) =>
+            Object.fromEntries(headers.map((header, index) => [header, row[index] === undefined ? '' : row[index]]))
+        );
     }
 
     function numericColumnSet(columns) {
@@ -83,9 +83,7 @@
 
     function escapeCell(value, options = {}) {
         if (value === null || value === undefined) return '';
-        const explicitlyNumeric = options.numeric === true
-            || typeof value === 'number'
-            || typeof value === 'bigint';
+        const explicitlyNumeric = options.numeric === true || typeof value === 'number' || typeof value === 'bigint';
         let text = String(value);
         if (!explicitlyNumeric && options.neutralizeFormulas !== false && FORMULA_PREFIX.test(text)) {
             text = `'${text}`;
@@ -96,25 +94,27 @@
     function stringifyRows(rows, options = {}) {
         const numericColumns = numericColumnSet(options.numericColumns);
         const lineEnding = options.lineEnding || '\r\n';
-        const text = Array.from(rows || [], row => Array.from(row || [], (value, index) =>
-            escapeCell(value, {
-                numeric: numericColumns.has(index),
-                neutralizeFormulas: options.neutralizeFormulas
-            })
-        ).join(',')).join(lineEnding);
+        const text = Array.from(rows || [], (row) =>
+            Array.from(row || [], (value, index) =>
+                escapeCell(value, {
+                    numeric: numericColumns.has(index),
+                    neutralizeFormulas: options.neutralizeFormulas
+                })
+            ).join(',')
+        ).join(lineEnding);
         return options.finalNewline === false || text === '' ? text : `${text}${lineEnding}`;
     }
 
     function stringifyObjects(columns, rows, options = {}) {
         const orderedColumns = Array.from(columns || []);
         const numericNames = numericColumnSet(options.numericColumns);
-        const numericIndexes = new Set(orderedColumns.flatMap((column, index) =>
-            numericNames.has(column) ? [index] : []
-        ));
-        return stringifyRows([
-            orderedColumns,
-            ...Array.from(rows || [], row => orderedColumns.map(column => row && row[column]))
-        ], { ...options, numericColumns: numericIndexes });
+        const numericIndexes = new Set(
+            orderedColumns.flatMap((column, index) => (numericNames.has(column) ? [index] : []))
+        );
+        return stringifyRows(
+            [orderedColumns, ...Array.from(rows || [], (row) => orderedColumns.map((column) => row && row[column]))],
+            { ...options, numericColumns: numericIndexes }
+        );
     }
 
     return {

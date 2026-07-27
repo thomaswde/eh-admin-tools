@@ -8,7 +8,8 @@ const source = fs.readFileSync(
     path.join(__dirname, '..', 'js', 'modules', 'system-health-pptx.js'),
     'utf8'
 );
-const window = {};
+const SystemHealthViewModel = require('../js/modules/system-health-view-model.js');
+const window = { SystemHealthViewModel };
 vm.runInContext(source, vm.createContext({ window, console }));
 const pptxApi = window.SystemHealthPptx;
 
@@ -764,7 +765,7 @@ test('the cover carries the gradient alone, with no ring texture drawn over it',
         ellipse() { ellipseCalls += 1; },
         stroke() {}
     };
-    const gradientWindow = {};
+    const gradientWindow = { SystemHealthViewModel };
     vm.runInContext(source, vm.createContext({
         window: gradientWindow,
         console,

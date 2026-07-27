@@ -41,7 +41,8 @@ test('Packetstore sensor continuation failure produces diagnostics and continues
         console,
         AbortController,
         setTimeout,
-        clearTimeout
+        clearTimeout,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
     });
     vm.runInContext(source('js/modules/system-health-collection.js'), context);
     vm.runInContext(source('js/modules/system-health-report.js'), context);
@@ -108,7 +109,10 @@ test('probes every eligible sensor separately and keeps clean misses out of the 
             }
         }
     };
-    const context = vm.createContext({ window, console, AbortController, setTimeout, clearTimeout });
+    const context = vm.createContext({
+        window, console, AbortController, setTimeout, clearTimeout,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
+    });
     vm.runInContext(source('js/modules/system-health-collection.js'), context);
     vm.runInContext(source('js/modules/system-health-report.js'), context);
     const controller = new AbortController();
@@ -141,7 +145,10 @@ test('probes every eligible sensor separately and keeps clean misses out of the 
 
 test('classifies only integrated sensors as all-in-one appliances', () => {
     const window = { apiClient: {} };
-    const context = vm.createContext({ window, console, AbortController, setTimeout, clearTimeout });
+    const context = vm.createContext({
+        window, console, AbortController, setTimeout, clearTimeout,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
+    });
     vm.runInContext(source('js/modules/system-health-collection.js'), context);
     vm.runInContext(source('js/modules/system-health-report.js'), context);
 

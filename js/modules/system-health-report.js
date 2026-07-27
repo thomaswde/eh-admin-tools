@@ -10,7 +10,7 @@ const SYSTEM_HEALTH_OFFLINE_LABEL_HEIGHT = 16;
 const SYSTEM_HEALTH_OFFLINE_LABEL_GAP = 5;
 const SYSTEM_HEALTH_OFFLINE_LINE_HEIGHT = 15;
 const SYSTEM_HEALTH_OFFLINE_BOTTOM_PAD = 14;
-const SYSTEM_HEALTH_PACKETSTORE_CRITICAL_DROP_RATIO = 0.01;
+
 const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '3';
 const SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS = [
     'schema_version', 'generated_at', 'report_lookback_days', 'report_from_ms', 'report_until_ms',
@@ -45,6 +45,7 @@ const systemHealthState = {
     catalogLoaded: false,
     catalogPath: '',
     catalogError: '',
+    catalogPromise: null,
     charts: {},
     currentReport: null,
     abortController: null,
@@ -74,22 +75,35 @@ function initSystemHealthModule() {
     window.addEventListener('resize', () => {
         if (systemHealthState.currentReport) renderSystemHealthReport(systemHealthState.currentReport);
     });
-    loadSystemHealthCatalog();
 }
 
-function activateSystemHealthModule() {
-    loadSystemHealthCatalog();
+async function activateSystemHealthModule() {
+    await loadSystemHealthCatalog();
 }
 
-async function loadSystemHealthCatalog() {
+function loadSystemHealthCatalog() {
+    if (systemHealthState.catalogPromise) return systemHealthState.catalogPromise;
+    const pending = loadSystemHealthCatalogOnce().finally(() => {
+        if (systemHealthState.catalogPromise === pending) {
+            systemHealthState.catalogPromise = null;
+        }
+    });
+    systemHealthState.catalogPromise = pending;
+    return pending;
+}
+
+async function loadSystemHealthCatalogOnce() {
     try {
         const response = await fetch('/backend/system-health/catalog', {
-            headers: { 'Accept': 'application/json' },
+            headers: { Accept: 'application/json' },
             cache: 'no-store'
         });
         const payload = await response.json();
         if (!response.ok) {
-            const message = (payload && payload.detail && payload.detail.message) || (payload && payload.message) || `Catalog request failed with HTTP ${response.status}`;
+            const message =
+                (payload && payload.detail && payload.detail.message) ||
+                (payload && payload.message) ||
+                `Catalog request failed with HTTP ${response.status}`;
             throw new Error(message);
         }
         systemHealthState.catalogLoaded = !!payload.loaded;
@@ -103,6 +117,10 @@ async function loadSystemHealthCatalog() {
         systemHealthState.catalogError = error.message || 'Catalog could not be loaded.';
     }
     updateSystemHealthCatalogStatus();
+}
+
+function cancelSystemHealthModule() {
+    systemHealthState.abortController?.abort(new DOMException('System Health collection cancelled.', 'AbortError'));
 }
 
 function buildSystemHealthCatalog(models) {
@@ -875,130 +893,32 @@ function normalizeSystemHealthModelName(value) {
 }
 
 function systemHealthRows(report) {
-    return (report.appliances || []).filter(sensor => sensor.appliance_role !== 'packetstore').map(sensor => {
-        const capacity = sensor.capacity || {};
-        const offline = !sensor.online;
-        const analysis = (report.device_analysis && report.device_analysis[String(sensor.id)])
-            || { advanced: null, standard: null, discovery: null, total: null, status: 'empty' };
-        const packetPeak = metricSystemHealthPeakRate(report, 'pkts', sensor.id);
-        const throughputGbps = systemHealthBytesToGbps(report, sensor.id);
-        const alignedTrigger = report.trigger_utilization
-            && report.trigger_utilization.peak_by_sensor
-            && report.trigger_utilization.peak_by_sensor[String(sensor.id)];
-        const triggerCyclesPeak = alignedTrigger ? alignedTrigger.used_cycles : null;
-        const triggerCyclesAvail = alignedTrigger ? alignedTrigger.available_cycles : null;
-        const triggerDropsTotal = metricSystemHealthTotal(report, 'trigger_drops', sensor.id);
-        const collectionStatus = systemHealthMetricStatus(report, sensor.id);
-        collectionStatus.trigger_utilization = alignedTrigger
-            ? (collectionStatus.trigger_cycles || 'complete')
-            : (report.trigger_utilization
-                && report.trigger_utilization.invalid_by_sensor
-                && report.trigger_utilization.invalid_by_sensor[String(sensor.id)])
-                || collectionStatus.trigger_cycles
-                || 'empty';
-        return {
-            ...sensor,
-            offline,
-            collectionStatus: { ...collectionStatus, device_analysis: analysis.status || 'unknown' },
-            analysis,
-            packetPeak,
-            packetCapacity: Number(capacity.base_packetrate || 0),
-            throughputGbps,
-            throughputCapacity: Number(capacity.base_gbps || 0),
-            triggerCyclesPeak,
-            triggerCyclesAvail,
-            triggerUtilization: alignedTrigger ? alignedTrigger.utilization : null,
-            triggerPeakTimestampMs: alignedTrigger ? alignedTrigger.timestamp_ms : null,
-            triggerPeakDurationMs: alignedTrigger ? alignedTrigger.duration_ms : null,
-            triggerDropsPeak: null,
-            triggerDropsTotal,
-            advancedCapacity: Number(capacity.advanced_analysis || 0),
-            standardCapacity: Number(capacity.standard_analysis || 0)
-        };
-    });
+    return SystemHealthViewModel.projectSensorRows(report);
 }
 
 function systemHealthPacketstoreMetric(report, metricName) {
     return report.packetstore && report.packetstore.metrics && report.packetstore.metrics[metricName] || null;
 }
 
-function systemHealthPacketstoreSummaryValue(report, metricName, field, id) {
-    const metric = systemHealthPacketstoreMetric(report, metricName);
-    const values = metric && metric.summary && metric.summary[field];
-    return values && values[String(id)] !== undefined ? values[String(id)] : null;
-}
+
 
 function systemHealthPacketstoreRows(report) {
-    const ids = new Set((report.packetstore && report.packetstore.appliance_ids || []).map(String));
-    return (report.appliances || []).filter(appliance => ids.has(String(appliance.id))).map(appliance => {
-        const id = String(appliance.id);
-        const total = name => systemHealthPacketstoreSummaryValue(report, name, 'totals', id);
-        const peak = name => systemHealthPacketstoreSummaryValue(report, name, 'peak_values', id);
-        const latest = name => systemHealthPacketstoreSummaryValue(report, name, 'latest_values', id);
-        const minimum = name => systemHealthPacketstoreSummaryValue(report, name, 'min_values', id);
-        const status = {};
-        [...SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS, ...SystemHealthCollection.PACKETSTORE_TOTAL_METRICS].forEach(name => {
-            const metric = systemHealthPacketstoreMetric(report, name);
-            status[name] = metric && metric.sensor_status && metric.sensor_status[id]
-                ? metric.sensor_status[id].status : 'unknown';
-        });
-        const packets = total('pkts');
-        const packetDrops = total('pkts_dropped');
-        const secrets = total('secrets');
-        const secretDrops = total('secrets_dropped');
-        return {
-            ...appliance,
-            offline: !appliance.online,
-            collectionStatus: status,
-            lookbackLatestSec: latest('est_lookback_sec'),
-            lookbackMinSec: minimum('est_lookback_sec'),
-            packetsTotal: packets,
-            packetDropsTotal: packetDrops,
-            slowWriteDropsTotal: total('pkts_dropped_wrslow'),
-            interfaceDropsTotal: total('if_drops'),
-            blocksDroppedTotal: total('blocks_dropped'),
-            packetDropRatio: packets !== null && packets > 0 && packetDrops !== null ? packetDrops / packets : null,
-            secretsTotal: secrets,
-            secretDropsTotal: secretDrops,
-            secretDropRatio: secrets !== null && secrets > 0 && secretDrops !== null ? secretDrops / secrets : null,
-            inputLoadPeak: peak('input_load'),
-            compressionLoadPeak: peak('compress_load'),
-            diskWriteLoadPeak: peak('disk_write_load')
-        };
-    }).sort((a, b) => {
-        const aRisk = Math.max(a.packetDropRatio || 0, a.secretDropRatio || 0, (a.inputLoadPeak || 0) / 100, (a.compressionLoadPeak || 0) / 100, (a.diskWriteLoadPeak || 0) / 100);
-        const bRisk = Math.max(b.packetDropRatio || 0, b.secretDropRatio || 0, (b.inputLoadPeak || 0) / 100, (b.compressionLoadPeak || 0) / 100, (b.diskWriteLoadPeak || 0) / 100);
-        return bRisk - aRisk || (a.name || '').localeCompare(b.name || '');
-    });
+    return SystemHealthViewModel.projectPacketstoreRows(report);
 }
 
 function systemHealthPacketstoreHasLoss(row) {
-    return (Number(row && row.packetDropsTotal) || 0) > 0
-        || (Number(row && row.slowWriteDropsTotal) || 0) > 0
-        || (Number(row && row.interfaceDropsTotal) || 0) > 0
-        || (Number(row && row.blocksDroppedTotal) || 0) > 0
-        || (Number(row && row.secretDropsTotal) || 0) > 0;
+    return SystemHealthViewModel.hasCaptureLoss(row);
 }
 
 // Drop percentages are scored independently so packet loss never changes the
 // secret series (or vice versa). Raw cause counters have no denominator and
 // therefore remain warnings rather than being promoted to a critical rate.
 function systemHealthPacketstoreDropSeverity(ratio, droppedTotal = 0) {
-    const value = Number(ratio);
-    if (Number.isFinite(value) && value > SYSTEM_HEALTH_PACKETSTORE_CRITICAL_DROP_RATIO) return 'critical';
-    if ((Number.isFinite(value) && value > 0) || (Number(droppedTotal) || 0) > 0) return 'warning';
-    return 'clean';
+    return SystemHealthViewModel.packetstoreDropSeverity(ratio, droppedTotal);
 }
 
 function systemHealthPacketstoreLossSeverity(row) {
-    const packet = systemHealthPacketstoreDropSeverity(row && row.packetDropRatio, row && row.packetDropsTotal);
-    const secret = systemHealthPacketstoreDropSeverity(row && row.secretDropRatio, row && row.secretDropsTotal);
-    if (packet === 'critical' || secret === 'critical') return 'critical';
-    return packet === 'warning' || secret === 'warning'
-        || (Number(row && row.slowWriteDropsTotal) || 0) > 0
-        || (Number(row && row.interfaceDropsTotal) || 0) > 0
-        || (Number(row && row.blocksDroppedTotal) || 0) > 0
-        ? 'warning' : 'clean';
+    return SystemHealthViewModel.packetstoreLossSeverity(row);
 }
 
 function systemHealthPacketstoreSeverityColor(colors, severity) {
@@ -1007,45 +927,17 @@ function systemHealthPacketstoreSeverityColor(colors, severity) {
             : colors.low;
 }
 
-function metricSystemHealthPeak(report, metricName, id) {
-    const metric = report.metrics ? report.metrics[metricName] : null;
-    const value = metric && metric.summary && metric.summary.peak_values && metric.summary.peak_values[String(id)];
-    return value === undefined ? null : value;
-}
 
-function metricSystemHealthTotal(report, metricName, id) {
-    const metric = report.metrics ? report.metrics[metricName] : null;
-    const value = metric && metric.summary && metric.summary.totals && metric.summary.totals[String(id)];
-    return value === undefined ? null : value;
-}
 
-function metricSystemHealthDuration(report, metricName, id) {
-    const metric = report.metrics ? report.metrics[metricName] : null;
-    const duration = metric && metric.summary && metric.summary.peak_duration_ms && metric.summary.peak_duration_ms[String(id)];
-    return duration === undefined || duration === null ? null : duration;
-}
 
-function metricSystemHealthPeakRate(report, metricName, id) {
-    const duration = metricSystemHealthDuration(report, metricName, id);
-    const peak = metricSystemHealthPeak(report, metricName, id);
-    return duration && peak !== null ? Number(peak) / (duration / 1000) : null;
-}
 
-function systemHealthBytesToGbps(report, id) {
-    const duration = metricSystemHealthDuration(report, 'bytes', id);
-    const peak = metricSystemHealthPeak(report, 'bytes', id);
-    return duration && peak !== null ? (Number(peak) * 8) / (duration / 1000) / 1_000_000_000 : null;
-}
 
-function systemHealthMetricStatus(report, id) {
-    const statusByMetric = {};
-    Object.entries(report.metrics || {}).forEach(([metricName, metric]) => {
-        statusByMetric[metricName] = metric.sensor_status
-            && metric.sensor_status[String(id)]
-            && metric.sensor_status[String(id)].status || 'unknown';
-    });
-    return statusByMetric;
-}
+
+
+
+
+
+
 
 function systemHealthReportCycleLabel(report) {
     const actualCycles = new Set();
@@ -1082,9 +974,10 @@ function systemHealthRowStatusText(row) {
 }
 
 function renderSystemHealthReport(report) {
-    const rows = systemHealthRows(report);
-    const packetstoreRows = systemHealthPacketstoreRows(report);
-    renderSystemHealthSummary(report, rows, packetstoreRows);
+    const viewModel = SystemHealthViewModel.buildReportViewModel(report);
+    const rows = viewModel.rows;
+    const packetstoreRows = viewModel.packetstore_rows;
+    renderSystemHealthSummary(report, rows, packetstoreRows, viewModel.overview);
     renderSystemHealthCharts(rows);
     renderSystemHealthPacketstoreCharts(report, packetstoreRows);
     renderSystemHealthTable(rows);
@@ -1093,35 +986,52 @@ function renderSystemHealthReport(report) {
     updateSystemHealthCsvButtons();
 }
 
-function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
-    const offlineSensors = rows.filter(row => row.offline).length;
-    const dataUnavailableSensors = rows.filter(row => row.data_access === false).length;
+function renderSystemHealthSummary(report, rows, packetstoreRows = [], overview = null) {
+    const modelOverview =
+        overview ||
+        SystemHealthViewModel.buildNarrativeModel({
+            rows,
+            packetstore_rows: packetstoreRows
+        }).overview;
+    const offlineSensors = modelOverview.offline;
+    const dataUnavailableSensors = modelOverview.no_access;
     const onlineSensors = Math.max(0, rows.length - offlineSensors);
-    const packetWatch = rows.filter(row => row.packetCapacity && row.packetPeak / row.packetCapacity >= 0.8).length;
-    const throughputWatch = rows.filter(row => row.throughputCapacity && row.throughputGbps / row.throughputCapacity >= 0.8).length;
-    const triggerWatch = rows.filter(row => row.triggerUtilization !== null && row.triggerUtilization >= 0.8).length;
-    const triggerDropSensors = rows.filter(row => row.triggerDropsTotal > 0).length;
-    const processingWatch = rows.filter(row => (row.packetCapacity && row.packetPeak / row.packetCapacity >= 0.8)
-        || (row.throughputCapacity && row.throughputGbps / row.throughputCapacity >= 0.8)
-        || (row.triggerUtilization !== null && row.triggerUtilization >= 0.8)
-        || row.triggerDropsTotal > 0).length;
-    const analysisWatch = rows.filter(row => {
+    const packetWatch = rows.filter((row) => row.packetCapacity && row.packetPeak / row.packetCapacity >= 0.8).length;
+    const throughputWatch = rows.filter(
+        (row) => row.throughputCapacity && row.throughputGbps / row.throughputCapacity >= 0.8
+    ).length;
+    const triggerWatch = rows.filter((row) => row.triggerUtilization !== null && row.triggerUtilization >= 0.8).length;
+    const triggerDropSensors = rows.filter((row) => row.triggerDropsTotal > 0).length;
+    const processingWatch = rows.filter(
+        (row) =>
+            (row.packetCapacity && row.packetPeak / row.packetCapacity >= 0.8) ||
+            (row.throughputCapacity && row.throughputGbps / row.throughputCapacity >= 0.8) ||
+            (row.triggerUtilization !== null && row.triggerUtilization >= 0.8) ||
+            row.triggerDropsTotal > 0
+    ).length;
+    const analysisWatch = rows.filter((row) => {
         const advanced = Number(row.analysis && row.analysis.advanced);
         const standard = Number(row.analysis && row.analysis.standard);
-        return (row.advancedCapacity > 0 && Number.isFinite(advanced) && advanced / row.advancedCapacity >= 0.8)
-            || (row.standardCapacity > 0 && Number.isFinite(standard) && standard / row.standardCapacity >= 0.8);
+        return (
+            (row.advancedCapacity > 0 && Number.isFinite(advanced) && advanced / row.advancedCapacity >= 0.8) ||
+            (row.standardCapacity > 0 && Number.isFinite(standard) && standard / row.standardCapacity >= 0.8)
+        );
     }).length;
-    const discoverySensors = rows.filter(row => (row.analysis.discovery || 0) > 0).length;
-    const packetstoreLoss = packetstoreRows.filter(systemHealthPacketstoreHasLoss).length;
-    const packetstoreCriticalLoss = packetstoreRows.filter(row => systemHealthPacketstoreLossSeverity(row) === 'critical').length;
-    const packetstoreLossClass = packetstoreCriticalLoss ? 'is-loss-critical'
-        : packetstoreLoss ? 'is-loss-warning' : '';
+    const discoverySensors = rows.filter((row) => (row.analysis.discovery || 0) > 0).length;
+    const packetstoreLoss = modelOverview.packetstores_with_loss;
+    const packetstoreCriticalLoss = modelOverview.packetstores_with_critical_loss;
+    const packetstoreLossClass = packetstoreCriticalLoss
+        ? 'is-loss-critical'
+        : packetstoreLoss
+          ? 'is-loss-warning'
+          : '';
     const retention = systemHealthAveragePacketstoreLookback(packetstoreRows);
     const lookbackDays = report.window && report.window.lookback_days;
     const cycle = systemHealthCycleLabelForCopy(systemHealthReportCycleLabel(report));
-    const retentionValue = retention.average_seconds === null
-        ? '—'
-        : formatSystemHealthDays(retention.average_seconds / (SYSTEM_HEALTH_DAY_MS / 1000));
+    const retentionValue =
+        retention.average_seconds === null
+            ? '—'
+            : formatSystemHealthDays(retention.average_seconds / (SYSTEM_HEALTH_DAY_MS / 1000));
     const summary = document.getElementById('systemHealthSummary');
     if (!summary) return;
     summary.innerHTML = `
@@ -1172,6 +1082,7 @@ function renderSystemHealthSummary(report, rows, packetstoreRows = []) {
             <div class="system-health-summary-facts">
                 <span><b>${formatSystemHealthNumber(packetstoreLoss)}</b> with capture or secret loss</span>
                 <span><b>${formatSystemHealthNumber(packetstoreCriticalLoss)}</b> above 1% loss</span>
+                <span><b>${formatSystemHealthNumber(modelOverview.packetstores_loss_unavailable)}</b> without conclusive loss counters</span>
             </div>
         </section>`;
 }
@@ -1216,22 +1127,7 @@ function systemHealthPacketstoreFidelityRows(rows) {
 }
 
 function systemHealthAveragePacketstoreLookback(rows) {
-    const observations = (rows || []).filter(row => {
-        if (!row || row.offline) return false;
-        const value = Number(row.lookbackLatestSec);
-        if (!Number.isFinite(value) || value < 0) return false;
-        // Positive lookback values are self-evidently measured. A zero is only
-        // included when collection explicitly identified it as a measured zero,
-        // so missing values from older imports cannot depress the average.
-        return value > 0 || systemHealthPacketstoreMetricAvailable(row, 'est_lookback_sec');
-    });
-    return {
-        average_seconds: observations.length
-            ? observations.reduce((sum, row) => sum + Number(row.lookbackLatestSec), 0) / observations.length
-            : null,
-        reporting_sources: observations.length,
-        total_sources: (rows || []).length
-    };
+    return SystemHealthViewModel.averagePacketstoreLookback(rows);
 }
 
 function systemHealthHorizontalChartLayout(width) {
@@ -1537,23 +1433,23 @@ function systemHealthTotalAnalysisCapacity(row) {
 }
 
 function systemHealthSensorDetailRows(report) {
-    return sortSystemHealthDetailRows(systemHealthRows(report)).map(row => {
+    return sortSystemHealthDetailRows(systemHealthRows(report)).map((row) => {
         const advancedCount = row.analysis.advanced || 0;
         const standardCount = row.analysis.standard || 0;
         const discoveryCount = row.analysis.discovery || 0;
         return {
-            'Sensor': row.name || row.hostname || row.id,
-            'Model': row.license_platform || '',
-            'Status': systemHealthRowStatusText(row) || 'complete',
+            Sensor: row.name || row.hostname || row.id,
+            Model: row.license_platform || '',
+            Status: systemHealthRowStatusText(row) || 'complete',
             'Packet peak': formatSystemHealthRate(row.packetPeak),
             'Packet capacity': formatSystemHealthRate(row.packetCapacity),
             'Throughput peak': formatSystemHealthGbps(row.throughputGbps),
             'Throughput capacity': formatSystemHealthGbps(row.throughputCapacity),
             'Trigger capacity': formatSystemHealthTriggerCapacity(row),
             'Trigger drops': formatSystemHealthNumber(row.triggerDropsTotal),
-            'Advanced': formatSystemHealthTierValue(advancedCount, row.advancedCapacity || 0),
-            'Standard': formatSystemHealthTierValue(standardCount, row.standardCapacity || 0),
-            'Discovery': formatSystemHealthNumber(discoveryCount),
+            Advanced: formatSystemHealthTierValue(advancedCount, row.advancedCapacity || 0),
+            Standard: formatSystemHealthTierValue(standardCount, row.standardCapacity || 0),
+            Discovery: formatSystemHealthNumber(discoveryCount),
             'Analysis capacity': formatSystemHealthNumber(systemHealthTotalAnalysisCapacity(row))
         };
     });
@@ -2976,14 +2872,15 @@ async function exportSystemHealthPdf() {
     try {
         const response = await fetch('/backend/system-health/pdf', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/pdf' },
+            headers: { 'Content-Type': 'application/json', Accept: 'application/pdf' },
             body: JSON.stringify({ report: systemHealthPdfProjection(report), style: systemHealthPdfStyle() })
         });
         if (!response.ok) {
             let message = `PDF export failed with HTTP ${response.status}`;
             try {
                 const payload = await response.json();
-                message = (payload && payload.detail && payload.detail.message) || (payload && payload.message) || message;
+                message =
+                    (payload && payload.detail && payload.detail.message) || (payload && payload.message) || message;
             } catch {}
             throw new Error(message);
         }
@@ -3005,20 +2902,7 @@ async function exportSystemHealthPdf() {
 }
 
 function systemHealthPdfProjection(report) {
-    return {
-        ...report,
-        metrics: Object.fromEntries(Object.entries(report.metrics || {}).map(([name, metric]) => [
-            name,
-            { ...metric, rows: [] }
-        ])),
-        packetstore: report.packetstore ? {
-            ...report.packetstore,
-            metrics: Object.fromEntries(Object.entries(report.packetstore.metrics || {}).map(([name, metric]) => [
-                name,
-                { ...metric, rows: [] }
-            ]))
-        } : { appliance_ids: [], inventory_appliance_ids: [], probe_status: {}, metrics: {}, errors: [] }
-    };
+    return SystemHealthViewModel.buildRendererProjection(report || {});
 }
 
 function systemHealthPdfFilename(report) {
@@ -3194,9 +3078,6 @@ function systemHealthOptionalBoolean(value) {
 }
 
 function systemHealthSortIds(a, b) {
-    const an = Number(a);
-    const bn = Number(b);
-    if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
     return String(a).localeCompare(String(b));
 }
 
@@ -3225,27 +3106,9 @@ function systemHealthPdfStyle() {
     return { transparent, colors };
 }
 
-function systemHealthChartBackgroundPlugin() {
-    return {
-        id: 'systemHealthChartBackground',
-        beforeDraw(chart) {
-            const colors = systemHealthStyleColors();
-            if (colors.transparent) return;
-            const { ctx, width, height } = chart;
-            ctx.save();
-            ctx.globalCompositeOperation = 'destination-over';
-            ctx.fillStyle = colors.bg;
-            ctx.fillRect(0, 0, width, height);
-            ctx.restore();
-        }
-    };
-}
 
-function applySystemHealthCanvasStyle(canvas) {
-    if (!canvas) return;
-    const colors = systemHealthStyleColors();
-    canvas.style.backgroundColor = colors.transparent ? 'transparent' : colors.bg;
-}
+
+
 
 function destroySystemHealthChart(canvasId) {
     if (systemHealthState.charts[canvasId]) {
@@ -3340,5 +3203,10 @@ function escapeSystemHealthHtml(value) {
         .replace(/'/g, '&#039;');
 }
 
-window.initSystemHealthModule = initSystemHealthModule;
-window.activateSystemHealthModule = activateSystemHealthModule;
+if (typeof featureRegistry !== 'undefined') {
+    featureRegistry.register('system-health', {
+        initialize: initSystemHealthModule,
+        activate: activateSystemHealthModule,
+        cancel: cancelSystemHealthModule
+    });
+}

@@ -45,6 +45,7 @@ test('chart theme dependency explicitly exports the API used by System Health', 
         AbortController,
         Blob,
         URL,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js'),
         console
     });
 

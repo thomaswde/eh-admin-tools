@@ -1,3 +1,4 @@
+/* exported ExtraHopAPI */
 const EXTRAHOP_REQUEST_TIMEOUT_MS = 75 * 1000;
 
 class ExtraHopAPI {
@@ -224,7 +225,7 @@ class ExtraHopAPI {
         if (text) {
             try {
                 data = JSON.parse(text);
-            } catch (error) {
+            } catch {
                 data = text;
             }
         }
@@ -360,7 +361,7 @@ class ExtraHopAPI {
         return this.request('/appliances', options);
     }
 
-    async getAuditLog(limit = 100, offset = 0) {
-        return this.request(`/auditlog?limit=${limit}&offset=${offset}`);
+    async getAuditLog(limit = 100, offset = 0, options = {}) {
+        return this.request(`/auditlog?limit=${limit}&offset=${offset}`, options);
     }
 }

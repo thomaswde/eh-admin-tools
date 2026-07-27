@@ -7,10 +7,10 @@ import html
 import math
 import os
 import re
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 HEX_PATTERN = r"^#[0-9a-fA-F]{6}$"
 
@@ -19,32 +19,14 @@ MAX_PDF_JSON_DEPTH = 12
 MAX_PDF_JSON_NODES = 250_000
 MAX_PDF_COLLECTION_ITEMS = 5_000
 MAX_PDF_STRING_LENGTH = 4_096
-MAX_PDF_APPLIANCES = 1_000
-MAX_PDF_METRICS = 32
+MAX_PDF_SENSOR_SUMMARIES = 1_000
+MAX_PDF_PACKETSTORE_SUMMARIES = 1_000
 PDF_RENDER_MAX_CONCURRENCY = max(1, int(os.environ.get("EH_PDF_RENDER_MAX_CONCURRENCY", "1")))
 PDF_RENDER_ACQUIRE_TIMEOUT_SECONDS = max(
     0.1,
     float(os.environ.get("EH_PDF_RENDER_ACQUIRE_TIMEOUT_SECONDS", "2")),
 )
 PDF_RENDER_TIMEOUT_SECONDS = max(1.0, float(os.environ.get("EH_PDF_RENDER_TIMEOUT_SECONDS", "120")))
-PDF_REPORT_FIELDS = frozenset(
-    {
-        "source_type",
-        "generated_at",
-        "target",
-        "window",
-        "requested_cycle",
-        "cycle",
-        "cycle_policy",
-        "capacity_catalog_loaded",
-        "appliances",
-        "device_analysis",
-        "metrics",
-        "trigger_utilization",
-        "packetstore",
-        "errors",
-    }
-)
 PDF_STYLE_FIELDS = frozenset({"transparent", "colors"})
 PDF_STYLE_COLOR_FIELDS = frozenset(
     {
@@ -103,28 +85,177 @@ def validate_pdf_json_tree(value: Any, path: str) -> None:
     visit(value, path, 0)
 
 
+class StrictRendererModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class RendererTarget(StrictRendererModel):
+    type: str
+    tenant: str
+    host: str
+    name: str
+
+
+class RendererWindow(StrictRendererModel):
+    lookback_days: int | float | None
+    from_ms: int | float | None
+    until_ms: int | float | None
+    from_iso: str
+    until_iso: str
+
+
+class RendererCyclePolicy(StrictRendererModel):
+    requested_cycle: str
+    query_cycle: str
+    minimum_safe_cycle: str
+    estimated_buckets_per_sensor: int | float | None
+    estimated_scalar_points: int | float | None
+    adjusted: bool
+    policy: str
+
+
+class RendererMetadata(StrictRendererModel):
+    generated_at: str
+    target: RendererTarget
+    window: RendererWindow
+    requested_cycle: str
+    cycle: str
+    cycle_label: str
+    packetstore_cycle_label: str
+    cycle_policy: RendererCyclePolicy | None
+    capacity_catalog_loaded: bool
+    errors: list[str] = Field(max_length=1_000)
+
+
+class RendererAnalysisSummary(StrictRendererModel):
+    advanced: int | float | None
+    standard: int | float | None
+    discovery: int | float | None
+    total: int | float | None
+    status: str
+
+
+class RendererHealthCondition(StrictRendererModel):
+    type: str
+    status: str
+    message: str
+
+
+class RendererSensorSummary(StrictRendererModel):
+    id: str
+    name: str
+    model: str
+    online: bool
+    dataAccess: bool | None
+    applianceRole: str
+    collectionStatus: dict[str, str]
+    analysis: RendererAnalysisSummary
+    packetPeak: int | float | None
+    packetCapacity: int | float | None
+    throughputGbps: int | float | None
+    throughputCapacity: int | float | None
+    triggerCyclesPeak: int | float | None
+    triggerCyclesAvail: int | float | None
+    triggerUtilization: int | float | None
+    triggerPeakTimestampMs: int | float | None
+    triggerPeakDurationMs: int | float | None
+    triggerDropsTotal: int | float | None
+    advancedCapacity: int | float | None
+    standardCapacity: int | float | None
+    healthConditions: list[RendererHealthCondition] = Field(max_length=64)
+
+
+class RendererPacketstoreSummary(StrictRendererModel):
+    id: str
+    name: str
+    model: str
+    online: bool
+    applianceRole: str
+    collectionStatus: dict[str, str]
+    lookbackLatestSec: int | float | None
+    lookbackMinSec: int | float | None
+    packetsTotal: int | float | None
+    packetDropsTotal: int | float | None
+    packetDropRatio: int | float | None
+    slowWriteDropsTotal: int | float | None
+    interfaceDropsTotal: int | float | None
+    blocksDroppedTotal: int | float | None
+    secretsTotal: int | float | None
+    secretDropsTotal: int | float | None
+    secretDropRatio: int | float | None
+    inputLoadPeak: int | float | None
+    compressionLoadPeak: int | float | None
+    diskWriteLoadPeak: int | float | None
+
+
+class RendererFinding(StrictRendererModel):
+    id: str
+    name: str
+    model: str
+    severity: str
+    condition: str
+    evidence: str
+    findings: list[str] = Field(max_length=64)
+    finding_text: str
+    worst_ratio: int | float
+    at_capacity: bool
+    absent: bool
+
+
+class RendererModelCount(StrictRendererModel):
+    model: str
+    count: int
+
+
+class RendererOverview(StrictRendererModel):
+    sensors: int
+    reporting: int
+    healthy: int
+    offline: int
+    no_access: int
+    absent: int
+    attention: int
+    at_capacity: int
+    trigger_drops: int | float | None
+    trigger_drops_reporting: int
+    trigger_drops_unavailable: int
+    packetstores: int
+    packetstores_all_in_one: int
+    packetstores_paired: int
+    packetstores_with_loss: int
+    packetstores_clean: int
+    packetstores_loss_reporting: int
+    packetstores_loss_unavailable: int
+    packetstores_with_critical_loss: int
+    packetstore_loss_severity: str
+    packetstores_loaded: int
+    packetstore_lookback_average_sec: int | float | None
+    packetstore_lookback_reporting_sources: int
+    model_counts: list[RendererModelCount] = Field(max_length=1_000)
+
+
+class SystemHealthRendererProjection(StrictRendererModel):
+    schema_version: Literal["1"]
+    metadata: RendererMetadata
+    sensor_summaries: list[RendererSensorSummary] = Field(max_length=MAX_PDF_SENSOR_SUMMARIES)
+    packetstore_summaries: list[RendererPacketstoreSummary] = Field(max_length=MAX_PDF_PACKETSTORE_SUMMARIES)
+    findings: list[RendererFinding] = Field(max_length=MAX_PDF_SENSOR_SUMMARIES)
+    absent: list[RendererFinding] = Field(max_length=MAX_PDF_SENSOR_SUMMARIES)
+    overview: RendererOverview
+    verdict: str
+    recommendations: list[str] = Field(max_length=5)
+
+    @model_validator(mode="after")
+    def validate_resource_bounds(self) -> "SystemHealthRendererProjection":
+        validate_pdf_json_tree(self.model_dump(mode="python"), "report")
+        return self
+
+
 class SystemHealthPdfRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    report: dict[str, Any]
+    report: SystemHealthRendererProjection
     style: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("report")
-    @classmethod
-    def validate_report(cls, value: dict[str, Any]) -> dict[str, Any]:
-        unknown = set(value) - PDF_REPORT_FIELDS
-        if unknown:
-            raise ValueError(f"unsupported report fields: {', '.join(sorted(unknown))}")
-        if not isinstance(value.get("appliances"), list):
-            raise ValueError("report.appliances must be an array")
-        if len(value["appliances"]) > MAX_PDF_APPLIANCES:
-            raise ValueError(f"report.appliances exceeds the {MAX_PDF_APPLIANCES} item limit")
-        if not isinstance(value.get("metrics"), dict):
-            raise ValueError("report.metrics must be an object")
-        if len(value["metrics"]) > MAX_PDF_METRICS:
-            raise ValueError(f"report.metrics exceeds the {MAX_PDF_METRICS} item limit")
-        validate_pdf_json_tree(value, "report")
-        return value
 
     @field_validator("style")
     @classmethod
@@ -366,8 +497,9 @@ def render_system_health_pdf_html(report: dict[str, Any], style: dict[str, Any])
             )
         )
 
-    generated = html.escape(str(report.get("generated_at") or ""))
-    lookback = html.escape(str(((report.get("window") or {}).get("lookback_days")) or ""))
+    metadata = report.get("metadata") or {}
+    generated = html.escape(str(metadata.get("generated_at") or ""))
+    lookback = html.escape(str(((metadata.get("window") or {}).get("lookback_days")) or ""))
     cycle = html.escape(cycle_label)
     summary = system_health_pdf_summary(rows, report, packetstore_rows)
     body_pages = "\n".join(pages)
@@ -452,82 +584,59 @@ def system_health_pdf_hex(value: Any, fallback: str) -> str:
 
 
 def system_health_pdf_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = []
-    for sensor in report.get("appliances") or []:
-        if sensor.get("appliance_role") == "packetstore":
-            continue
-        capacity = sensor.get("capacity") or {}
-        sid = str(sensor.get("id"))
-        trigger = ((report.get("trigger_utilization") or {}).get("peak_by_sensor") or {}).get(sid) or {}
-        metric_status = {
-            metric: (((details.get("sensor_status") or {}).get(sid) or {}).get("status") or "unknown")
-            for metric, details in (report.get("metrics") or {}).items()
-        }
+    rows: list[dict[str, Any]] = []
+    for sensor in report.get("sensor_summaries") or []:
+        statuses = sensor.get("collectionStatus") or {}
         rows.append(
             {
-                "id": sid,
-                "name": sensor.get("name") or sensor.get("hostname") or f"Appliance {sid}",
-                "model": sensor.get("license_platform") or capacity.get("model") or "Unknown",
-                "online": bool(sensor.get("online", True)),
-                "packet_peak": metric_peak_rate(report, "pkts", sid),
-                "packet_capacity": float(capacity.get("base_packetrate") or 0),
-                "throughput_gbps": metric_peak_rate(report, "bytes", sid) * 8 / 1_000_000_000,
-                "throughput_capacity": float(capacity.get("base_gbps") or 0),
-                "trigger_cycles_peak": float(trigger.get("used_cycles") or 0),
-                "trigger_cycles_avail": float(trigger.get("available_cycles") or 0),
-                "trigger_utilization": float(trigger.get("utilization") or 0),
-                "trigger_drops": metric_total(report, "trigger_drops", sid),
-                "analysis": (report.get("device_analysis") or {}).get(sid) or {},
-                "advanced_capacity": float(capacity.get("advanced_analysis") or 0),
-                "standard_capacity": float(capacity.get("standard_analysis") or 0),
-                "metric_status": metric_status,
-                "health_conditions": sensor.get("health_conditions") or [],
+                "id": str(sensor.get("id") or ""),
+                "name": sensor.get("name") or f"Appliance {sensor.get('id') or ''}",
+                "model": sensor.get("model") or "Unknown",
+                "online": bool(sensor.get("online")),
+                "packet_peak": sensor.get("packetPeak"),
+                "packet_capacity": sensor.get("packetCapacity"),
+                "throughput_gbps": sensor.get("throughputGbps"),
+                "throughput_capacity": sensor.get("throughputCapacity"),
+                "trigger_cycles_peak": sensor.get("triggerCyclesPeak"),
+                "trigger_cycles_avail": sensor.get("triggerCyclesAvail"),
+                "trigger_utilization": sensor.get("triggerUtilization"),
+                "trigger_drops": sensor.get("triggerDropsTotal"),
+                "analysis": sensor.get("analysis") or {},
+                "advanced_capacity": sensor.get("advancedCapacity"),
+                "standard_capacity": sensor.get("standardCapacity"),
+                "metric_status": {
+                    **statuses,
+                    "trigger_cycles": statuses.get("trigger_utilization", statuses.get("trigger_cycles", "unknown")),
+                },
+                "health_conditions": sensor.get("healthConditions") or [],
             }
         )
     return rows
 
 
 def system_health_pdf_packetstore_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
-    packetstore = report.get("packetstore") or {}
-    ids = {str(value) for value in packetstore.get("appliance_ids") or []}
-    metrics = packetstore.get("metrics") or {}
-
-    def value(metric: str, field: str, sid: str) -> float | None:
-        raw = (((metrics.get(metric) or {}).get("summary") or {}).get(field) or {}).get(sid)
-        try:
-            return float(raw) if raw is not None else None
-        except (TypeError, ValueError):
-            return None
-
-    rows = []
-    for appliance in report.get("appliances") or []:
-        sid = str(appliance.get("id"))
-        if sid not in ids:
-            continue
-        packets = value("pkts", "totals", sid)
-        packet_drops = value("pkts_dropped", "totals", sid)
-        secrets = value("secrets", "totals", sid)
-        secret_drops = value("secrets_dropped", "totals", sid)
+    rows: list[dict[str, Any]] = []
+    for appliance in report.get("packetstore_summaries") or []:
         rows.append(
             {
-                "id": sid,
-                "name": appliance.get("name") or appliance.get("hostname") or f"Appliance {sid}",
-                "role": appliance.get("appliance_role") or "packetstore",
-                "online": bool(appliance.get("online", True)),
-                "lookback_latest": value("est_lookback_sec", "latest_values", sid),
-                "lookback_min": value("est_lookback_sec", "min_values", sid),
-                "packets": packets,
-                "packet_drops": packet_drops,
-                "packet_drop_ratio": packet_drops / packets if packets and packet_drops is not None else None,
-                "slow_write_drops": value("pkts_dropped_wrslow", "totals", sid),
-                "interface_drops": value("if_drops", "totals", sid),
-                "blocks_dropped": value("blocks_dropped", "totals", sid),
-                "secrets": secrets,
-                "secret_drops": secret_drops,
-                "secret_drop_ratio": secret_drops / secrets if secrets and secret_drops is not None else None,
-                "input_load": value("input_load", "peak_values", sid),
-                "compress_load": value("compress_load", "peak_values", sid),
-                "write_load": value("disk_write_load", "peak_values", sid),
+                "id": str(appliance.get("id") or ""),
+                "name": appliance.get("name") or f"Appliance {appliance.get('id') or ''}",
+                "role": appliance.get("applianceRole") or "packetstore",
+                "online": bool(appliance.get("online")),
+                "lookback_latest": appliance.get("lookbackLatestSec"),
+                "lookback_min": appliance.get("lookbackMinSec"),
+                "packets": appliance.get("packetsTotal"),
+                "packet_drops": appliance.get("packetDropsTotal"),
+                "packet_drop_ratio": appliance.get("packetDropRatio"),
+                "slow_write_drops": appliance.get("slowWriteDropsTotal"),
+                "interface_drops": appliance.get("interfaceDropsTotal"),
+                "blocks_dropped": appliance.get("blocksDroppedTotal"),
+                "secrets": appliance.get("secretsTotal"),
+                "secret_drops": appliance.get("secretDropsTotal"),
+                "secret_drop_ratio": appliance.get("secretDropRatio"),
+                "input_load": appliance.get("inputLoadPeak"),
+                "compress_load": appliance.get("compressionLoadPeak"),
+                "write_load": appliance.get("diskWriteLoadPeak"),
             }
         )
     return rows
@@ -614,18 +723,8 @@ def system_health_pdf_packetstore_page(
 
 
 def system_health_pdf_packetstore_cycle_label(report: dict[str, Any]) -> str:
-    packetstore_metrics = ((report.get("packetstore") or {}).get("metrics") or {}).values()
-    cycles = {
-        str(cycle)
-        for details in packetstore_metrics
-        for cycle in (((details.get("summary") or {}).get("actual_cycles") or {}).values())
-        if cycle
-    }
-    return (
-        "/".join(sorted(cycles))
-        if cycles
-        else str(report.get("cycle") or report.get("requested_cycle") or "unknown-cycle")
-    )
+    metadata = report.get("metadata") or {}
+    return str(metadata.get("packetstore_cycle_label") or metadata.get("cycle_label") or "unknown-cycle")
 
 
 def system_health_pdf_model_groups(
@@ -809,47 +908,8 @@ def system_health_pdf_summary(
 
 
 def system_health_pdf_cycle_label(report: dict[str, Any]) -> str:
-    cycles = {
-        str(cycle)
-        for details in (report.get("metrics") or {}).values()
-        for cycle in (((details.get("summary") or {}).get("actual_cycles") or {}).values())
-        if cycle
-    }
-    cycles.update(
-        str(metadata.get("cycle"))
-        for details in (report.get("metrics") or {}).values()
-        for metadata in (details.get("collection_metadata") or [])
-        if isinstance(metadata, dict) and metadata.get("cycle")
-    )
-    return (
-        "/".join(sorted(cycles))
-        if cycles
-        else str(report.get("cycle") or report.get("requested_cycle") or "unknown-cycle")
-    )
-
-
-def metric_peak(report: dict[str, Any], metric: str, sid: str) -> float:
-    return float(
-        (((report.get("metrics") or {}).get(metric) or {}).get("summary") or {}).get("peak_values", {}).get(sid) or 0
-    )
-
-
-def metric_total(report: dict[str, Any], metric: str, sid: str) -> float | None:
-    value = (((report.get("metrics") or {}).get(metric) or {}).get("summary") or {}).get("totals", {}).get(sid)
-    try:
-        return float(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
-def metric_peak_rate(report: dict[str, Any], metric: str, sid: str) -> float:
-    summary = ((report.get("metrics") or {}).get(metric) or {}).get("summary") or {}
-    duration_ms = float((summary.get("peak_duration_ms") or {}).get(sid) or cycle_to_ms(report.get("cycle")))
-    return metric_peak(report, metric, sid) / (duration_ms / 1000) if duration_ms else 0
-
-
-def cycle_to_ms(cycle: Any) -> int:
-    return {"1sec": 1000, "30sec": 30000, "5min": 300000, "1hr": 3600000, "24hr": 86400000}.get(str(cycle), 3600000)
+    metadata = report.get("metadata") or {}
+    return str(metadata.get("cycle_label") or metadata.get("cycle") or "unknown-cycle")
 
 
 def ratio(value: Any, capacity: Any) -> float:
@@ -875,6 +935,6 @@ def format_pdf_value(value: float, unit: str) -> str:
 
 
 def system_health_pdf_filename(report: dict[str, Any]) -> str:
-    generated = str(report.get("generated_at") or "")
-    report_day = generated[:10] if re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", generated[:10]) else "export"
+    generated = str(((report.get("metadata") or {}).get("generated_at")) or "")
+    report_day = generated[:10] if re.fullmatch(r"\d{4}-\d{2}-\d{2}", generated[:10]) else "export"
     return f"system-health-report-{report_day}.pdf"

@@ -528,7 +528,8 @@ async def system_health_pdf(
 ) -> StreamingResponse:
     get_session_client(eh_admin_session)
     payload = await system_health_pdf_backend.parse_system_health_pdf_request(request)
-    html_text = system_health_pdf_backend.render_system_health_pdf_html(payload.report, payload.style)
+    report = payload.report.model_dump(mode="python")
+    html_text = system_health_pdf_backend.render_system_health_pdf_html(report, payload.style)
     try:
         pdf_bytes = await system_health_pdf_backend.render_system_health_pdf_bounded(html_text)
     except system_health_pdf_backend.PdfRendererUnavailable as error:
@@ -550,7 +551,7 @@ async def system_health_pdf(
             detail={"message": f"Could not render system health PDF: {error}"},
         ) from error
 
-    filename = system_health_pdf_backend.system_health_pdf_filename(payload.report)
+    filename = system_health_pdf_backend.system_health_pdf_filename(report)
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",

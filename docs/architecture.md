@@ -42,21 +42,23 @@ Aggregation modes remain distinct:
 
 Every expected object carries a collection status. Measured zero is valid data and remains distinct from empty, offline, inaccessible, unauthorized, invalid, timed out, rate-limit exhausted, failed, or partial. UI, CSV, PDF, and PowerPoint consumers should project one canonical domain result rather than re-derive incompatible rules.
 
-## Feature lifecycle direction
+`js/modules/system-health-view-model.js` is that projection boundary for System Health. It converts the canonical report into sensor and Packetstore summaries, applies shared missing-data-aware findings, coverage, thresholds, overview, verdict, and recommendation rules, and can emit a compact renderer projection with no raw metric series. Browser and PowerPoint code delegate to it; renderer modules retain only DOM, canvas, presentation options, palette, filenames, and slide construction. Missing aggregate coverage remains unavailable rather than becoming zero, and Packetstore capture is described as lossless only when every relevant loss counter is conclusively reported.
 
-The current UI loads classic scripts dynamically and still exposes feature functions through global naming conventions. Concurrent script loading is deduplicated, but lifecycle behavior remains transitional. New lifecycle work should converge on one awaited interface per feature:
+## Feature lifecycle registry
+
+The UI still loads classic feature scripts dynamically, but lifecycle ownership is explicit. Every feature script registers its actual module name with `featureRegistry` and supplies `initialize`, `activate`, and optional `cancel` or `deactivate` hooks. The loader rejects a script that finishes without registering its mapped feature; it does not derive global function names from file names.
 
 ```text
-load dependencies → initialize once → activate → cancel/deactivate
+load dependencies and require registration → initialize once → switch visible DOM → activate
 ```
 
-Initialization installs listeners and creates durable feature state once. Activation refreshes visible state without duplicating requests. Long-running feature work must be cancellable when a new run starts or the feature is left. The intended destination is explicit ES-module imports and a feature registry; avoid adding new inferred global function names in the meantime.
+Initialization is awaited, installs listeners, and creates durable feature state exactly once after success. Concurrent initialization and same-feature switches share their in-flight work; a failed initialization may be retried. Feature switches are serialized so activation order cannot race. Activation is awaited, and the registry marks a feature active only after its hook succeeds. Before a different feature activates, the prior feature's optional cancellation and deactivation hooks run and active state is cleared even if cleanup fails. Long-running work should expose cancellation, and initial activation must share in-flight requests rather than launching work from both initialization and activation. Classic scripts remain a packaging choice, not a lifecycle interface.
 
 ## Resource bounds: logging and PDF
 
 API response logging is diagnostic and best-effort. It uses bounded request/response previews, a maximum serialized entry size, a bounded background queue, byte-based rotation with a fixed backup count, and owner-only file permissions. Oversized response bodies are not parsed solely for logging. Shutdown must flush and close the writer without making API success depend on logging I/O.
 
-PDF generation is an authenticated local service, but input and browser work are still untrusted resource consumers. The PDF contract is a compact validated report projection with bounded collection sizes and text lengths, a total request-size limit, bounded render concurrency, and guaranteed browser closure in `finally`. Raw time-series rows are not PDF input. Limit violations return explicit client errors; render failures do not leak a Chromium process or semaphore permit.
+PDF generation is an authenticated local service, but input and browser work are still untrusted resource consumers. `SystemHealthViewModel.buildRendererProjection()` owns the versioned System Health renderer contract: v1 contains only allowlisted metadata, camelCase sensor and Packetstore summaries, and canonical overview/findings/absent/verdict/recommendations. The Python renderer strictly validates that compact projection and never reconstructs report semantics from appliances or raw metrics; `tests/fixtures/system-health-renderer-v1.json` detects drift across both runtimes. The contract has bounded collection sizes and text lengths, a total request-size limit, bounded render concurrency, and guaranteed browser closure in `finally`. Legacy reports and raw time-series rows are not PDF input. Limit violations return explicit client errors; render failures do not leak a Chromium process or semaphore permit.
 
 ## Tests and CI
 

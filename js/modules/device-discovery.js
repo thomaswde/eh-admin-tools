@@ -19,23 +19,25 @@ const DEVICE_ANALYSIS = {
 };
 
 const DEVICE_LIMIT = 5000;
+const DEVICE_MAX_PAGES = 100;
+const DEVICE_MAX_ROWS = 250000;
 
 function formatDateShort(date) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function getPeriodRange(period) {
-    const now = new Date();
+function getPeriodRange(period, nowMs = Date.now()) {
+    const now = new Date(nowMs);
+    if (!Number.isFinite(now.getTime())) throw new Error('Unable to determine the device activity window');
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const yesterdayStart = new Date(todayStart);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-    const yesterdayEnd = new Date(todayStart.getTime() - 1);
 
     if (period === 'yesterday') {
         return {
             label: 'Yesterday',
             activeFrom: yesterdayStart.getTime(),
-            activeUntil: yesterdayEnd.getTime(),
+            activeUntil: todayStart.getTime(),
             displayRange: formatDateShort(yesterdayStart)
         };
     }
@@ -46,7 +48,7 @@ function getPeriodRange(period) {
     return {
         label: period === 'week' ? 'Last 7 Days' : 'Last 30 Days',
         activeFrom: start.getTime(),
-        activeUntil: 0,
+        activeUntil: now.getTime(),
         displayRange: `${formatDateShort(start)} – ${formatDateShort(now)}`
     };
 }
@@ -93,15 +95,41 @@ async function loadAppliancesForDeviceModule(signal) {
     return appliances;
 }
 
-async function fetchDevicesBatch(range, signal) {
+async function fetchDevicesBatch(range, signal, options = {}) {
+    const maxPages = options.maxPages ?? DEVICE_MAX_PAGES;
+    const maxRows = options.maxRows ?? DEVICE_MAX_ROWS;
+    if (!Number.isInteger(maxPages) || maxPages < 1) throw new Error('Device page budget must be a positive integer');
+    if (!Number.isInteger(maxRows) || maxRows < 1) throw new Error('Device row budget must be a positive integer');
     const aggregate = {};
     const perLevelTotals = { advanced: 0, standard: 0, discovery: 0, flow_log: 0 };
     const seenDeviceIds = new Set();
     let offset = 0;
     let totalDevices = 0;
+    let pagesFetched = 0;
+    let rowsFetched = 0;
     const loadingText = document.getElementById('deviceLoadingText');
 
+    const partial = (reason, detail) => ({
+        aggregate,
+        perLevelTotals,
+        totalDevices,
+        pagesFetched,
+        rowsFetched,
+        incomplete: true,
+        reason,
+        detail
+    });
+
     while (!deviceDiscoveryState.shouldStop) {
+        if (signal?.aborted) {
+            return partial('cancelled', 'collection was stopped before every page was retrieved');
+        }
+        if (pagesFetched >= maxPages) {
+            return partial('page_budget', `the ${maxPages.toLocaleString()}-page safety limit was reached`);
+        }
+        if (rowsFetched >= maxRows) {
+            return partial('row_budget', `the ${maxRows.toLocaleString()}-row safety limit was reached`);
+        }
         const payload = {
             active_from: range.activeFrom,
             active_until: range.activeUntil,
@@ -140,16 +168,23 @@ async function fetchDevicesBatch(range, signal) {
             });
         } catch (error) {
             if (deviceDiscoveryState.shouldStop || signal?.aborted) {
-                return { aggregate, perLevelTotals, totalDevices, incomplete: true };
+                return partial('cancelled', 'collection was stopped before every page was retrieved');
+            }
+            if (rowsFetched > 0) {
+                return partial('failed', `a later page failed after ${rowsFetched.toLocaleString()} rows: ${error.message}`);
             }
             throw error;
         }
 
         const devices = Array.isArray(response) ? response : (response?.devices || []);
+        pagesFetched += 1;
 
         if (!devices.length) break;
 
-        devices.forEach(device => {
+        const remaining = maxRows - rowsFetched;
+        const acceptedDevices = devices.slice(0, remaining);
+        rowsFetched += acceptedDevices.length;
+        acceptedDevices.forEach(device => {
             const deviceId = device?.id;
             if (deviceId !== null && typeof deviceId !== 'undefined') {
                 const stableId = String(deviceId);
@@ -174,6 +209,10 @@ async function fetchDevicesBatch(range, signal) {
             totalDevices += 1;
         });
 
+        if (devices.length > remaining) {
+            return partial('row_budget', `the ${maxRows.toLocaleString()}-row safety limit was reached`);
+        }
+
         if (loadingText) {
             loadingText.textContent = `Loading devices... (${totalDevices.toLocaleString()} fetched so far)`;
         }
@@ -184,9 +223,20 @@ async function fetchDevicesBatch(range, signal) {
         offset += DEVICE_LIMIT;
     }
 
-    const incomplete = deviceDiscoveryState.shouldStop;
+    if (deviceDiscoveryState.shouldStop) {
+        return partial('cancelled', 'collection was stopped before every page was retrieved');
+    }
 
-    return { aggregate, perLevelTotals, totalDevices, incomplete };
+    return {
+        aggregate,
+        perLevelTotals,
+        totalDevices,
+        pagesFetched,
+        rowsFetched,
+        incomplete: false,
+        reason: null,
+        detail: 'complete'
+    };
 }
 
 function updateDeviceDiscoveryKpis(totals, options = {}) {
@@ -336,7 +386,7 @@ async function generateDeviceDiscoveryReport() {
 
     try {
         await loadAppliancesForDeviceModule(abortController.signal);
-        const range = getPeriodRange(deviceDiscoveryState.selectedPeriod);
+        const range = getPeriodRange(deviceDiscoveryState.selectedPeriod, Date.now());
         rangeInfo.textContent = `${range.label} · ${range.displayRange}`;
 
         const data = await fetchDevicesBatch(range, abortController.signal);
@@ -385,12 +435,13 @@ async function generateDeviceDiscoveryReport() {
             }
 
             nodeCount.textContent = `Nodes represented: ${sortedNodes.length}`;
-            if (stoppedEarly) {
-                nodeCount.textContent = `${nodeCount.textContent} (partial results - stopped early)`;
-            }
             updateDeviceDiscoveryKpis(finalData, { discoveryIncluded: deviceDiscoveryState.includeDiscovery });
             renderDeviceDiscoveryChart(sortedNodes);
             renderDeviceDiscoveryTable(sortedNodes, deviceDiscoveryState.applianceMap);
+        }
+
+        if (stoppedEarly) {
+            nodeCount.textContent = `${nodeCount.textContent} (partial results - ${data.detail})`;
         }
 
         loading.style.display = 'none';
@@ -473,5 +524,14 @@ function activateDeviceDiscoveryModule() {
     // Placeholder for future activation logic
 }
 
-window.initDeviceDiscoveryModule = initDeviceDiscoveryModule;
-window.activateDeviceDiscoveryModule = activateDeviceDiscoveryModule;
+function cancelDeviceDiscoveryModule() {
+    if (deviceDiscoveryState.abortController) stopDeviceDiscoveryLoad();
+}
+
+if (typeof featureRegistry !== 'undefined') {
+    featureRegistry.register('device-discovery', {
+        initialize: initDeviceDiscoveryModule,
+        activate: activateDeviceDiscoveryModule,
+        cancel: cancelDeviceDiscoveryModule
+    });
+}

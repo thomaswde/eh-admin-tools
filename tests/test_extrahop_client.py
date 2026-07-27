@@ -1,4 +1,6 @@
 import asyncio
+import json
+from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -291,58 +293,18 @@ class SessionLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 class SystemHealthPdfProjectionTests(unittest.TestCase):
     def test_pdf_uses_aligned_trigger_bucket_and_license_capacity_projection(self):
-        report = {
-            "cycle": "auto",
-            "appliances": [
-                {
-                    "id": "7",
-                    "name": "sensor-7",
-                    "online": True,
-                    "license_platform": "EDA 9300",
-                    "capacity": {
-                        "base_packetrate": 100,
-                        "base_gbps": 10,
-                        "advanced_analysis": 1200,
-                        "standard_analysis": 3800,
-                    },
-                }
-            ],
-            "device_analysis": {
-                "7": {"advanced": 100, "standard": 200, "discovery": 0, "status": "complete"},
-            },
-            "metrics": {
-                "pkts": {
-                    "sensor_status": {"7": {"status": "complete"}},
-                    "summary": {
-                        "peak_values": {"7": 1000},
-                        "peak_duration_ms": {"7": 1000},
-                        "actual_cycles": {"7": "1sec"},
-                    },
-                },
-                "bytes": {
-                    "sensor_status": {"7": {"status": "complete"}},
-                    "summary": {
-                        "peak_values": {"7": 125000000},
-                        "peak_duration_ms": {"7": 1000},
-                        "actual_cycles": {"7": "1sec"},
-                    },
-                },
-                "trigger_cycles": {"sensor_status": {"7": {"status": "complete"}}, "summary": {}},
-                "trigger_drops": {
-                    "sensor_status": {"7": {"status": "zero_valued"}},
-                    "summary": {"aggregation_mode": "total_by_object", "totals": {"7": 0}, "peak_values": {}},
-                },
-            },
-            "trigger_utilization": {
-                "peak_by_sensor": {
-                    "7": {
-                        "used_cycles": 90,
-                        "available_cycles": 100,
-                        "utilization": 0.9,
-                    },
-                },
-            },
-        }
+        fixture_path = Path(__file__).parent / "fixtures" / "system-health-renderer-v1.json"
+        report = json.loads(fixture_path.read_text(encoding="utf-8"))
+        report["metadata"]["cycle_label"] = "1sec"
+        report["sensor_summaries"][0].update(
+            {
+                "triggerCyclesPeak": 90,
+                "triggerCyclesAvail": 100,
+                "triggerUtilization": 0.9,
+                "advancedCapacity": 1200,
+                "standardCapacity": 3800,
+            }
+        )
 
         row = pdf.system_health_pdf_rows(report)[0]
 

@@ -1,9 +1,12 @@
+/* exported moduleLoader */
 // Dynamic Module Loader
 
 class ModuleLoader {
     constructor() {
         this.loadedModules = new Set();
         this.loadingModules = new Map();
+        this.switchingModules = new Map();
+        this.switchQueue = Promise.resolve();
         this.moduleMap = {
             'dashboards': 'dashboard-manager.js',
             'users': 'user-manager.js',
@@ -16,13 +19,18 @@ class ModuleLoader {
         };
         this.moduleDependencies = {
             'crs-usage': ['system-health-collection.js'],
-            'system-health': ['chart-theme.js', 'system-health-collection.js', 'system-health-pptx.js']
+            'system-health': [
+                'chart-theme.js',
+                'system-health-collection.js',
+                'system-health-view-model.js',
+                'system-health-pptx.js'
+            ]
         };
     }
 
     loadModule(moduleName) {
         if (this.loadedModules.has(moduleName)) {
-            return Promise.resolve(true); // Already loaded
+            return Promise.resolve(featureRegistry.has(moduleName));
         }
         if (this.loadingModules.has(moduleName)) {
             return this.loadingModules.get(moduleName);
@@ -53,6 +61,11 @@ class ModuleLoader {
 
             const existingScript = document.querySelector(`script[data-module-name="${moduleName}"]`);
             if (existingScript && existingScript.dataset.moduleLoaded === 'true') {
+                if (!featureRegistry.has(moduleName)) {
+                    console.error(`Module '${moduleName}' script exists without a registered feature.`);
+                    existingScript.remove();
+                    return false;
+                }
                 this.loadedModules.add(moduleName);
                 return true;
             }
@@ -67,6 +80,12 @@ class ModuleLoader {
             // Return a promise that resolves when the script loads
             return new Promise((resolve) => {
                 script.onload = () => {
+                    if (!featureRegistry.has(moduleName)) {
+                        console.error(`Module '${moduleName}' loaded without registering its feature.`);
+                        script.remove();
+                        resolve(false);
+                        return;
+                    }
                     script.dataset.moduleLoaded = 'true';
                     this.loadedModules.add(moduleName);
                     console.log(`Module '${moduleName}' loaded successfully from ${script.src}`);
@@ -116,6 +135,22 @@ class ModuleLoader {
             return false;
         }
 
+        if (this.switchingModules.has(moduleName)) return this.switchingModules.get(moduleName);
+        const pending = this.switchQueue
+            .catch(() => {})
+            .then(() => this.switchToModuleOnce(moduleName))
+            .finally(() => {
+                if (this.switchingModules.get(moduleName) === pending) {
+                    this.switchingModules.delete(moduleName);
+                }
+            });
+        this.switchingModules.set(moduleName, pending);
+        this.switchQueue = pending;
+        return pending;
+    }
+
+    async switchToModuleOnce(moduleName) {
+
         // First, ensure the module is loaded
         let loaded = false;
         try {
@@ -130,27 +165,13 @@ class ModuleLoader {
             return false;
         }
 
-        // Switch to the module using the common utility
-        switchModule(moduleName);
-
-        // Call module-specific initialization if available
-        const camelCaseName = moduleName.split('-').map((part, index) => 
-            index === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : 
-                         part.charAt(0).toUpperCase() + part.slice(1)
-        ).join('');
-        const initFunctionName = `init${camelCaseName}Module`;
-        console.log(`Looking for init function: ${initFunctionName}`);
-        if (typeof window[initFunctionName] === 'function') {
-            try {
-                console.log(`Calling ${initFunctionName}()`);
-                await window[initFunctionName]();
-            } catch (error) {
-                console.error(`Error initializing module '${moduleName}':`, error);
-                this.loadedModules.delete(moduleName);
-                return false;
-            }
-        } else {
-            console.warn(`Init function ${initFunctionName} not found for module '${moduleName}'`);
+        try {
+            await featureRegistry.initialize(moduleName);
+            switchModule(moduleName);
+            await featureRegistry.activate(moduleName, { moduleName });
+        } catch (error) {
+            console.error(`Error opening module '${moduleName}':`, error);
+            return false;
         }
 
         return true;

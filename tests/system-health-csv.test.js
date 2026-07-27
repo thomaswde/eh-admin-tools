@@ -14,7 +14,8 @@ const context = vm.createContext({
     document: { getElementById: () => null },
     state: { apiConfig: {} },
     CsvUtils: require('../js/utils/csv.js'),
-    SystemHealthCollection: require('../js/modules/system-health-collection.js')
+    SystemHealthCollection: require('../js/modules/system-health-collection.js'),
+    SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
 });
 vm.runInContext(source, context);
 
@@ -35,6 +36,7 @@ const csvApi = vm.runInContext(`({
     systemHealthMetricModelPages,
     systemHealthAnalysisModelPages,
     systemHealthCollectorNotes,
+    systemHealthSortIds,
     SYSTEM_HEALTH_DETAIL_CSV_COLUMNS
 })`, context);
 
@@ -255,6 +257,12 @@ test('unified CSV preserves opaque IDs and legitimate zero values', () => {
     assert.equal(zero.triggerDropsTotal, 0);
     assert.equal(zero.collectionStatus.pkts, 'zero_valued');
     assert.equal(zero.collectionStatus.device_analysis, 'zero_valued');
+});
+
+test('opaque IDs use lexical ordering without numeric precision collapse', () => {
+    const ids = ['90071992547409931235', '2', '90071992547409931234'];
+    ids.sort(csvApi.systemHealthSortIds);
+    assert.deepEqual(ids, ['2', '90071992547409931234', '90071992547409931235']);
 });
 
 test('System Health CSV neutralizes formula-like text without changing numeric fields', () => {

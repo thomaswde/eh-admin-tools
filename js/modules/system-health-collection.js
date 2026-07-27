@@ -314,11 +314,11 @@
             });
         });
         rows.sort((a, b) => {
-            const sensorOrder = idKey(a.appliance_id).localeCompare(idKey(b.appliance_id), undefined, { numeric: true });
+            const sensorOrder = idKey(a.appliance_id).localeCompare(idKey(b.appliance_id));
             if (sensorOrder) return sensorOrder;
             const timeOrder = (Number(a.timestamp_ms) || 0) - (Number(b.timestamp_ms) || 0);
             if (timeOrder) return timeOrder;
-            return idKey(a.metric_object_id).localeCompare(idKey(b.metric_object_id), undefined, { numeric: true });
+            return idKey(a.metric_object_id).localeCompare(idKey(b.metric_object_id));
         });
         return { rows, metadata };
     }
@@ -346,7 +346,7 @@
             });
         });
         rows.sort((a, b) => {
-            const sensorOrder = idKey(a.appliance_id).localeCompare(idKey(b.appliance_id), undefined, { numeric: true });
+            const sensorOrder = idKey(a.appliance_id).localeCompare(idKey(b.appliance_id));
             if (sensorOrder) return sensorOrder;
             return (Number(a.timestamp_ms) || 0) - (Number(b.timestamp_ms) || 0);
         });

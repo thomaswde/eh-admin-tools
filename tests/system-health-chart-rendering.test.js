@@ -82,6 +82,7 @@ function loadSystemHealthRenderer() {
         Blob,
         URL,
         URLSearchParams,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js'),
         console
     });
     vm.runInContext(source, context);

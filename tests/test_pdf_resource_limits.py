@@ -1,4 +1,7 @@
 import asyncio
+from copy import deepcopy
+import json
+from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -10,14 +13,12 @@ from starlette.requests import Request
 import main
 from backend import system_health_pdf as pdf
 
+FIXTURE_PATH = Path(__file__).parent / "fixtures" / "system-health-renderer-v1.json"
+
 
 def minimal_pdf_payload() -> dict:
     return {
-        "report": {
-            "generated_at": "2026-07-26T12:00:00Z",
-            "appliances": [],
-            "metrics": {},
-        },
+        "report": deepcopy(json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))),
         "style": {
             "transparent": False,
             "colors": {"bg": "#ffffff", "text": "#16151f"},
@@ -112,30 +113,39 @@ class PdfRequestValidationTests(unittest.IsolatedAsyncioTestCase):
     def test_accepts_compact_summary_projection(self):
         payload = pdf.SystemHealthPdfRequest.model_validate(minimal_pdf_payload())
 
-        self.assertEqual(payload.report["appliances"], [])
+        self.assertEqual(payload.report.schema_version, "1")
+        self.assertEqual(payload.report.sensor_summaries[0].id, "7")
         self.assertEqual(payload.style["colors"]["bg"], "#ffffff")
 
-    def test_rejects_raw_time_series_rows_and_unknown_top_level_fields(self):
+    def test_rejects_legacy_raw_reports_and_unknown_compact_fields(self):
+        legacy = {
+            "report": {"generated_at": "2026-07-26T12:00:00Z", "appliances": [], "metrics": {}},
+            "style": {},
+        }
+        with self.assertRaises(ValidationError):
+            pdf.SystemHealthPdfRequest.model_validate(legacy)
+
         raw_rows = minimal_pdf_payload()
-        raw_rows["report"]["metrics"] = {"pkts": {"rows": [{"timestamp_ms": 1, "value": 2}], "summary": {}}}
-        with self.assertRaisesRegex(ValidationError, "send summaries only"):
+        raw_rows["report"]["metrics"] = {"pkts": {"rows": [{"value": 1}]}}
+        with self.assertRaisesRegex(ValidationError, "Extra inputs are not permitted"):
             pdf.SystemHealthPdfRequest.model_validate(raw_rows)
 
-        unknown = minimal_pdf_payload()
-        unknown["report"]["raw_response"] = {"large": "structure"}
-        with self.assertRaisesRegex(ValidationError, "unsupported report fields"):
-            pdf.SystemHealthPdfRequest.model_validate(unknown)
+        unknown_row = minimal_pdf_payload()
+        unknown_row["report"]["sensor_summaries"][0]["rawMetricRows"] = [{"value": 1}]
+        with self.assertRaisesRegex(ValidationError, "Extra inputs are not permitted"):
+            pdf.SystemHealthPdfRequest.model_validate(unknown_row)
 
     def test_rejects_oversized_collections_and_strings(self):
-        too_many_appliances = minimal_pdf_payload()
-        too_many_appliances["report"]["appliances"] = [
-            {"id": str(index)} for index in range(pdf.MAX_PDF_APPLIANCES + 1)
+        too_many_sensors = minimal_pdf_payload()
+        row = too_many_sensors["report"]["sensor_summaries"][0]
+        too_many_sensors["report"]["sensor_summaries"] = [
+            {**row, "id": str(index)} for index in range(pdf.MAX_PDF_SENSOR_SUMMARIES + 1)
         ]
-        with self.assertRaisesRegex(ValidationError, "appliances exceeds"):
-            pdf.SystemHealthPdfRequest.model_validate(too_many_appliances)
+        with self.assertRaisesRegex(ValidationError, "at most 1000 items"):
+            pdf.SystemHealthPdfRequest.model_validate(too_many_sensors)
 
         oversized_string = minimal_pdf_payload()
-        oversized_string["report"]["errors"] = ["x" * (pdf.MAX_PDF_STRING_LENGTH + 1)]
+        oversized_string["report"]["metadata"]["errors"] = ["x" * (pdf.MAX_PDF_STRING_LENGTH + 1)]
         with self.assertRaisesRegex(ValidationError, "character limit"):
             pdf.SystemHealthPdfRequest.model_validate(oversized_string)
 
@@ -273,6 +283,20 @@ class PdfRouteResponseTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         renderer.assert_not_awaited()
+
+    def test_valid_compact_projection_reaches_renderer_and_returns_pdf(self):
+        renderer = AsyncMock(return_value=b"%PDF-canonical")
+        with (
+            patch("main.get_session_client", return_value=object()),
+            patch("backend.system_health_pdf.render_system_health_pdf_bounded", new=renderer),
+        ):
+            response = self.client.post("/backend/system-health/pdf", json=minimal_pdf_payload())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"%PDF-canonical")
+        self.assertEqual(response.headers["content-type"], "application/pdf")
+        self.assertIn("system-health-report-2026-07-26.pdf", response.headers["content-disposition"])
+        renderer.assert_awaited_once()
 
 
 if __name__ == "__main__":

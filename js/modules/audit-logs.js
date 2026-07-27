@@ -1,5 +1,8 @@
 // Audit Log Analysis Module
 
+const AUDIT_LOG_MAX_PAGES = 200;
+const AUDIT_LOG_MAX_ROWS = 100000;
+
 const auditLogState = {
     rawData: [],
     filteredEntries: [],
@@ -8,6 +11,9 @@ const auditLogState = {
     actualDateRange: [], // Actual dates that have data
     reportWindow: null,
     shouldStop: false,
+    abortController: null,
+    collectionStatus: 'idle',
+    collectionDetail: '',
     charts: {
         eventTypes: null,
         loginPerDay: null,
@@ -28,6 +34,9 @@ async function loadAuditLog() {
     const loadingText = document.getElementById('auditLogLoadingText');
     const batchSize = parseInt(document.getElementById('auditLogBatchSize').value);
     const lookbackDays = parseInt(document.getElementById('auditLogLookback').value);
+    auditLogState.abortController?.abort(new DOMException('Superseded by a new audit log load.', 'AbortError'));
+    const abortController = new AbortController();
+    auditLogState.abortController = abortController;
 
     try {
         loadBtn.disabled = true;
@@ -35,39 +44,27 @@ async function loadAuditLog() {
         stopBtn.style.display = 'block';
         loadingStatus.style.display = 'block';
         auditLogState.shouldStop = false;
+        auditLogState.collectionStatus = 'collecting';
+        auditLogState.collectionDetail = '';
+        auditLogState.rawData = [];
+        auditLogState.filteredEntries = [];
+        auditLogState.operations = {};
+        document.getElementById('auditLogChartsContainer').style.display = 'none';
+        document.getElementById('exportAuditLogSection').style.display = 'none';
         
         auditLogState.reportWindow = buildAuditLogWindow(lookbackDays);
         auditLogState.dateRange = auditLogState.reportWindow.dates;
 
-        // Fetch audit log in batches
-        auditLogState.rawData = [];
-        let offset = 0;
-        let hasMore = true;
-        let totalFetched = 0;
-
-        while (hasMore && !auditLogState.shouldStop) {
-            loadingText.textContent = `Loading audit log entries... (${totalFetched} fetched)`;
-            
-            const batch = await window.apiClient.getAuditLog(batchSize, offset);
-            
-            if (!batch || batch.length === 0) {
-                hasMore = false;
-                break;
+        const collection = await fetchAuditLogPages({
+            batchSize,
+            signal: abortController.signal,
+            onProgress: totalFetched => {
+                loadingText.textContent = `Loading audit log entries... (${totalFetched} fetched)`;
             }
-
-            auditLogState.rawData.push(...batch);
-            totalFetched += batch.length;
-            
-            if (batch.length < batchSize) {
-                hasMore = false;
-            }
-            
-            offset += batchSize;
-        }
-
-        if (auditLogState.shouldStop) {
-            showAuditLogStatus(`Loading stopped by user. Loaded ${auditLogState.rawData.length} entries.`, 'warning');
-        }
+        });
+        auditLogState.rawData = collection.entries;
+        auditLogState.collectionStatus = collection.incomplete ? 'partial' : 'complete';
+        auditLogState.collectionDetail = collection.detail;
 
         loadingText.textContent = 'Processing audit log data...';
 
@@ -82,7 +79,12 @@ async function loadAuditLog() {
         generateAuditLogCharts();
 
         // Show status
-        if (!auditLogState.shouldStop) {
+        if (collection.incomplete) {
+            showAuditLogStatus(
+                `Partial audit log: ${collection.detail}. Loaded ${auditLogState.filteredEntries.length} entries in the selected window (${auditLogState.rawData.length} fetched).`,
+                'warning'
+            );
+        } else {
             showAuditLogStatus(
                 `Loaded ${auditLogState.filteredEntries.length} entries in the selected window (${auditLogState.rawData.length} fetched)`,
                 'success'
@@ -94,18 +96,99 @@ async function loadAuditLog() {
         document.getElementById('exportAuditLogSection').style.display = 'block';
 
     } catch (error) {
+        auditLogState.collectionStatus = 'failed';
+        auditLogState.collectionDetail = error.message;
         showAuditLogStatus(`Error loading audit log: ${error.message}`, 'error');
     } finally {
         loadingStatus.style.display = 'none';
         loadBtn.disabled = false;
         loadBtn.style.display = 'block';
         stopBtn.style.display = 'none';
+        auditLogState.shouldStop = false;
+        if (auditLogState.abortController === abortController) {
+            auditLogState.abortController = null;
+        }
     }
 }
 
 function stopAuditLogLoad() {
     auditLogState.shouldStop = true;
+    auditLogState.abortController?.abort(new DOMException('Audit log collection stopped by user.', 'AbortError'));
     showAuditLogStatus('Stopping audit log load...', 'warning');
+}
+
+async function fetchAuditLogPages({
+    batchSize,
+    signal,
+    maxPages = AUDIT_LOG_MAX_PAGES,
+    maxRows = AUDIT_LOG_MAX_ROWS,
+    onProgress = () => {}
+}) {
+    const pageSize = Number(batchSize);
+    if (!Number.isInteger(pageSize) || pageSize < 1) throw new Error('Audit log batch size must be a positive integer');
+    if (!Number.isInteger(maxPages) || maxPages < 1) throw new Error('Audit log page budget must be a positive integer');
+    if (!Number.isInteger(maxRows) || maxRows < 1) throw new Error('Audit log row budget must be a positive integer');
+
+    const entries = [];
+    let offset = 0;
+    let pagesFetched = 0;
+
+    const partial = (reason, detail) => ({
+        entries,
+        pagesFetched,
+        rowsFetched: entries.length,
+        incomplete: true,
+        reason,
+        detail
+    });
+
+    while (true) {
+        if (signal?.aborted || auditLogState.shouldStop) {
+            return partial('cancelled', 'collection was stopped before every page was retrieved');
+        }
+        if (pagesFetched >= maxPages) {
+            return partial('page_budget', `the ${maxPages.toLocaleString()}-page safety limit was reached`);
+        }
+        if (entries.length >= maxRows) {
+            return partial('row_budget', `the ${maxRows.toLocaleString()}-row safety limit was reached`);
+        }
+
+        onProgress(entries.length);
+        let batch;
+        try {
+            batch = await window.apiClient.getAuditLog(pageSize, offset, { signal });
+        } catch (error) {
+            if (signal?.aborted || auditLogState.shouldStop) {
+                return partial('cancelled', 'collection was stopped before every page was retrieved');
+            }
+            if (entries.length > 0) {
+                return partial('failed', `a later page failed after ${entries.length.toLocaleString()} rows: ${error.message}`);
+            }
+            throw error;
+        }
+
+        if (!Array.isArray(batch)) throw new Error('Audit log API returned an invalid page');
+        const rows = batch;
+        pagesFetched += 1;
+        const remaining = maxRows - entries.length;
+        entries.push(...rows.slice(0, remaining));
+
+        if (rows.length > remaining) {
+            return partial('row_budget', `the ${maxRows.toLocaleString()}-row safety limit was reached`);
+        }
+        if (rows.length < pageSize) {
+            return {
+                entries,
+                pagesFetched,
+                rowsFetched: entries.length,
+                incomplete: false,
+                reason: null,
+                detail: 'complete'
+            };
+        }
+
+        offset += pageSize;
+    }
 }
 
 function buildAuditLogWindow(lookbackDays, nowMs = Date.now()) {
@@ -534,16 +617,22 @@ function exportAuditLogCsv() {
         return;
     }
 
-    const csvContent = buildAuditLogCsv(dataToExport);
+    const csvContent = buildAuditLogCsv(dataToExport, {
+        status: auditLogState.collectionStatus,
+        detail: auditLogState.collectionDetail,
+        fromMs: auditLogState.reportWindow?.fromMs,
+        untilMs: auditLogState.reportWindow?.untilMs
+    });
 
     // Download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     
+    const partialSuffix = auditLogState.collectionStatus === 'partial' ? '_partial' : '';
     const filename = operationType === 'all' 
-        ? `audit_log_all_${formatDate(new Date())}.csv`
-        : `audit_log_${operationType.replace(/\s+/g, '_')}_${formatDate(new Date())}.csv`;
+        ? `audit_log_all${partialSuffix}_${formatDate(new Date())}.csv`
+        : `audit_log_${operationType.replace(/\s+/g, '_')}${partialSuffix}_${formatDate(new Date())}.csv`;
     
     link.setAttribute('href', url);
     link.setAttribute('download', filename);
@@ -556,7 +645,10 @@ function exportAuditLogCsv() {
     const statusMsg = operationType === 'all' 
         ? `CSV export completed (${dataToExport.length} entries)`
         : `CSV export completed for ${operationType} (${dataToExport.length} entries)`;
-    showAuditLogStatus(statusMsg, 'success');
+    showAuditLogStatus(
+        auditLogState.collectionStatus === 'partial' ? `${statusMsg}; export contains partial collection results` : statusMsg,
+        auditLogState.collectionStatus === 'partial' ? 'warning' : 'success'
+    );
 }
 
 function selectAuditLogEntriesForExport(operationType) {
@@ -564,15 +656,26 @@ function selectAuditLogEntriesForExport(operationType) {
     return auditLogState.operations[operationType] || [];
 }
 
-function buildAuditLogCsv(entries) {
-    const rows = [['ID', 'Date/Time', 'Operation', 'User', 'Details']];
+function buildAuditLogCsv(entries, collection = {}) {
+    const status = collection.status || 'complete';
+    const detail = collection.detail || '';
+    const fromIso = Number.isFinite(Number(collection.fromMs)) ? new Date(Number(collection.fromMs)).toISOString() : '';
+    const untilIso = Number.isFinite(Number(collection.untilMs)) ? new Date(Number(collection.untilMs)).toISOString() : '';
+    const rows = [[
+        'ID', 'Date/Time', 'Operation', 'User', 'Details',
+        'Collection Status', 'Collection Detail', 'Report From UTC', 'Report Until UTC'
+    ]];
     (entries || []).forEach(entry => {
         rows.push([
             entry.id,
             entry.datetime || formatDateTime(new Date(entry.timeMs ?? entry.time)),
             entry.operation || '',
             entry.user || 'unknown',
-            JSON.stringify(entry)
+            JSON.stringify(entry),
+            status,
+            detail,
+            fromIso,
+            untilIso
         ]);
     });
     return CsvUtils.stringifyRows(rows, { numericColumns: [0], finalNewline: false });
@@ -590,4 +693,15 @@ function initAuditLogsModule() {
         
         document.getElementById('loadAuditLog').setAttribute('data-listener-added', 'true');
     }
+}
+
+function cancelAuditLogsModule() {
+    if (auditLogState.abortController) stopAuditLogLoad();
+}
+
+if (typeof featureRegistry !== 'undefined') {
+    featureRegistry.register('audit-logs', {
+        initialize: initAuditLogsModule,
+        cancel: cancelAuditLogsModule
+    });
 }

@@ -1,7 +1,6 @@
 // Network Localities Module
 
 const localitiesState = {
-    originalLocalities: [],  // Original data from GET
     currentLocalities: [],   // Working copy with edits
     deletedIds: new Set(),   // Track deleted entries
     isLoaded: false
@@ -21,7 +20,6 @@ function cloneLocality(locality) {
 }
 
 function replaceLocalityState(localities) {
-    localitiesState.originalLocalities = localities.map(cloneLocality);
     localitiesState.currentLocalities = localities.map(cloneLocality);
     localitiesState.deletedIds.clear();
     localitiesState.isLoaded = true;
@@ -68,9 +66,6 @@ function renderLocalitiesTable() {
         const row = document.createElement('tr');
         row.dataset.index = index;
         row.dataset.id = locality.id || '';
-        
-        // Determine if this is new (no ID) or existing
-        const isNew = !locality.id;
         
         row.innerHTML = `
             <td>
@@ -244,7 +239,6 @@ function reapplyUnresolvedLocalityDrafts(authoritative, unresolved) {
         });
     });
 
-    localitiesState.originalLocalities = authoritative.map(cloneLocality);
     localitiesState.currentLocalities = current;
     localitiesState.deletedIds = deletedIds;
     localitiesState.isLoaded = true;
@@ -490,12 +484,12 @@ function showLocalityStatus(message, type = 'success') {
 }
 
 // Network Localities module activation function (called when module is shown)
-function activateLocalitiesModule() {
+async function activateLocalitiesModule() {
     console.log('Activating Network Localities module');
     
     // Auto-load existing localities on first activation when connected
     if (state.connected && !localitiesState.isLoaded) {
-        loadNetworkLocalities();
+        await loadNetworkLocalities();
     }
 }
 
@@ -512,4 +506,11 @@ function initLocalitiesModule() {
         
         document.getElementById('loadLocalities').setAttribute('data-listener-added', 'true');
     }
+}
+
+if (typeof featureRegistry !== 'undefined') {
+    featureRegistry.register('localities', {
+        initialize: initLocalitiesModule,
+        activate: activateLocalitiesModule
+    });
 }

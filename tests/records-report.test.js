@@ -29,7 +29,6 @@ function loadRecords(overrides = {}) {
 function recordsApi(context) {
     return vm.runInContext(`({
         parseCRSCalendarDate,
-        getDateUnixTimes,
         buildCRSReportWindow,
         parseCSV,
         selectCRSCapacityRows,
@@ -40,13 +39,7 @@ function recordsApi(context) {
 
 test('builds a UTC date window without shifting explicit calendar dates', () => {
     const api = recordsApi(loadRecords());
-    assert.deepEqual(
-        JSON.parse(JSON.stringify(api.getDateUnixTimes('2026-07-25'))),
-        {
-            from: Date.parse('2026-07-25T00:00:00.000Z'),
-            until: Date.parse('2026-07-26T00:00:00.000Z')
-        }
-    );
+    assert.equal(api.parseCRSCalendarDate('2026-07-25'), '2026-07-25');
     const window = JSON.parse(JSON.stringify(
         api.buildCRSReportWindow('week', Date.parse('2026-07-26T19:30:00.000Z'))
     ));
@@ -150,6 +143,10 @@ test('uses one batched total-by-object XID query and preserves zero, empty, and 
     assert.equal(summary.collectionComplete, false);
     assert.equal(summary.totalRecordBytesGB, null);
     assert.equal(summary.compressionRatio, null);
+    assert.equal(
+        summary.compressionUnavailableReason,
+        'Incomplete metric coverage; review sensor collection statuses'
+    );
 });
 
 test('records an aggregate request failure instead of substituting zero', async () => {

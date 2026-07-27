@@ -1,3 +1,4 @@
+/* exported editSavedConnection, deleteSavedConnection, handleSavedConnect, handleConnect, handleDisconnect */
 function groupSavedConnections(connections) {
     const sorted = [...(connections || [])].sort((left, right) => {
         const labelOrder = String(left.label || '').localeCompare(

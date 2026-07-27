@@ -38,7 +38,7 @@ function loadDashboardManager(apiClient, dashboards = []) {
 
     vm.runInContext(source, context, { filename: 'dashboard-manager.js' });
     context.refreshCount = 0;
-    vm.runInContext('loadDashboards = async () => { refreshCount++; }', context);
+    vm.runInContext('loadDashboards = async () => { refreshCount++; return true; }', context);
     return { context, state };
 }
 
@@ -181,4 +181,19 @@ test('sharing read failures remain unavailable instead of becoming empty sharing
     assert.equal(dashboard._sharingError, 'forbidden');
     assert.match(rendered, /Sharing details unavailable/);
     assert.doesNotMatch(rendered, /No public access|None/);
+});
+
+test('reports an authoritative reload failure after a successful mutation', async () => {
+    const { context } = loadDashboardManager({});
+    vm.runInContext('loadDashboards = async () => { refreshCount++; return false; }', context);
+    const results = vm.runInContext('newDashboardMutationResults()', context);
+    results.mutations = 1;
+    context.testResults = results;
+
+    await vm.runInContext('refreshDashboardsAfterMutations(testResults)', context);
+
+    assert.equal(context.refreshCount, 1);
+    assert.deepEqual(plain(results.errors), [
+        'Dashboard refresh failed: authoritative reload did not complete'
+    ]);
 });

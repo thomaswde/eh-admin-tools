@@ -3,7 +3,7 @@
 async function loadDashboards() {
     if (!state.connected) {
         alert('Please connect to your ExtraHop instance first');
-        return;
+        return false;
     }
 
     const loadBtn = document.getElementById('loadDashboardsBtn');
@@ -42,10 +42,12 @@ async function loadDashboards() {
         loadingDiv.style.display = 'none';
         tableContainer.style.display = 'block';
         document.getElementById('paginationContainer').style.display = 'flex';
+        return true;
 
     } catch (error) {
         alert('Error loading dashboards: ' + error.message);
         loadingDiv.style.display = 'none';
+        return false;
     } finally {
         loadBtn.textContent = 'Refresh';
         loadBtn.disabled = false;
@@ -116,7 +118,10 @@ async function refreshDashboardsAfterMutations(results) {
     if (results.mutations === 0) return;
 
     try {
-        await loadDashboards();
+        const refreshed = await loadDashboards();
+        if (refreshed !== true) {
+            throw new Error('authoritative reload did not complete');
+        }
     } catch (error) {
         results.errors.push(`Dashboard refresh failed: ${error?.message || error}`);
     }
@@ -575,7 +580,7 @@ function handleDashboardRowClick(dashboardId) {
         });
 }
 
-function activateDashboardsModule() {
+async function activateDashboardsModule() {
     console.log('Activating Dashboard Manager module');
 
     if (!state.connected) {
@@ -592,7 +597,7 @@ function activateDashboardsModule() {
     }
 
     // Auto-load dashboards on first activation when connected
-    loadDashboards();
+    await loadDashboards();
 }
 
 // Dashboard module initialization function
@@ -700,4 +705,11 @@ function initDashboardsModule() {
         document.getElementById('cancelDelete').addEventListener('click', () => hideModal('deleteConfirmModal'));
         document.getElementById('confirmDelete').addEventListener('click', confirmDelete);
     }
+}
+
+if (typeof featureRegistry !== 'undefined') {
+    featureRegistry.register('dashboards', {
+        initialize: initDashboardsModule,
+        activate: activateDashboardsModule
+    });
 }

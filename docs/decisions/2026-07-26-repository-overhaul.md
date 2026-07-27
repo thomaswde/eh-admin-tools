@@ -25,16 +25,16 @@ The resulting contracts are summarized in [../architecture.md](../architecture.m
 
 ## Consequences
 
-- Some duplication remains while browser modules are migrated incrementally.
+- Feature scripts remain classic browser scripts, but their startup, activation, and cancellation contract is now explicit and centrally enforced.
 - Capability differences must be maintained as data and tested rather than inferred from failures.
-- Renderers and exports should consume canonical report models; changes that affect one projection may require coordinated updates to all projections.
+- System Health browser, PowerPoint, and PDF output now share one canonical view model; its versioned PDF projection is validated in both runtimes with a shared fixture.
 - Resource-limit failures become visible to users instead of allowing unbounded or misleading work.
 - Live ExtraHop verification remains a deliberate manual activity until suitable non-customer integration environments and credential handling exist.
 
-## Follow-up direction
+## Completion and follow-up
 
-- Finish the reviewed P1 correctness slices and their behavior tests.
-- Extract canonical report/view models before further renderer growth.
-- Introduce an awaited feature registry with cancellation, then migrate modules in coherent slices.
+- The reviewed P1 correctness slices and behavioral regression tests are complete.
+- System Health has a canonical report/view-model boundary and a strict renderer transport contract.
+- All dynamically loaded features use the awaited registry lifecycle, including cancellation for long-running report collection.
 - Add targeted browser end-to-end and live integration smoke coverage when stable environments are available.
 - Revisit historical prototype retention according to [2026-07-26-prototype-artifacts.md](2026-07-26-prototype-artifacts.md).

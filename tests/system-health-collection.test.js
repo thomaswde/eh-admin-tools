@@ -245,6 +245,21 @@ test('preserves opaque large node IDs without arithmetic decoding', () => {
     assert.equal(normalized.rows[0].metric_object_id, '18446744073709551615');
 });
 
+test('sorts opaque identifiers lexically without numeric interpretation', () => {
+    const normalized = health.normalizeTimeSeriesChunks([
+        {
+            node_id: '2',
+            stats: [{ oid: '20', time: 1, duration: 1000, values: [1, 2, 3, 4] }]
+        },
+        {
+            node_id: '10',
+            stats: [{ oid: '100', time: 1, duration: 1000, values: [1, 2, 3, 4] }]
+        }
+    ], {}, health.TIME_SERIES_METRICS);
+
+    assert.deepEqual(normalized.rows.map(row => row.appliance_id), ['10', '2']);
+});
+
 test('selects latest and peak values deterministically from out-of-order rows', () => {
     const rows = [
         { appliance_id: '7', timestamp_ms: 30, duration_ms: 1000, values: { pkts: 3 } },

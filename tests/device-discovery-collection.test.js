@@ -37,7 +37,7 @@ function loadDeviceDiscovery(overrides = {}) {
         stateIndicatorColor: () => '#f59e0b',
         escapeHtml: value => String(value)
     });
-    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, fetchDevicesBatch, renderDeviceDiscoveryTable, stopDeviceDiscoveryLoad };`, context);
+    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, getPeriodRange, fetchDevicesBatch, renderDeviceDiscoveryTable, stopDeviceDiscoveryLoad };`, context);
     return { api: window.__deviceDiscoveryTest, elements };
 }
 
@@ -116,4 +116,79 @@ test('the detail table exposes flow-log counts that contribute to total devices'
     assert.equal(rows.length, 2);
     assert.match(rows[0].innerHTML, /<td>4<\/td>\s*<td>10<\/td>/);
     assert.match(rows[1].innerHTML, /<td>4<\/td>\s*<td>10<\/td>/);
+});
+
+test('every device page reuses one absolute activity window', () => {
+    const { api } = loadDeviceDiscovery();
+    const nowMs = Date.parse('2026-07-26T19:30:00Z');
+    const week = JSON.parse(JSON.stringify(api.getPeriodRange('week', nowMs)));
+    const month = JSON.parse(JSON.stringify(api.getPeriodRange('month', nowMs)));
+    const yesterday = JSON.parse(JSON.stringify(api.getPeriodRange('yesterday', nowMs)));
+
+    assert.equal(week.activeUntil, nowMs);
+    assert.equal(month.activeUntil, nowMs);
+    assert.equal(yesterday.activeUntil - yesterday.activeFrom, 24 * 60 * 60 * 1000);
+    assert.notEqual(yesterday.activeUntil, 0);
+});
+
+test('device pagination enforces row and page budgets with explicit partial reasons', async () => {
+    const requests = [];
+    const { api } = loadDeviceDiscovery({
+        apiClient: {
+            async request(_endpoint, options) {
+                requests.push(JSON.parse(options.body));
+                return Array.from({ length: 5000 }, (_, index) => ({
+                    id: `${requests.length}:${index}`,
+                    node_id: 'sensor-1',
+                    analysis: 'advanced'
+                }));
+            }
+        }
+    });
+    const range = { activeFrom: 100, activeUntil: 200 };
+    const rowLimited = await api.fetchDevicesBatch(range, new AbortController().signal, {
+        maxPages: 5,
+        maxRows: 6000
+    });
+    assert.equal(rowLimited.incomplete, true);
+    assert.equal(rowLimited.reason, 'row_budget');
+    assert.equal(rowLimited.rowsFetched, 6000);
+    assert.equal(rowLimited.totalDevices, 6000);
+    assert.ok(requests.every(request => request.active_from === 100 && request.active_until === 200));
+
+    requests.length = 0;
+    const pageLimited = await api.fetchDevicesBatch(range, new AbortController().signal, {
+        maxPages: 1,
+        maxRows: 10000
+    });
+    assert.equal(pageLimited.incomplete, true);
+    assert.equal(pageLimited.reason, 'page_budget');
+    assert.equal(pageLimited.pagesFetched, 1);
+});
+
+test('device pagination preserves prior pages when a later page fails', async () => {
+    let calls = 0;
+    const { api } = loadDeviceDiscovery({
+        apiClient: {
+            async request() {
+                calls += 1;
+                if (calls === 2) throw new Error('upstream unavailable');
+                return Array.from({ length: 5000 }, (_, index) => ({
+                    id: `${index}`,
+                    node_id: 'sensor-1',
+                    analysis: 'standard'
+                }));
+            }
+        }
+    });
+
+    const result = await api.fetchDevicesBatch(
+        { activeFrom: 100, activeUntil: 200 },
+        new AbortController().signal
+    );
+    assert.equal(result.incomplete, true);
+    assert.equal(result.reason, 'failed');
+    assert.equal(result.rowsFetched, 5000);
+    assert.equal(result.totalDevices, 5000);
+    assert.match(result.detail, /later page failed.*upstream unavailable/);
 });
