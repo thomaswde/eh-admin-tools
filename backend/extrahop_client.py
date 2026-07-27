@@ -19,11 +19,12 @@ MAX_REQUEST_ATTEMPTS = 4
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 DECIMAL_IDENTIFIER_PATTERN = re.compile(r"^-?(?:0|[1-9][0-9]*)$")
-METRIC_REQUEST_ENDPOINTS = frozenset({
-    "/api/v1/metrics",
-    "/api/v1/metrics/total",
-    "/api/v1/metrics/totalbyobject",
-})
+OUTBOUND_IDENTIFIER_ARRAY_FIELDS = {
+    "/api/v1/metrics": "object_ids",
+    "/api/v1/metrics/total": "object_ids",
+    "/api/v1/metrics/totalbyobject": "object_ids",
+    "/api/v1/appliances/firmware/upgrade": "system_ids",
+}
 
 # JavaScript cannot represent API int64 identifiers above 2**53 exactly.  These
 # names come from the bundled ExtraHop OpenAPI schema.  Normalize identifiers at
@@ -62,15 +63,16 @@ def normalize_api_identifiers(value: Any, *, identifier_value: bool = False) -> 
     return value
 
 
-def restore_metric_request_identifiers(
+def restore_api_request_identifiers(
     endpoint: str,
     body: bytes | None,
     content_type: str | None,
 ) -> bytes | None:
-    """Rehydrate opaque browser IDs for metric schemas that require JSON int64."""
+    """Rehydrate opaque browser IDs for allowlisted schemas that require JSON int64."""
+    field_name = OUTBOUND_IDENTIFIER_ARRAY_FIELDS.get(endpoint)
     if (
         not body
-        or endpoint not in METRIC_REQUEST_ENDPOINTS
+        or field_name is None
         or "application/json" not in str(content_type or "").lower()
     ):
         return body
@@ -79,21 +81,21 @@ def restore_metric_request_identifiers(
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         return body
-    if not isinstance(payload, dict) or not isinstance(payload.get("object_ids"), list):
+    if not isinstance(payload, dict) or not isinstance(payload.get(field_name), list):
         return body
 
     changed = False
-    object_ids = []
-    for value in payload["object_ids"]:
+    identifiers = []
+    for value in payload[field_name]:
         if isinstance(value, str) and DECIMAL_IDENTIFIER_PATTERN.fullmatch(value):
-            object_ids.append(int(value))
+            identifiers.append(int(value))
             changed = True
         else:
-            object_ids.append(value)
+            identifiers.append(value)
     if not changed:
         return body
 
-    payload["object_ids"] = object_ids
+    payload[field_name] = identifiers
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
@@ -119,6 +121,13 @@ class SessionMetadata:
             "host": self.host or "",
             "verifyTls": self.verify_tls,
         }
+
+
+@dataclass(frozen=True)
+class ExtraHopResponse:
+    data: Any
+    status_code: int
+    location: str | None = None
 
 
 class ExtraHopClient:
@@ -233,9 +242,10 @@ class ExtraHopClient:
         query_string: str = "",
         body: bytes | None = None,
         content_type: str | None = None,
+        include_metadata: bool = False,
     ) -> Any:
         endpoint = self._normalize_endpoint(endpoint)
-        body = restore_metric_request_identifiers(endpoint, body, content_type)
+        body = restore_api_request_identifiers(endpoint, body, content_type)
         await self.refresh_if_needed()
 
         response = await self._send(method, endpoint, query_string, body, content_type)
@@ -246,16 +256,24 @@ class ExtraHopClient:
         if response.status_code < 200 or response.status_code >= 300:
             raise self._api_error_from_response(response, "API request failed")
 
-        if response.status_code == 204 or not response.content:
-            return {}
+        data: Any = {}
+        if response.status_code != 204 and response.content:
+            content_type_header = response.headers.get("content-type", "")
+            if "application/json" in content_type_header:
+                try:
+                    data = normalize_api_identifiers(response.json())
+                except ValueError as error:
+                    raise self._malformed_response_error(response, "API response was not valid JSON") from error
+            else:
+                data = response.text
 
-        content_type_header = response.headers.get("content-type", "")
-        if "application/json" in content_type_header:
-            try:
-                return normalize_api_identifiers(response.json())
-            except ValueError as error:
-                raise self._malformed_response_error(response, "API response was not valid JSON") from error
-        return response.text
+        if include_metadata:
+            return ExtraHopResponse(
+                data=data,
+                status_code=response.status_code,
+                location=self._safe_relative_location(response.headers.get("location")),
+            )
+        return data
 
     async def _send(
         self,
@@ -393,6 +411,20 @@ class ExtraHopClient:
             return endpoint
 
         return f"/api/v1{endpoint}"
+
+    @staticmethod
+    def _safe_relative_location(location: str | None) -> str | None:
+        if not location:
+            return None
+        try:
+            parsed = urlsplit(location)
+        except ValueError:
+            return None
+        if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+            return None
+        if not parsed.path.startswith("/api/v1/") or ".." in parsed.path.split("/"):
+            return None
+        return parsed.path
 
     def _api_error_from_response(self, response: httpx.Response, prefix: str) -> ExtraHopApiError:
         try:

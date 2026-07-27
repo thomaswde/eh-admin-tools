@@ -1,5 +1,6 @@
 /* exported ExtraHopAPI */
 const EXTRAHOP_REQUEST_TIMEOUT_MS = 75 * 1000;
+const MAX_FIRMWARE_APPLIANCE_IDS = 100;
 
 class ExtraHopAPI {
     constructor(config) {
@@ -107,11 +108,16 @@ class ExtraHopAPI {
     }
 
     async request(endpoint, options = {}) {
+        const response = await this.requestResponse(endpoint, options);
+        return this.parseResponse(response);
+    }
+
+    async requestResponse(endpoint, options = {}) {
         if (!endpoint.startsWith('/api/v1') && !endpoint.startsWith('/oauth2')) {
             endpoint = '/api/v1' + endpoint;
         }
 
-        const response = await ExtraHopAPI.backendFetch(`/backend/extrahop${endpoint}`, {
+        return ExtraHopAPI.backendFetch(`/backend/extrahop${endpoint}`, {
             method: options.method || 'GET',
             headers: {
                 'Content-Type': 'application/json',
@@ -123,8 +129,6 @@ class ExtraHopAPI {
                 ? EXTRAHOP_REQUEST_TIMEOUT_MS
                 : options.timeoutMs
         });
-
-        return this.parseResponse(response);
     }
 
     async parseResponse(response) {
@@ -359,6 +363,71 @@ class ExtraHopAPI {
 
     async getAppliances(options = {}) {
         return this.request('/appliances', options);
+    }
+
+    async getApplianceFirmwareVersions(ids = [], options = {}) {
+        this.assertApiFamilySupported('applianceFirmware');
+        const normalizedIds = ExtraHopAPI.validateOpaqueIds(ids, MAX_FIRMWARE_APPLIANCE_IDS);
+        const query = normalizedIds.length
+            ? `?ids=${encodeURIComponent(normalizedIds.join(','))}`
+            : '';
+        return this.request(`/appliances/firmware/next${query}`, options);
+    }
+
+    async upgradeApplianceFirmware(systemIds, version, options = {}) {
+        this.assertApiFamilySupported('applianceFirmware');
+        const normalizedIds = ExtraHopAPI.validateOpaqueIds(systemIds, MAX_FIRMWARE_APPLIANCE_IDS);
+        if (!normalizedIds.length) {
+            throw new TypeError('At least one appliance ID is required for a firmware upgrade.');
+        }
+        const normalizedVersion = String(version || '').trim();
+        if (!normalizedVersion || normalizedVersion.length > 128) {
+            throw new TypeError('A valid firmware version is required.');
+        }
+
+        const response = await this.requestResponse('/appliances/firmware/upgrade', {
+            ...options,
+            method: 'POST',
+            body: JSON.stringify({ system_ids: normalizedIds, version: normalizedVersion })
+        });
+        const data = await this.parseResponse(response);
+        return {
+            data,
+            status: response.status,
+            location: response.headers?.get?.('location') || null
+        };
+    }
+
+    async getApplianceCloudServices(options = {}) {
+        this.assertApiFamilySupported('applianceCloudServices');
+        return this.request('/appliances/0/cloudservices', options);
+    }
+
+    async getApplianceProductKeys(applianceId, options = {}) {
+        this.assertApiFamilySupported('applianceProductKeys');
+        const [normalizedId] = ExtraHopAPI.validateOpaqueIds([applianceId], 1);
+        return this.request(`/appliances/${encodeURIComponent(normalizedId)}/productkey`, options);
+    }
+
+    async getFirmwareUpgradeJob(location, options = {}) {
+        const normalizedLocation = String(location || '');
+        if (!/^\/api\/v1\/jobs\/[A-Za-z0-9._~-]+$/.test(normalizedLocation)) {
+            throw new TypeError('The firmware job location is invalid.');
+        }
+        return this.request(normalizedLocation, options);
+    }
+
+    static validateOpaqueIds(ids, maximum) {
+        if (!Array.isArray(ids) || ids.length > maximum) {
+            throw new TypeError(`Expected at most ${maximum} appliance IDs.`);
+        }
+        return ids.map(value => {
+            const normalized = String(value);
+            if (!/^(?:0|[1-9][0-9]*)$/.test(normalized)) {
+                throw new TypeError('Appliance IDs must be opaque decimal strings.');
+            }
+            return normalized;
+        });
     }
 
     async getAuditLog(limit = 100, offset = 0, options = {}) {

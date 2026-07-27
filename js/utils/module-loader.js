@@ -18,6 +18,7 @@ class ModuleLoader {
             'nodemap': 'nodemap.js'
         };
         this.moduleDependencies = {
+            'nodemap': ['appliance-management.js'],
             'crs-usage': ['system-health-collection.js'],
             'system-health': [
                 'chart-theme.js',

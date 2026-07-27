@@ -86,6 +86,28 @@ class ApiResponseLoggerTests(unittest.TestCase):
             logger.configure("full")
             self.assertTrue(logger.wants_request_body())
 
+    def test_product_keys_are_redacted_from_structured_and_text_response_logging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "responses.jsonl"
+            logger = self.make_logger(path, "full", max_preview_bytes=512)
+            product_key = "AAAA-BBBB-CCCC-DDDD"
+            response = self.response(
+                200,
+                json_body=[{"product_key": product_key}],
+            )
+
+            logger.log_response(
+                method="GET",
+                endpoint="/api/v1/appliances/7/productkey",
+                response=response,
+                started_at=time.perf_counter(),
+            )
+            self.assertTrue(logger.flush())
+
+            entry = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(entry["response"][0]["product_key"], "[redacted]")
+            self.assertNotIn(product_key, path.read_text(encoding="utf-8"))
+
     def test_oversized_json_response_is_truncated_and_never_parsed(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "responses.jsonl"

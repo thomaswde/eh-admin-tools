@@ -10,7 +10,7 @@ The proxy also forms a data contract. Upstream error details are converted to lo
 
 ## Deployment capabilities
 
-`js/utils/deployment-capabilities.js` is the explicit capability matrix for deployment types. Navigation, module loading, and API wrappers must consult the same matrix. Unsupported features are hidden or rejected before an API call; 401, 403, and 404 responses are not capability discovery. At present, the `/users` family and User Manager are self-managed-only. Add future differences to the matrix with endpoint-contract evidence and tests.
+`js/utils/deployment-capabilities.js` is the explicit capability matrix for deployment types. Navigation, module loading, and API wrappers must consult the same matrix. Unsupported features are hidden or rejected before an API call; 401, 403, and 404 responses are not capability discovery. At present, the `/users` family, User Manager, appliance cloud-services status, and appliance product keys are self-managed-only; appliance firmware discovery and upgrade are available for both deployment types. Add future differences to the matrix with endpoint-contract evidence and tests.
 
 ## Identifier contract
 
@@ -21,7 +21,7 @@ ExtraHop `int64` IDs and XIDs can exceed JavaScript's safe integer range. `backe
 - do not decode them arithmetically or pass them through `Number`/`parseInt`;
 - convert only domain measurements, counts, timestamps, and durations to numbers.
 
-When a new identifier field is introduced, extend the backend normalization contract and add a proxy-to-browser test. Browser-only fixtures containing pre-stringified large IDs do not prove transport safety. For outbound metric JSON only, the backend losslessly rehydrates decimal-string `object_ids` into the JSON integers required by the ExtraHop request schema; browser code must never perform that conversion through JavaScript numbers.
+When a new identifier field is introduced, extend the backend normalization contract and add a proxy-to-browser test. Browser-only fixtures containing pre-stringified large IDs do not prove transport safety. For allowlisted outbound JSON fields that ExtraHop requires as `int64` values—currently metric `object_ids` and firmware-upgrade `system_ids`—the backend losslessly rehydrates decimal strings into JSON integers; browser code must never perform that conversion through JavaScript numbers.
 
 ## Retry, deadline, and cancellation ownership
 

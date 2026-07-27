@@ -2,7 +2,12 @@
 // explicit so unsupported tools are gated before their modules make API calls.
 const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
     enterprise: Object.freeze({
-        apiFamilies: Object.freeze({ users: true }),
+        apiFamilies: Object.freeze({
+            users: true,
+            applianceFirmware: true,
+            applianceCloudServices: true,
+            applianceProductKeys: true
+        }),
         modules: Object.freeze({
             'audit-logs': true,
             nodemap: true,
@@ -15,7 +20,12 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
         })
     }),
     360: Object.freeze({
-        apiFamilies: Object.freeze({ users: false }),
+        apiFamilies: Object.freeze({
+            users: false,
+            applianceFirmware: true,
+            applianceCloudServices: false,
+            applianceProductKeys: false
+        }),
         modules: Object.freeze({
             'audit-logs': true,
             nodemap: true,

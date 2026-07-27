@@ -1357,6 +1357,47 @@
     </form>
 </div>
 
+<!-- Connected appliance firmware upgrade -->
+<div id="firmwareUpgradeModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="firmwareUpgradeModalTitle">
+    <form id="firmwareUpgradeForm" class="modal-content">
+        <h2 id="firmwareUpgradeModalTitle" class="modal-title">Start firmware upgrade</h2>
+        <p class="modal-desc">Review the selected appliance and maintenance requirements before creating the remote upgrade job.</p>
+
+        <div class="modal-body">
+            <div class="detail-panel stack-sm">
+                <div class="grid-2">
+                    <div><span class="detail-label">Appliance</span><span id="firmwareUpgradeAppliance" class="detail-value"></span></div>
+                    <div><span class="detail-label">Role</span><span id="firmwareUpgradeRole" class="detail-value"></span></div>
+                    <div><span class="detail-label">Current firmware</span><span id="firmwareUpgradeCurrent" class="detail-value mono"></span></div>
+                    <div><span class="detail-label">Target firmware</span><span id="firmwareUpgradeTarget" class="detail-value mono"></span></div>
+                </div>
+            </div>
+
+            <div class="notice notice-warn">
+                The appliance can restart or become temporarily unavailable. Follow the deployment upgrade order: console, sensors, recordstores, then packetstores.
+            </div>
+
+            <label class="check">
+                <input type="checkbox" id="firmwareUpgradeAcknowledge" required>
+                <span>I have verified the maintenance window and that the connected console or RevealX 360 service is already on a compatible version.</span>
+            </label>
+
+            <div id="firmwareUpgradeRecordstoreWarning" class="notice notice-warn" hidden>
+                <p>Record ingest must be disabled before upgrading a recordstore.</p>
+                <label class="check">
+                    <input type="checkbox" id="firmwareUpgradeRecordstoreAcknowledge">
+                    <span>I have disabled record ingest for this recordstore cluster.</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="modal-foot">
+            <button type="button" id="cancelFirmwareUpgrade" class="btn">Cancel</button>
+            <button type="submit" id="confirmFirmwareUpgrade" class="btn-danger">Start firmware upgrade</button>
+        </div>
+    </form>
+</div>
+
 <!-- Connection error -->
 <div id="errorModal" class="modal">
     <div class="modal-content">

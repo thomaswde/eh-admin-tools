@@ -26,6 +26,7 @@ SENSITIVE_KEY_PARTS = (
     "api_secret",
     "secret",
     "password",
+    "product_key",
     "token",
     "cookie",
 )
@@ -46,7 +47,7 @@ _JSON_SECRET_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _KEY_VALUE_SECRET_PATTERN = re.compile(
-    r"(?P<prefix>(?:authorization|apikey|api_key|apiid|api_id|api_secret|secret|password|token|cookie)\s*=\s*)"
+    r"(?P<prefix>(?:authorization|apikey|api_key|apiid|api_id|api_secret|secret|password|product_key|token|cookie)\s*=\s*)"
     r"(?P<value>[^&\s,;]+)",
     re.IGNORECASE,
 )

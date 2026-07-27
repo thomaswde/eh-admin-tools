@@ -295,6 +295,70 @@ class BackendRouteSecurityTests(unittest.TestCase):
             self.assertEqual(payload["object_ids"], [unsafe_id, 7])
             self.assertTrue(all(isinstance(value, int) for value in payload["object_ids"]))
 
+    def test_proxy_restores_firmware_system_ids_and_preserves_job_location(self):
+        unsafe_id = 9007199254740993
+        captured_payloads = []
+        location = "/api/v1/jobs/ebbdbc9e-7113-448c"
+
+        def upstream_response(request):
+            captured_payloads.append(json.loads(request.content))
+            return httpx.Response(
+                202,
+                headers={"Location": location},
+                request=request,
+            )
+
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream_response))
+        session_id = main.sessions.create(client)
+        self.client.cookies.set(main.SESSION_COOKIE, session_id)
+        self.addCleanup(lambda: asyncio.run(client.aclose()))
+
+        response = self.client.post(
+            "/backend/extrahop/api/v1/appliances/firmware/upgrade",
+            json={"system_ids": [str(unsafe_id), "7"], "version": "26.3.1.100"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.headers["location"], location)
+        self.assertEqual(response.json(), {})
+        self.assertEqual(captured_payloads[0]["system_ids"], [unsafe_id, 7])
+        self.assertTrue(all(isinstance(value, int) for value in captured_payloads[0]["system_ids"]))
+
+    def test_proxy_drops_unsafe_upstream_location_header(self):
+        def upstream_response(request):
+            return httpx.Response(
+                202,
+                headers={"Location": "https://attacker.example/api/v1/jobs/7"},
+                request=request,
+            )
+
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream_response))
+        session_id = main.sessions.create(client)
+        self.client.cookies.set(main.SESSION_COOKIE, session_id)
+        self.addCleanup(lambda: asyncio.run(client.aclose()))
+
+        response = self.client.post(
+            "/backend/extrahop/api/v1/appliances/firmware/upgrade",
+            json={"system_ids": ["7"], "version": "26.3.1.100"},
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertNotIn("location", response.headers)
+
     def test_index_disables_browser_caching(self):
         response = self.client.get("/")
 

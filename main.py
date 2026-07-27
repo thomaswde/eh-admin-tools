@@ -16,7 +16,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.api_response_logger import ApiResponseLogger, LOG_VERBOSITIES
 from backend.connection_store import ConnectionStorageError, ConnectionStore
-from backend.extrahop_client import ExtraHopApiError, ExtraHopClient
+from backend.extrahop_client import ExtraHopApiError, ExtraHopClient, ExtraHopResponse
 from backend.session_store import SessionStore
 from backend import system_health_pdf as system_health_pdf_backend
 
@@ -588,6 +588,7 @@ async def proxy_extrahop_request(
             query_string=request.url.query,
             body=body or None,
             content_type=request.headers.get("content-type"),
+            include_metadata=True,
         )
     )
     disconnect_task = asyncio.create_task(wait_for_client_disconnect(request))
@@ -601,7 +602,13 @@ async def proxy_extrahop_request(
             with suppress(asyncio.CancelledError):
                 await upstream_task
             raise HTTPException(status_code=499, detail={"message": "Client disconnected"})
-        return await upstream_task
+        result = await upstream_task
+        if not isinstance(result, ExtraHopResponse):
+            return result
+        headers = {"Location": result.location} if result.location else None
+        if result.status_code == 204:
+            return Response(status_code=204, headers=headers)
+        return JSONResponse(content=result.data, status_code=result.status_code, headers=headers)
     except ExtraHopApiError as error:
         raise http_exception(error) from error
     finally:
