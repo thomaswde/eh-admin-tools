@@ -564,11 +564,6 @@ function selectAuditLogEntriesForExport(operationType) {
     return auditLogState.operations[operationType] || [];
 }
 
-function escapeAuditLogCsvCell(value) {
-    const text = String(value ?? '');
-    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
 function buildAuditLogCsv(entries) {
     const rows = [['ID', 'Date/Time', 'Operation', 'User', 'Details']];
     (entries || []).forEach(entry => {
@@ -580,7 +575,7 @@ function buildAuditLogCsv(entries) {
             JSON.stringify(entry)
         ]);
     });
-    return rows.map(row => row.map(escapeAuditLogCsvCell).join(',')).join('\n');
+    return CsvUtils.stringifyRows(rows, { numericColumns: [0], finalNewline: false });
 }
 
 // Audit Logs module initialization function

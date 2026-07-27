@@ -3146,53 +3146,11 @@ function systemHealthDeviceAnalysisCsv(report, appliancesById) {
 }
 
 function parseSystemHealthCsv(text) {
-    const rows = [];
-    let row = [];
-    let value = '';
-    let quoted = false;
-    for (let index = 0; index < text.length; index += 1) {
-        const char = text[index];
-        const next = text[index + 1];
-        if (quoted) {
-            if (char === '"' && next === '"') {
-                value += '"';
-                index += 1;
-            } else if (char === '"') {
-                quoted = false;
-            } else {
-                value += char;
-            }
-        } else if (char === '"') {
-            quoted = true;
-        } else if (char === ',') {
-            row.push(value);
-            value = '';
-        } else if (char === '\n') {
-            row.push(value);
-            rows.push(row);
-            row = [];
-            value = '';
-        } else if (char !== '\r') {
-            value += char;
-        }
-    }
-    if (value || row.length) {
-        row.push(value);
-        rows.push(row);
-    }
-    const headers = rows.shift() || [];
-    return rows
-        .filter(item => item.some(cell => cell !== ''))
-        .map(item => Object.fromEntries(headers.map((header, index) => [header, item[index] === undefined ? '' : item[index]])));
+    return CsvUtils.parseObjects(text, { skipEmptyRows: true });
 }
 
 function systemHealthRowsToCsv(columns, rows) {
-    return `${columns.join(',')}\n${rows.map(row => columns.map(column => systemHealthCsvEscape(row[column])).join(',')).join('\n')}\n`;
-}
-
-function systemHealthCsvEscape(value) {
-    const text = value === null || value === undefined ? '' : String(value);
-    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    return CsvUtils.stringifyObjects(columns, rows);
 }
 
 function downloadSystemHealthCsv(filename, text) {

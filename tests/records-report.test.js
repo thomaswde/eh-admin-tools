@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const repoRoot = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(repoRoot, 'js/modules/records-report.js'), 'utf8');
 const SystemHealthCollection = require('../js/modules/system-health-collection.js');
+const CsvUtils = require('../js/utils/csv.js');
 
 function loadRecords(overrides = {}) {
     const context = vm.createContext({
@@ -17,6 +18,7 @@ function loadRecords(overrides = {}) {
         Object,
         String,
         SystemHealthCollection,
+        CsvUtils,
         window: {},
         ...overrides
     });
@@ -60,8 +62,9 @@ test('builds a UTC date window without shifting explicit calendar dates', () => 
 test('normalizes CSV dates, filters extra rows, and requires complete selected coverage', () => {
     const api = recordsApi(loadRecords());
     const rows = api.parseCSV([
-        'Summary Date UTC,Utilized,Reserved',
-        '7/23/2026 12:00 AM,40,100',
+        'Summary Date UTC,Utilized,Reserved,Notes',
+        '"7/23/2026 12:00 AM",40,100,"quoted, note with',
+        'a second ""line"""',
         '2026-07-24,50,100',
         '2026-07-25T00:00:00Z,60,100',
         '2026-07-26,999,1000'

@@ -13,6 +13,7 @@ const context = vm.createContext({
     window: {},
     document: { getElementById: () => null },
     state: { apiConfig: {} },
+    CsvUtils: require('../js/utils/csv.js'),
     SystemHealthCollection: require('../js/modules/system-health-collection.js')
 });
 vm.runInContext(source, context);
@@ -254,6 +255,17 @@ test('unified CSV preserves opaque IDs and legitimate zero values', () => {
     assert.equal(zero.triggerDropsTotal, 0);
     assert.equal(zero.collectionStatus.pkts, 'zero_valued');
     assert.equal(zero.collectionStatus.device_analysis, 'zero_valued');
+});
+
+test('System Health CSV neutralizes formula-like text without changing numeric fields', () => {
+    const report = fixtureReport();
+    report.appliances[0].name = '=HYPERLINK("https://example.invalid")';
+    report.appliances[0].license_platform = '@model';
+    const parsed = csvApi.parseSystemHealthCsv(csvApi.systemHealthUnifiedSummaryCsv(report));
+
+    assert.equal(parsed[0].appliance_name, "'=HYPERLINK(\"https://example.invalid\")");
+    assert.equal(parsed[0].license_platform, "'@model");
+    assert.equal(parsed[0].packet_peak_value, '6000');
 });
 
 test('unified CSV round-trips Packetstore summaries under the metric-producing sensor', () => {

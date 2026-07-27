@@ -378,39 +378,17 @@ function handleCsvUpload(e) {
     const reader = new FileReader();
     reader.onload = async (event) => {
         try {
-            const csv = event.target.result;
-            const lines = csv.split('\n').map(line => line.trim()).filter(line => line);
-            
-            if (lines.length < 2) {
-                throw new Error('CSV file appears to be empty');
-            }
-
-            // Parse header
-            const header = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-            const nameIdx = header.findIndex(h => h.toLowerCase().includes('name'));
-            const cidrIdx = header.findIndex(h => h.toLowerCase().includes('cidr') || h.toLowerCase().includes('ip') || h.toLowerCase().includes('network'));
-            const externalIdx = header.findIndex(h => h.toLowerCase().includes('external') || h.toLowerCase().includes('type'));
-            const descIdx = header.findIndex(h => h.toLowerCase().includes('description') || h.toLowerCase().includes('desc'));
-
-            if (nameIdx === -1 || cidrIdx === -1) {
-                throw new Error('CSV must contain Name and CIDR/Network columns');
-            }
+            const importedRows = parseNetworkLocalitiesCsv(event.target.result);
 
             // Parse rows
             const newLocalities = [];
             const duplicates = [];
 
-            for (let i = 1; i < lines.length; i++) {
-                const cols = parseCSVLine(lines[i]);
-                
-                const name = cols[nameIdx]?.trim();
-                const cidrs = cols[cidrIdx]?.split(',').map(s => s.trim()).filter(s => s) || [];
-                const externalStr = externalIdx !== -1 ? cols[externalIdx]?.trim().toLowerCase() : 'false';
-                const external = ['true', 'external', '1', 'yes'].includes(externalStr);
-                const description = descIdx !== -1 ? cols[descIdx]?.trim() : '';
+            for (const imported of importedRows) {
+                const { name, cidrs, external, description, rowNumber } = imported;
 
                 if (!name || cidrs.length === 0) {
-                    console.warn(`Skipping row ${i + 1}: missing name or CIDR`);
+                    console.warn(`Skipping row ${rowNumber}: missing name or CIDR`);
                     continue;
                 }
 
@@ -465,27 +443,27 @@ function handleCsvUpload(e) {
     e.target.value = '';
 }
 
-function parseCSVLine(line) {
-    // Simple CSV parser that handles quoted fields
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-    
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        
-        if (char === '"') {
-            inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-            result.push(current.trim());
-            current = '';
-        } else {
-            current += char;
-        }
+function parseNetworkLocalitiesCsv(csvText) {
+    const rows = CsvUtils.parseRows(csvText, { skipEmptyRows: true });
+    if (rows.length < 2) throw new Error('CSV file appears to be empty');
+    const header = rows[0].map(value => value.trim().toLowerCase());
+    const nameIdx = header.findIndex(value => value.includes('name'));
+    const cidrIdx = header.findIndex(value => value.includes('cidr') || value.includes('ip') || value.includes('network'));
+    const externalIdx = header.findIndex(value => value.includes('external') || value.includes('type'));
+    const descIdx = header.findIndex(value => value.includes('description') || value.includes('desc'));
+    if (nameIdx === -1 || cidrIdx === -1) {
+        throw new Error('CSV must contain Name and CIDR/Network columns');
     }
-    result.push(current.trim());
-    
-    return result;
+    return rows.slice(1).map((columns, index) => {
+        const externalValue = externalIdx === -1 ? 'false' : String(columns[externalIdx] ?? '').trim().toLowerCase();
+        return {
+            name: String(columns[nameIdx] ?? '').trim(),
+            cidrs: String(columns[cidrIdx] ?? '').split(',').map(value => value.trim()).filter(Boolean),
+            external: ['true', 'external', '1', 'yes'].includes(externalValue),
+            description: descIdx === -1 ? '' : String(columns[descIdx] ?? '').trim(),
+            rowNumber: index + 2
+        };
+    });
 }
 
 function showLocalityStatus(message, type = 'success') {

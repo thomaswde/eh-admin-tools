@@ -180,8 +180,9 @@ function getDateRange(period, nowMs = Date.now()) {
 
 // Parse CSV data
 function parseCSV(csvText) {
-    const lines = csvText.trim().split('\n');
-    const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+    const rows = CsvUtils.parseRows(csvText, { skipEmptyRows: true });
+    if (!rows.length) throw new Error('CSV file appears to be empty');
+    const headers = rows[0].map(header => header.trim());
     
     const dateIdx = headers.findIndex(h => h.includes('Summary Date'));
     const utilizedIdx = headers.findIndex(h => h === 'Utilized');
@@ -192,13 +193,16 @@ function parseCSV(csvText) {
     }
     
     const data = [];
-    for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',').map(v => v.replace(/"/g, '').trim());
+    for (let i = 1; i < rows.length; i++) {
+        const values = rows[i].map(value => value.trim());
         if (values.length < 3) continue;
         
-        const utilized = Number(values[utilizedIdx]);
-        const reserved = Number(values[reservedIdx]);
-        if (!Number.isFinite(utilized) || utilized < 0 || !Number.isFinite(reserved) || reserved <= 0) {
+        const utilizedText = values[utilizedIdx] ?? '';
+        const reservedText = values[reservedIdx] ?? '';
+        const utilized = Number(utilizedText);
+        const reserved = Number(reservedText);
+        if (utilizedText === '' || reservedText === ''
+            || !Number.isFinite(utilized) || utilized < 0 || !Number.isFinite(reserved) || reserved <= 0) {
             throw new Error(`Invalid Utilized or Reserved capacity on CSV row ${i + 1}`);
         }
         data.push({ date: parseCRSCalendarDate(values[dateIdx]), utilized, reserved });

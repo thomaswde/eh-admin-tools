@@ -8,9 +8,10 @@ const source = fs.readFileSync(
     path.join(__dirname, '..', 'js', 'modules', 'audit-logs.js'),
     'utf8'
 );
+const CsvUtils = require('../js/utils/csv.js');
 
 function loadAudit() {
-    const context = vm.createContext({ console, Date, Number, Object, String, Set, Map });
+    const context = vm.createContext({ console, Date, Number, Object, String, Set, Map, CsvUtils });
     vm.runInContext(source, context, { filename: 'audit-logs.js' });
     return {
         context,
@@ -64,4 +65,18 @@ test('all-operation export selects only the canonical filtered collection', () =
     assert.match(csv, /2026-01-02 10:00:00 UTC/);
     assert.match(csv, /Login/);
     assert.doesNotMatch(csv, /Outside|old/);
+});
+
+test('audit CSV neutralizes operation and user formula prefixes while retaining numeric IDs', () => {
+    const { api } = loadAudit();
+    const csv = api.buildAuditLogCsv([{
+        id: -7,
+        datetime: '2026-01-02 10:00:00 UTC',
+        operation: '=HYPERLINK("https://example.invalid")',
+        user: '+attacker'
+    }]);
+    const rows = CsvUtils.parseRows(csv);
+    assert.equal(rows[1][0], '-7');
+    assert.equal(rows[1][2], "'=HYPERLINK(\"https://example.invalid\")");
+    assert.equal(rows[1][3], "'+attacker");
 });
