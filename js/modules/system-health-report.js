@@ -2848,7 +2848,10 @@ async function exportSystemHealthPptx(event) {
             options: systemHealthPptxOptionsFromForm(),
             rows: systemHealthRows(report),
             packetstore_rows: systemHealthPacketstoreRows(report),
-            palette: systemHealthStyleColors()
+            palette: systemHealthStyleColors(),
+            presentation_theme: typeof window.chartThemePresentationStyle === 'function'
+                ? window.chartThemePresentationStyle()
+                : null
         });
         setSystemHealthCsvStatus(`Exported ${result.filename}. Charts and slide text remain editable in PowerPoint.`);
     } catch (error) {

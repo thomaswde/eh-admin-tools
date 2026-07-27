@@ -105,6 +105,8 @@ def validate_package(package_root: Path) -> None:
         "app/assets/eh-logo-color.png",
         "app/assets/eh-logo-white.svg",
         "app/assets/eh-logo-white.png",
+        "app/assets/system-health-cover-classichop.png",
+        "app/assets/system-health-cover-reveal-x.png",
         "app/js/theme-init.js",
         "app/js/utils/csv.js",
         "app/js/utils/deployment-capabilities.js",

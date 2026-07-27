@@ -18,6 +18,7 @@
 if (
     typeof window.initChartThemePanel === 'function'
     && typeof window.chartThemeResolvedColors === 'function'
+    && typeof window.chartThemePresentationStyle === 'function'
 ) {
     return;
 }
@@ -50,20 +51,16 @@ const CHART_THEME_BUILTINS = [
         colors: { bg: '#131218', text: '#ececf2', low: '#00aaef', mid: '#f59e0b', high: '#ef4444' }
     },
     {
-        id: 'midnight',
-        name: 'Midnight',
-        colors: { bg: '#12131a', text: '#f2f3f7', low: '#38bdf8', mid: '#fbbf24', high: '#f43f5e' }
+        id: 'reveal-x',
+        name: 'Reveal(x)',
+        colors: { bg: '#272727', text: '#ffffff', low: '#00b6ad', mid: '#f2652e', high: '#eb2a43' },
+        presentation: true
     },
     {
-        id: 'slate',
-        name: 'Slate',
-        colors: { bg: '#f7f8fb', text: '#1f2937', low: '#3b82f6', mid: '#f59e0b', high: '#dc2626' }
-    },
-    {
-        // Ramp runs light to dark so severity survives a grayscale handout.
-        id: 'mono',
-        name: 'Monochrome',
-        colors: { bg: '#ffffff', text: '#111827', low: '#c9ccd3', mid: '#7b8190', high: '#111827' }
+        id: 'classichop',
+        name: 'ClassicHop',
+        colors: { bg: '#ffffff', text: '#000000', low: '#2c7baf', mid: '#ffaa29', high: '#c05f82' },
+        presentation: true
     }
 ];
 
@@ -169,6 +166,18 @@ function chartThemeResolvedColors() {
         derived[key] = chartThemeMix(colors.bg, colors.text, weight);
     });
     return { ...colors, ...derived, transparent: chartThemeState.transparent };
+}
+
+// PowerPoint cover treatments are intentionally limited to the built-ins that
+// ship with matching artwork. Drafts and saved custom palettes keep the normal
+// ExtraHop cover rather than claiming a branded template they do not include.
+function chartThemePresentationStyle() {
+    if (chartThemeState.selected === CHART_THEME_DRAFT_ID) return null;
+    const id = chartThemeState.selected === CHART_THEME_AUTO_ID
+        ? chartThemeAutoId()
+        : chartThemeState.selected;
+    const theme = chartThemeById(id);
+    return theme && theme.presentation ? { id: theme.id } : null;
 }
 
 /* -------------------------------- storage ------------------------------- */
@@ -525,5 +534,6 @@ function chartThemeEscape(value) {
 // on browser-specific handling of top-level function declarations.
 window.initChartThemePanel = initChartThemePanel;
 window.chartThemeResolvedColors = chartThemeResolvedColors;
+window.chartThemePresentationStyle = chartThemePresentationStyle;
 
 })();

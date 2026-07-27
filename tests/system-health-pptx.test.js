@@ -784,3 +784,57 @@ test('the cover carries the gradient alone, with no ring texture drawn over it',
     assert.equal(cover.shapes.filter(shape => shape.type === 'ellipse').length, 0);
     assert.equal(cover.shapes.filter(shape => shape.type === 'roundRect').length, 1);
 });
+
+test('Reveal(x) and ClassicHop use simple themed covers and omit body-slide logos', () => {
+    const cases = [
+        { id: 'reveal-x', accent: '00B6AD' },
+        { id: 'classichop', accent: '2C7BAF' }
+    ];
+
+    cases.forEach(({ id, accent }) => {
+        const model = pptxApi.buildDeckModel({
+            meta,
+            options: {
+                title: 'System Health Review',
+                customer: 'Hooli',
+                context: 'This context belongs only on the standard cover.'
+            },
+            presentation_theme: { id },
+            rows: [sensorRow({ id: 'sensor', name: 'Sensor' })]
+        });
+        const pptx = pptxApi.createPresentation(model, FakePptx, {
+            coverBackground: `data:image/png;base64,${id}`,
+            colorLogo: 'data:image/png;base64,color-logo',
+            whiteLogo: 'data:image/png;base64,white-logo'
+        });
+        const cover = pptx._slides[0];
+        const bodySlides = pptx._slides.slice(1);
+
+        assert.deepEqual(JSON.parse(JSON.stringify(cover.images)), [{
+            data: `data:image/png;base64,${id}`,
+            x: 0,
+            y: 0,
+            w: 13.333,
+            h: 7.5
+        }]);
+        assert.equal(cover.shapes.length, 0);
+        assert.deepEqual(cover.texts.map(item => item.text), ['System Health Review', 'Hooli']);
+        assert.equal(cover.texts[1].options.color, accent);
+        assert.ok(bodySlides.every(slide => slide.images.length === 0));
+        assert.doesNotMatch(presentationText(pptx), /This context belongs only on the standard cover/);
+    });
+});
+
+test('the supplied cover artwork is shipped at the deck aspect ratio', () => {
+    ['reveal-x', 'classichop'].forEach(id => {
+        const bytes = fs.readFileSync(path.join(
+            __dirname,
+            '..',
+            'assets',
+            `system-health-cover-${id}.png`
+        ));
+        assert.equal(bytes.toString('ascii', 1, 4), 'PNG');
+        assert.equal(bytes.readUInt32BE(16), 2000);
+        assert.equal(bytes.readUInt32BE(20), 1125);
+    });
+});

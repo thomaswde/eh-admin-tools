@@ -26,6 +26,26 @@ const BRAND_SAPPHIRE = '#261f63';
 const BRAND_PLUM = '#7f2854';
 const BRAND_LIME = '#daed43';
 const DEFAULT_TITLE = 'System Health Review';
+const PRESENTATION_THEME_STYLES = {
+    'reveal-x': {
+        id: 'reveal-x',
+        coverAsset: 'assets/system-health-cover-reveal-x.png',
+        titleColor: '#ffffff',
+        accentColor: '#00b6ad',
+        titleBox: { x: 0.66, y: 1.82, w: 11.5, h: 0.64, fontSize: 34, align: 'left' },
+        subtitleBox: { x: 0.66, y: 2.58, w: 10.8, h: 0.34, fontSize: 18, align: 'left' },
+        omitBodyLogo: true
+    },
+    classichop: {
+        id: 'classichop',
+        coverAsset: 'assets/system-health-cover-classichop.png',
+        titleColor: '#000000',
+        accentColor: '#2c7baf',
+        titleBox: { x: 6.25, y: 0.42, w: 6.35, h: 0.52, fontSize: 29, align: 'right' },
+        subtitleBox: { x: 6.25, y: 1.02, w: 6.35, h: 0.28, fontSize: 15, align: 'right' },
+        omitBodyLogo: true
+    }
+};
 const ATTENTION_ROWS_PER_SLIDE = 7;
 const APPENDIX_ROWS_PER_SLIDE = 11;
 // Charts show ranked sensors only. Anything past this is signal-free tail; the
@@ -111,6 +131,17 @@ function normalizedPalette(raw = {}) {
     return palette;
 }
 
+function normalizedPresentationTheme(raw) {
+    const id = cleanText(raw && raw.id, 40);
+    const theme = PRESENTATION_THEME_STYLES[id];
+    if (!theme) return null;
+    return {
+        ...theme,
+        titleBox: { ...theme.titleBox },
+        subtitleBox: { ...theme.subtitleBox }
+    };
+}
+
 function validHex(value) {
     return /^#[0-9a-f]{6}$/i.test(String(value || ''));
 }
@@ -156,6 +187,7 @@ function buildDeckModel(input) {
         options,
         meta,
         palette: normalizedPalette(input && input.palette),
+        presentationTheme: normalizedPresentationTheme(input && input.presentation_theme),
         ...window.SystemHealthViewModel.buildNarrativeModel(input || {}),
         filename: deckFilename(meta, options)
     };
@@ -353,7 +385,9 @@ function addContentSlide(model, title, subtitle, assets, kicker = '', kickerColo
             color: pptColor(palette.muted), margin: 0, fit: 'shrink'
         });
     }
-    addLogo(slide, model, assets, 11.63, 7.06, 1.0);
+    if (!(model.presentationTheme && model.presentationTheme.omitBodyLogo)) {
+        addLogo(slide, model, assets, 11.63, 7.06, 1.0);
+    }
     model.slideNumber += 1;
     addFooter(slide, model, model.slideNumber);
     slide.contentTop = subtitle ? y + 0.92 : y + 0.72;
@@ -365,6 +399,33 @@ function addContentSlide(model, title, subtitle, assets, kicker = '', kickerColo
 function addCover(model, assets) {
     const pptx = model.pptx;
     const slide = pptx.addSlide();
+    const presentationTheme = model.presentationTheme;
+    if (presentationTheme) {
+        if (assets.coverBackground) {
+            slide.addImage({ data: assets.coverBackground, x: 0, y: 0, w: SLIDE_WIDTH, h: SLIDE_HEIGHT });
+        } else {
+            slide.background = { color: pptColor(model.palette.bg, 'FFFFFF') };
+        }
+        const titleBox = presentationTheme.titleBox;
+        slide.addText(model.options.title, {
+            x: titleBox.x, y: titleBox.y, w: titleBox.w, h: titleBox.h,
+            fontFace: FONT, fontSize: titleBox.fontSize, bold: true,
+            color: pptColor(presentationTheme.titleColor), margin: 0,
+            align: titleBox.align, fit: 'shrink'
+        });
+        if (model.options.customer) {
+            const subtitleBox = presentationTheme.subtitleBox;
+            slide.addText(model.options.customer, {
+                x: subtitleBox.x, y: subtitleBox.y, w: subtitleBox.w, h: subtitleBox.h,
+                fontFace: FONT, fontSize: subtitleBox.fontSize, bold: true,
+                color: pptColor(presentationTheme.accentColor), margin: 0,
+                align: subtitleBox.align, fit: 'shrink'
+            });
+        }
+        model.slideNumber += 1;
+        addNotes(slide, model, 'ExtraHop System Health report metadata supplied by the exporting user and application.');
+        return;
+    }
     const gradient = model.gradient;
     if (gradient) {
         slide.addImage({ data: gradient, x: 0, y: 0, w: SLIDE_WIDTH, h: SLIDE_HEIGHT });
@@ -1306,7 +1367,12 @@ function createPresentation(deckModel, PptxGenJS, assets = {}) {
     pptx.title = deckModel.options.title;
     pptx.lang = 'en-US';
     pptx.theme = { headFontFace: FONT, bodyFontFace: FONT, lang: 'en-US' };
-    const model = { ...deckModel, pptx, slideNumber: 0, gradient: gradientBackground() };
+    const model = {
+        ...deckModel,
+        pptx,
+        slideNumber: 0,
+        gradient: deckModel.presentationTheme ? '' : gradientBackground()
+    };
     addCover(model, assets);
     addOverview(model, assets);
     // Actions come before the evidence that supports them. In the previous
@@ -1352,17 +1418,20 @@ async function binaryDataUrl(path, mimeType) {
     return `data:${mimeType};base64,${btoa(binary)}`;
 }
 
-async function loadAssets() {
-    const [colorLogo, whiteLogo] = await Promise.all([
+async function loadAssets(presentationTheme) {
+    const [colorLogo, whiteLogo, coverBackground] = await Promise.all([
         binaryDataUrl('assets/eh-logo-color.png', 'image/png').catch(() => ''),
-        binaryDataUrl('assets/eh-logo-white.png', 'image/png').catch(() => '')
+        binaryDataUrl('assets/eh-logo-white.png', 'image/png').catch(() => ''),
+        presentationTheme && presentationTheme.coverAsset
+            ? binaryDataUrl(presentationTheme.coverAsset, 'image/png').catch(() => '')
+            : Promise.resolve('')
     ]);
-    return { colorLogo, whiteLogo };
+    return { colorLogo, whiteLogo, coverBackground };
 }
 
 async function exportDeck(input) {
     const model = buildDeckModel(input);
-    const [PptxGenJS, assets] = await Promise.all([ensurePptxGen(), loadAssets()]);
+    const [PptxGenJS, assets] = await Promise.all([ensurePptxGen(), loadAssets(model.presentationTheme)]);
     const pptx = createPresentation(model, PptxGenJS, assets);
     await pptx.writeFile({ fileName: model.filename, compression: true });
     return { filename: model.filename, slide_count: pptx._slides ? pptx._slides.length : null };

@@ -53,6 +53,8 @@ test('chart theme dependency explicitly exports the API used by System Health', 
 
     assert.equal(typeof window.initChartThemePanel, 'function');
     assert.equal(typeof window.chartThemeResolvedColors, 'function');
+    assert.equal(typeof window.chartThemePresentationStyle, 'function');
+    assert.equal(window.chartThemePresentationStyle(), null);
     assert.deepEqual(
         JSON.parse(JSON.stringify(vm.runInContext('window.chartThemeResolvedColors()', context))),
         {
@@ -120,4 +122,67 @@ test('chart theme dependency explicitly exports the API used by System Health', 
     releaseTimeSeries();
     await collection;
     assert.deepEqual(sequence, ['time-series-start', 'time-series-complete', 'totals-start']);
+});
+
+test('Reveal(x) and ClassicHop replace the retired built-ins and expose their PowerPoint treatment', () => {
+    const source = fs.readFileSync(
+        path.join(__dirname, '..', 'js', 'modules', 'chart-theme.js'),
+        'utf8'
+    );
+
+    function loadTheme(selected) {
+        const elements = {
+            chartThemePanel: { addEventListener() {} },
+            chartThemeList: { innerHTML: '' },
+            chartThemeEditor: { innerHTML: '' },
+            chartThemeActions: { innerHTML: '' },
+            chartThemeHint: { textContent: '' },
+            chartThemeStatus: { textContent: '', classList: { toggle() {} } }
+        };
+        const window = {};
+        const context = vm.createContext({
+            window,
+            document: {
+                documentElement: { getAttribute: () => 'light' },
+                getElementById: id => elements[id] || null,
+                querySelectorAll: () => []
+            },
+            localStorage: {
+                getItem: () => JSON.stringify({ selected, transparent: false, draft: null }),
+                setItem() {}
+            },
+            fetch: async () => ({
+                ok: true,
+                json: async () => ({ themes: [], directory: '', writable: false })
+            }),
+            MutationObserver: class { observe() {} },
+            console
+        });
+        vm.runInContext(source, context);
+        window.initChartThemePanel();
+        return { window, elements };
+    }
+
+    const reveal = loadTheme('reveal-x');
+    assert.match(reveal.elements.chartThemeList.innerHTML, /Reveal\(x\)/);
+    assert.match(reveal.elements.chartThemeList.innerHTML, /ClassicHop/);
+    assert.doesNotMatch(reveal.elements.chartThemeList.innerHTML, /Midnight|Slate|Monochrome/);
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(reveal.window.chartThemePresentationStyle())),
+        { id: 'reveal-x' }
+    );
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(reveal.window.chartThemeResolvedColors())).low,
+        '#00b6ad'
+    );
+
+    const classic = loadTheme('classichop');
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(classic.window.chartThemePresentationStyle())),
+        { id: 'classichop' }
+    );
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(classic.window.chartThemeResolvedColors())).low,
+        '#2c7baf'
+    );
 });
