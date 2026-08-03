@@ -45,3 +45,29 @@ Behavior tests are preferred over assertions that search source text. API collec
 
 `python scripts/build_dist.py` creates the end-user ZIP from an explicit allowlist. New runtime files must be added to the build script and its validation list when applicable.
 
+## GitLab-to-GitHub publishing
+
+GitLab is authoritative. The standard checkout uses a `gitlab` remote for
+`git@digit.i.extrahop.com:thomass/eh-admin-tools.git` and a `github` remote for
+`git@github.com:thomaswde/eh-admin-tools.git`. Commit and push work to GitLab first.
+
+To mirror `main` without making a release:
+
+```bash
+scripts/publish_github_release.sh --sync-only
+```
+
+For a release, update `VERSION`, `package.json`, and `package-lock.json` in the same
+GitLab commit, using `YYYY.MM.DD` in `VERSION` and the equivalent numeric npm version.
+Then run:
+
+```bash
+scripts/publish_github_release.sh
+# or: scripts/publish_github_release.sh --notes-file release-notes.md
+```
+
+The release command requires a clean `main` exactly matching `gitlab/main`, refuses to
+overwrite GitHub-only history, runs all JavaScript and Python checks, builds and verifies
+the ZIP, creates the version tag in both repositories, and publishes the artifacts as a
+GitHub release. Without `--notes-file`, GitHub generates the release notes.
+
