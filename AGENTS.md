@@ -34,3 +34,9 @@ git diff --check
 ```
 
 The GitLab pipeline runs the JavaScript, Python, lint, and distribution stages. Live ExtraHop coverage remains a separate manual integration activity; a green fixture suite is not evidence that every supported product version or deployment topology was exercised.
+
+## Publishing
+
+- GitLab is authoritative. Commit and push `main` to the `gitlab` remote first.
+- Mirror without releasing with `scripts/publish_github_release.sh --sync-only`.
+- For a release, update `VERSION`, `package.json`, and `package-lock.json` in one GitLab commit, then run `scripts/publish_github_release.sh` (optionally `--notes-file PATH`). The script runs release gates, builds and verifies artifacts, tags both remotes, and creates the GitHub release.
