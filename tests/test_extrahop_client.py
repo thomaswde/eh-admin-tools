@@ -214,6 +214,48 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         sleep.assert_not_awaited()
         await client.aclose()
 
+    async def test_hopcloud_auth_redirect_explains_how_to_supply_the_cookie_token(self):
+        async def handler(_request):
+            return httpx.Response(307, text="Redirecting for authentication")
+
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "console.ra.hopcloud.extrahop.com",
+                "apiKey": "key",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        with self.assertRaises(ExtraHopApiError) as raised:
+            await client.request("GET", "/appliances")
+
+        self.assertEqual(raised.exception.status_code, 307)
+        self.assertIn("HopCloud Proxy authentication failed", str(raised.exception))
+        self.assertIn("cookie named 'token'", raised.exception.details["hint"])
+        self.assertIn("console.ra.hopcloud.extrahop.com", raised.exception.details["url"])
+        await client.aclose()
+
+    async def test_non_hopcloud_redirect_keeps_the_generic_api_error(self):
+        async def handler(_request):
+            return httpx.Response(307, text="Redirecting for authentication")
+
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        with self.assertRaises(ExtraHopApiError) as raised:
+            await client.request("GET", "/appliances")
+
+        self.assertNotIn("HopCloud Proxy authentication failed", str(raised.exception))
+        self.assertNotIn("hint", raised.exception.details)
+        await client.aclose()
+
     async def test_cancellation_is_not_retried_or_wrapped(self):
         client = ExtraHopClient(
             {

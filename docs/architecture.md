@@ -29,7 +29,7 @@ When a new identifier field is introduced, extend the backend normalization cont
 
 Dashboard PATCH and DELETE requests also have a bounded, per-session single-flight guard. Identical concurrent mutations share one upstream task, so a duplicate browser submission cannot repeat the same in-progress change. The guard is not a durable idempotency cache: after the first operation finishes, a later intentional request may run normally.
 
-The browser API wrapper owns a request timeout and caller cancellation. A collector that drains asynchronous ExtraHop results, such as Metrics XID continuations, owns the continuation state machine and one absolute deadline beginning before the initial request. It must not wrap backend transport retries in another retry loop. Exhaustion produces an explicit incomplete or failed state, never silent partial success or zero.
+The browser API wrapper owns a request timeout and caller cancellation. A collector that drains asynchronous ExtraHop results, such as Metrics XID continuations, owns the continuation state machine and one absolute deadline beginning before the initial request. It must not wrap backend transport retries in another retry loop. System Health balances metric work into batches of at most 40 sensors, retains conclusive partial chunks, and may bisect unresolved batches within explicit continuation and recovery-query limits. Authorization and exhausted rate-limit responses are terminal for the affected batch and are not multiplied through recovery requests. Exhaustion produces an explicit incomplete or failed per-sensor state, never silent partial success or zero.
 
 ## Report windows and status semantics
 

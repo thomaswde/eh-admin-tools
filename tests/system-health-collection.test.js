@@ -129,6 +129,21 @@ test('preserves a sensor-specific XID failure while completing other sensor chun
     assert.equal(coverage['8'].status, 'failed');
 });
 
+test('preserves authorization status from a sensor-specific continuation failure', () => {
+    const sensorError = new Error('forbidden');
+    sensorError.status = 403;
+    sensorError.details = {
+        response: { error_message: '"sensor-8" (ID 8 at 10.0.0.8): access denied' }
+    };
+
+    assert.deepEqual(health.metricSensorFailure(sensorError), {
+        sensor_id: '8',
+        status: 'unauthorized',
+        detail: '"sensor-8" (ID 8 at 10.0.0.8): access denied',
+        http_status: 403
+    });
+});
+
 test('surfaces an upstream continuation gzip failure for partial-report diagnostics', async () => {
     const gzipError = new Error('API request failed: 500 - gzip: invalid header');
     gzipError.status = 500;
@@ -204,6 +219,136 @@ test('does not multiply backend retry attempts in the browser collector', async 
         error => error === rateLimit
     );
     assert.equal(attempts, 1);
+});
+
+test('balances large metric requests under the per-query sensor cap', () => {
+    const ids = Array.from({ length: 81 }, (_, index) => `sensor-${index + 1}`);
+    const batches = health.balancedMetricBatches(ids);
+
+    assert.deepEqual(batches.map(batch => batch.length), [27, 27, 27]);
+    assert.deepEqual(batches.flat(), ids);
+    assert.ok(batches.every(batch => batch.length <= health.MAX_METRIC_BATCH_SIZE));
+    assert.throws(() => health.balancedMetricBatches(ids, 41), RangeError);
+});
+
+test('collects balanced metric batches without losing opaque sensor IDs', async () => {
+    const ids = Array.from({ length: 81 }, (_, index) => String(9007199254741000n + BigInt(index)));
+    const requestBatches = [];
+
+    const result = await health.collectMetricBatches(async (_endpoint, options) => {
+        const body = JSON.parse(options.body);
+        requestBatches.push(body.object_ids);
+        return {
+            stats: body.object_ids.map(id => ({ oid: id, time: 1, duration: 1000, values: [1] }))
+        };
+    }, '/metrics', { object_ids: ids }, { now: () => 0 });
+
+    assert.deepEqual(requestBatches.map(batch => batch.length), [27, 27, 27]);
+    assert.deepEqual(requestBatches.flat(), ids);
+    assert.equal(result.complete, true);
+    assert.equal(result.collection_metadata.conclusive_sensor_count, 81);
+    assert.equal(result.collection_metadata.query_count, 3);
+});
+
+test('recovers good sensors by splitting an inconclusive metric batch', async () => {
+    const calls = [];
+    const badBatch = new Error('one sensor poisoned the batch response');
+    badBatch.status = 500;
+
+    const result = await health.collectMetricBatches(async (_endpoint, options) => {
+        const ids = JSON.parse(options.body).object_ids;
+        calls.push(ids);
+        if (ids.includes('3')) throw badBatch;
+        return {
+            stats: ids.map(id => ({ oid: id, time: 1, duration: 1000, values: [1] }))
+        };
+    }, '/metrics', { object_ids: ['1', '2', '3', '4'] }, {
+        maxBatchSize: 4,
+        now: () => 0
+    });
+
+    assert.deepEqual(calls, [
+        ['1', '2', '3', '4'],
+        ['1', '2'],
+        ['3', '4'],
+        ['3'],
+        ['4']
+    ]);
+    assert.equal(result.complete, true);
+    assert.equal(result.sensor_failures['3'].status, 'failed');
+    assert.equal(result.collection_metadata.recovered_sensor_count, 3);
+    assert.equal(result.collection_metadata.recovery_query_count, 4);
+});
+
+test('batch recovery retries only sensors not proven by partial XID chunks', async () => {
+    const postedBatches = [];
+    let continuationCalls = 0;
+    const partialFailure = new Error('continuation response was truncated');
+    partialFailure.status = 500;
+
+    const result = await health.collectMetricBatches(async (endpoint, options) => {
+        if (endpoint.startsWith('/metrics/next/')) {
+            continuationCalls += 1;
+            if (continuationCalls === 1) {
+                return { node_id: '1', stats: [{ oid: '1', time: 1, duration: 1000, values: [1] }] };
+            }
+            throw partialFailure;
+        }
+        const ids = JSON.parse(options.body).object_ids;
+        postedBatches.push(ids);
+        if (ids.length === 2) return { xid: '77' };
+        return { node_id: ids[0], stats: [{ oid: ids[0], time: 1, duration: 1000, values: [1] }] };
+    }, '/metrics', { object_ids: ['1', '2'] }, {
+        maxBatchSize: 2,
+        now: () => 0
+    });
+
+    assert.deepEqual(postedBatches, [['1', '2'], ['2']]);
+    assert.equal(continuationCalls, 2);
+    assert.equal(result.complete, true);
+    assert.equal(result.collection_metadata.recovered_sensor_count, 1);
+});
+
+test('does not multiply batch requests after an authorization or rate-limit failure', async () => {
+    for (const [httpStatus, expectedStatus] of [[403, 'unauthorized'], [429, 'rate_limited']]) {
+        let attempts = 0;
+        const terminal = new Error(`HTTP ${httpStatus}`);
+        terminal.status = httpStatus;
+
+        const result = await health.collectMetricBatches(async () => {
+            attempts += 1;
+            throw terminal;
+        }, '/metrics', { object_ids: ['1', '2', '3', '4'] }, {
+            maxBatchSize: 4,
+            now: () => 0
+        });
+
+        assert.equal(attempts, 1);
+        assert.equal(result.complete, false);
+        assert.deepEqual(
+            Object.values(result.sensor_statuses).map(item => item.status),
+            [expectedStatus, expectedStatus, expectedStatus, expectedStatus]
+        );
+        assert.equal(result.collection_metadata.recovery_query_count, 0);
+    }
+});
+
+test('bounds non-pending XID continuation responses', async () => {
+    let continuationCalls = 0;
+    await assert.rejects(
+        health.collectMetricEndpoint(async endpoint => {
+            if (endpoint === '/metrics') return { xid: 'bounded' };
+            continuationCalls += 1;
+            return { node_id: '1', stats: [{ oid: '1', time: continuationCalls, values: [1] }] };
+        }, '/metrics', {}, {
+            maxContinuationRequests: 2,
+            now: () => 0
+        }),
+        error => error instanceof health.SystemHealthIncompleteResultError
+            && error.details.reason === 'continuation_limit'
+            && error.metric_result.chunks.length === 2
+    );
+    assert.equal(continuationCalls, 2);
 });
 
 test('supports an XID returned by total-by-object and keeps totals out of peaks', async () => {

@@ -98,6 +98,7 @@ def validate_package(package_root: Path) -> None:
         "requirements.lock",
         "app/main.py",
         "app/index.html",
+        "app/backend/build_identity.py",
         "app/backend/extrahop_client.py",
         "app/backend/system_health_pdf.py",
         "app/css/styles.css",

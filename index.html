@@ -63,9 +63,12 @@
                         <span id="savedConnectionStatus" class="field-hint">Checking the local .env file and secure credential store.</span>
                     </div>
                     <div id="savedEnterpriseProxyTokenField" class="field" hidden>
-                        <label for="savedEnterpriseProxyToken">Remote access proxy token</label>
+                        <label for="savedEnterpriseProxyToken">
+                            Remote access proxy token
+                            <span class="auth-tooltip" tabindex="0" aria-label="While signed in to the same HopCloud remote-access URL, open browser Developer Tools, then Application or Storage, then Cookies. Find the cookie named token and paste only its Value here. Do not paste token= or the full Cookie header.">?</span>
+                        </label>
                         <input type="password" id="savedEnterpriseProxyToken" autocomplete="off">
-                        <span class="field-hint">Optional for ExtraHop Cloud Services remote access. Used for this connection only and never saved.</span>
+                        <span class="field-hint">Copy only the value of the browser cookie named <code>token</code> for the HopCloud URL. Do not include <code>token=</code> or the full Cookie header. Used for this connection only and never saved.</span>
                     </div>
                     <button type="button" id="connectSavedBtn" class="btn-primary btn-block" disabled>Connect</button>
                     <button type="button" id="addConnectionBtn" class="btn btn-block">Add new connection</button>
@@ -126,12 +129,12 @@
                         <details class="optional-auth-details">
                             <summary>
                                 <span>Remote access proxy token</span>
-                                <span class="auth-tooltip" tabindex="0" aria-label="This header is for use only with ExtraHop remote access via ExtraHop Cloud Services.">?</span>
+                                <span class="auth-tooltip" tabindex="0" aria-label="While signed in to the same HopCloud remote-access URL, open browser Developer Tools, then Application or Storage, then Cookies. Find the cookie named token and paste only its Value here. Do not paste token= or the full Cookie header.">?</span>
                             </summary>
                             <div class="field" style="margin-top: 12px;">
-                                <label for="enterpriseProxyToken">Proxy token header</label>
+                                <label for="enterpriseProxyToken">Browser cookie token value</label>
                                 <input type="password" id="enterpriseProxyToken" autocomplete="off">
-                                <span class="field-hint">Optional for ExtraHop Cloud Services remote access. Used for this connection only and never saved.</span>
+                                <span class="field-hint">Copy only the value of the browser cookie named <code>token</code> for the HopCloud URL. Do not include <code>token=</code> or the full Cookie header. Used for this connection only and never saved.</span>
                             </div>
                         </details>
 

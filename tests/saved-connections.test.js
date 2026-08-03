@@ -8,6 +8,15 @@ function source(relativePath) {
     return fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
 }
 
+test('HopCloud proxy-token fields explain how to copy only the cookie value', () => {
+    const markup = source('index.html');
+
+    assert.match(markup, /cookie named <code>token<\/code>/);
+    assert.match(markup, /Do not include <code>token=<\/code> or the full Cookie header/);
+    assert.match(markup, /id="savedEnterpriseProxyToken"/);
+    assert.match(markup, /id="enterpriseProxyToken"/);
+});
+
 test('mixed saved connections are grouped with 360 before Enterprise', () => {
     const context = vm.createContext({ console });
     vm.runInContext(source('js/auth/auth-manager.js'), context);

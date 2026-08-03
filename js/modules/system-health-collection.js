@@ -25,8 +25,11 @@
     ];
     const MAX_BUCKETS_PER_SENSOR = 10_000;
     const MAX_SCALAR_POINTS_PER_REPORT = 500_000;
+    const MAX_METRIC_BATCH_SIZE = 40;
     const DEFAULT_XID_DEADLINE_MS = 5 * 60 * 1000;
     const DEFAULT_PENDING_RETRIES = 120;
+    const DEFAULT_MAX_CONTINUATION_REQUESTS = 1000;
+    const DEFAULT_MAX_RECOVERY_QUERIES = 64;
 
     class SystemHealthIncompleteResultError extends Error {
         constructor(message, details = {}) {
@@ -143,6 +146,26 @@
         };
     }
 
+    function balancedMetricBatches(objectIds, maxBatchSize = MAX_METRIC_BATCH_SIZE) {
+        const ids = Array.from(objectIds || []);
+        const cap = Math.floor(Number(maxBatchSize));
+        if (!Number.isFinite(cap) || cap < 1 || cap > MAX_METRIC_BATCH_SIZE) {
+            throw new RangeError(`Metric batch size must be between 1 and ${MAX_METRIC_BATCH_SIZE}.`);
+        }
+        if (!ids.length) return [];
+        const batchCount = Math.ceil(ids.length / cap);
+        const smallerSize = Math.floor(ids.length / batchCount);
+        const largerBatchCount = ids.length % batchCount;
+        const batches = [];
+        let offset = 0;
+        for (let index = 0; index < batchCount; index += 1) {
+            const size = smallerSize + (index < largerBatchCount ? 1 : 0);
+            batches.push(ids.slice(offset, offset + size));
+            offset += size;
+        }
+        return batches;
+    }
+
     function responseXid(response) {
         if (!response || typeof response !== 'object') return null;
         const xid = response.xid;
@@ -174,39 +197,49 @@
     }
 
     function metricSensorFailure(error) {
-        if (!error || Number(error.status) !== 500) return null;
+        if (!error) return null;
         const response = error.details && error.details.response;
         const message = response && typeof response === 'object'
             ? response.error_message || response.error || ''
             : '';
         const match = String(message).match(/\(\s*ID\s+([0-9]+)\s+at\b/i);
         if (!match) return null;
+        const httpStatus = Number(error.status) || null;
         return {
             sensor_id: idKey(match[1]),
-            status: 'failed',
+            status: httpStatus === 401 || httpStatus === 403 ? 'unauthorized'
+                : httpStatus === 429 ? 'rate_limited'
+                    : 'failed',
             detail: String(message),
-            http_status: 500
+            http_status: httpStatus
         };
     }
 
     async function collectMetricEndpoint(request, endpoint, body, options = {}) {
         const now = options.now || Date.now;
         const sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
-        const deadlineMs = options.deadlineMs || DEFAULT_XID_DEADLINE_MS;
-        const maxPendingRetries = options.maxPendingRetries || DEFAULT_PENDING_RETRIES;
+        const deadlineMs = options.deadlineMs ?? DEFAULT_XID_DEADLINE_MS;
+        const maxPendingRetries = options.maxPendingRetries ?? DEFAULT_PENDING_RETRIES;
+        const maxContinuationRequests = options.maxContinuationRequests ?? DEFAULT_MAX_CONTINUATION_REQUESTS;
         // HTTP retry/backoff belongs to the backend client. The browser owns only
         // continuation polling and one absolute collection deadline, beginning
         // before the initial POST rather than after it returns.
-        const deadline = now() + deadlineMs;
+        const deadline = options.absoluteDeadline ?? (now() + deadlineMs);
         const requestOptions = {
             method: 'POST',
             body: JSON.stringify(body),
             signal: options.signal,
             timeoutMs: Math.max(1, deadline - now())
         };
-        const initial = await request(endpoint, requestOptions);
         const chunks = [];
         const sensorFailures = {};
+        let initial;
+        try {
+            initial = await request(endpoint, requestOptions);
+        } catch (error) {
+            error.metric_result = { chunks, sensor_failures: sensorFailures };
+            throw error;
+        }
         if (initial && typeof initial === 'object' && Array.isArray(initial.stats)) chunks.push(initial);
 
         const xid = responseXid(initial);
@@ -214,15 +247,32 @@
 
         let pendingRetries = 0;
         let resultChunks = 0;
+        let continuationRequests = 0;
         while (true) {
             if (now() >= deadline) {
-                throw new SystemHealthIncompleteResultError(
+                const error = new SystemHealthIncompleteResultError(
                     `Metric query ${String(xid)} did not complete before the ${deadlineMs} ms deadline.`,
-                    { xid: idKey(xid), result_chunks: resultChunks, pending_retries: pendingRetries }
+                    { xid: idKey(xid), result_chunks: resultChunks, pending_retries: pendingRetries, reason: 'deadline' }
                 );
+                error.metric_result = { chunks, sensor_failures: sensorFailures };
+                throw error;
+            }
+            if (continuationRequests >= maxContinuationRequests) {
+                const error = new SystemHealthIncompleteResultError(
+                    `Metric query ${String(xid)} exceeded the ${maxContinuationRequests} continuation-request limit.`,
+                    {
+                        xid: idKey(xid),
+                        result_chunks: resultChunks,
+                        continuation_requests: continuationRequests,
+                        reason: 'continuation_limit'
+                    }
+                );
+                error.metric_result = { chunks, sensor_failures: sensorFailures };
+                throw error;
             }
             let chunk;
             try {
+                continuationRequests += 1;
                 chunk = await request(
                     `/metrics/next/${encodeURIComponent(idKey(xid))}`,
                     {
@@ -233,7 +283,10 @@
                 );
             } catch (error) {
                 const sensorFailure = metricSensorFailure(error);
-                if (!sensorFailure) throw error;
+                if (!sensorFailure) {
+                    error.metric_result = { chunks, sensor_failures: sensorFailures };
+                    throw error;
+                }
                 sensorFailures[sensorFailure.sensor_id] = sensorFailure;
                 pendingRetries = 0;
                 continue;
@@ -249,25 +302,258 @@
             if (chunk === 'again') {
                 pendingRetries += 1;
                 if (pendingRetries > maxPendingRetries) {
-                    throw new SystemHealthIncompleteResultError(
+                    const error = new SystemHealthIncompleteResultError(
                         `Metric query ${String(xid)} remained pending after ${maxPendingRetries} retries.`,
-                        { xid: idKey(xid), result_chunks: resultChunks, pending_retries: pendingRetries }
+                        { xid: idKey(xid), result_chunks: resultChunks, pending_retries: pendingRetries, reason: 'pending_limit' }
                     );
+                    error.metric_result = { chunks, sensor_failures: sensorFailures };
+                    throw error;
                 }
                 const pendingDelay = Math.min(5000, 500 * (2 ** Math.min(4, pendingRetries - 1)));
                 await sleep(Math.min(pendingDelay, Math.max(0, deadline - now())));
                 continue;
             }
             if (!chunk || typeof chunk !== 'object' || !Array.isArray(chunk.stats)) {
-                throw new SystemHealthIncompleteResultError(
+                const error = new SystemHealthIncompleteResultError(
                     `Metric query ${String(xid)} returned an unexpected continuation response.`,
-                    { xid: idKey(xid), response: chunk }
+                    { xid: idKey(xid), response: chunk, reason: 'unexpected_response' }
                 );
+                error.metric_result = { chunks, sensor_failures: sensorFailures };
+                throw error;
             }
             chunks.push(chunk);
             resultChunks += 1;
             pendingRetries = 0;
         }
+    }
+
+    function conclusiveSensorIds(chunks, requestedIds) {
+        const requested = new Set(Array.from(requestedIds || [], idKey));
+        const found = new Set();
+        (chunks || []).forEach(chunk => {
+            const nodeId = idKey(chunk && chunk.node_id);
+            if (requested.has(nodeId)) found.add(nodeId);
+            (Array.isArray(chunk && chunk.stats) ? chunk.stats : []).forEach(stat => {
+                const objectId = idKey(stat && stat.oid);
+                if (requested.has(objectId)) found.add(objectId);
+            });
+        });
+        return found;
+    }
+
+    function terminalMetricStatus(error, fallback = 'batch_incomplete') {
+        const status = Number(error && error.status);
+        if (status === 401 || status === 403) return 'unauthorized';
+        if (status === 429) return 'rate_limited';
+        if (error instanceof SystemHealthIncompleteResultError) {
+            if (error.details && error.details.reason === 'deadline') return 'timed_out';
+            if (['continuation_limit', 'pending_limit'].includes(error.details && error.details.reason)) {
+                return 'batch_incomplete';
+            }
+        }
+        return fallback;
+    }
+
+    async function collectMetricBatches(request, endpoint, body, options = {}) {
+        const now = options.now || Date.now;
+        const deadlineMs = options.deadlineMs ?? DEFAULT_XID_DEADLINE_MS;
+        const absoluteDeadline = now() + deadlineMs;
+        const maxRecoveryQueries = options.maxRecoveryQueries ?? DEFAULT_MAX_RECOVERY_QUERIES;
+        const requestedIds = Array.from(body && body.object_ids || [], idKey);
+        const initialBatches = balancedMetricBatches(
+            requestedIds,
+            options.maxBatchSize ?? MAX_METRIC_BATCH_SIZE
+        );
+        const chunks = [];
+        const sensorFailures = {};
+        const sensorStatuses = {};
+        const conclusive = new Set();
+        const empty = new Set();
+        const recovered = new Set();
+        const recoveryQueue = [];
+        let queryCount = 0;
+        let recoveryQueryCount = 0;
+        let deadlineExhausted = false;
+        let recoveryLimitExhausted = false;
+
+        const unresolvedIn = ids => ids.filter(id => !conclusive.has(id));
+        const recordResult = (ids, result, phase) => {
+            const returned = conclusiveSensorIds(result.chunks, ids);
+            result.chunks.forEach(chunk => chunks.push(chunk));
+            Object.entries(result.sensor_failures || {}).forEach(([id, failure]) => {
+                const key = idKey(id);
+                if (!ids.includes(key)) return;
+                sensorFailures[key] = failure;
+                conclusive.add(key);
+            });
+            returned.forEach(id => {
+                conclusive.add(id);
+                if (phase === 'recovery') recovered.add(id);
+            });
+            if (result.complete) {
+                ids.forEach(id => {
+                    if (conclusive.has(id)) return;
+                    conclusive.add(id);
+                    empty.add(id);
+                    if (phase === 'recovery') recovered.add(id);
+                });
+            }
+        };
+
+        const runBatch = async (ids, phase) => {
+            const unresolved = unresolvedIn(ids);
+            if (!unresolved.length) return { complete: true, unresolved: [], error: null };
+            if (now() >= absoluteDeadline) {
+                deadlineExhausted = true;
+                return {
+                    complete: false,
+                    unresolved,
+                    error: new SystemHealthIncompleteResultError(
+                        'Metric batch recovery reached its absolute deadline.',
+                        { reason: 'deadline' }
+                    )
+                };
+            }
+            queryCount += 1;
+            if (phase === 'recovery') recoveryQueryCount += 1;
+            const batchBody = { ...body, object_ids: unresolved };
+            try {
+                const result = await collectMetricEndpoint(request, endpoint, batchBody, {
+                    ...options,
+                    absoluteDeadline,
+                    deadlineMs
+                });
+                recordResult(unresolved, result, phase);
+                return { complete: true, unresolved: [], error: null };
+            } catch (error) {
+                if (options.signal && options.signal.aborted) throw error;
+                const partial = error.metric_result || { chunks: [], sensor_failures: {} };
+                recordResult(unresolved, { ...partial, complete: false }, phase);
+                if (now() >= absoluteDeadline) {
+                    deadlineExhausted = true;
+                }
+                return { complete: false, unresolved: unresolvedIn(unresolved), error };
+            }
+        };
+
+        const recordSingleSensorError = (id, error) => {
+            const status = terminalMetricStatus(error, 'failed');
+            const terminal = {
+                sensor_id: id,
+                status,
+                detail: error.message || String(error),
+                http_status: Number(error.status) || null
+            };
+            if (status === 'failed') {
+                sensorFailures[id] = terminal;
+                conclusive.add(id);
+            } else {
+                sensorStatuses[id] = terminal;
+            }
+        };
+        const recordBatchWideTerminalError = (ids, error) => {
+            const status = terminalMetricStatus(error, null);
+            if (!['unauthorized', 'rate_limited', 'timed_out'].includes(status)) return false;
+            ids.forEach(id => {
+                sensorStatuses[id] = {
+                    sensor_id: id,
+                    status,
+                    detail: error.message || String(error),
+                    http_status: Number(error.status) || null
+                };
+            });
+            return true;
+        };
+
+        for (let index = 0; index < initialBatches.length; index += 1) {
+            const batch = initialBatches[index];
+            if (deadlineExhausted) {
+                initialBatches.slice(index).flat().forEach(id => {
+                    if (!conclusive.has(id)) sensorStatuses[id] = { status: 'timed_out', detail: 'metric collection deadline exhausted' };
+                });
+                break;
+            }
+            const outcome = await runBatch(batch, 'initial');
+            if (!outcome.complete && outcome.unresolved.length) {
+                if (recordBatchWideTerminalError(outcome.unresolved, outcome.error)) {
+                    continue;
+                }
+                if (outcome.unresolved.length === 1 && batch.length === 1 && !deadlineExhausted) {
+                    const id = outcome.unresolved[0];
+                    recordSingleSensorError(id, outcome.error);
+                } else if (!deadlineExhausted) {
+                    recoveryQueue.push({ ids: outcome.unresolved, error: outcome.error });
+                }
+            }
+        }
+
+        while (recoveryQueue.length && !deadlineExhausted) {
+            const pending = recoveryQueue.shift();
+            const unresolved = unresolvedIn(pending.ids);
+            if (!unresolved.length) continue;
+            if (recoveryQueryCount >= maxRecoveryQueries) {
+                recoveryLimitExhausted = true;
+                recoveryQueue.unshift({ ...pending, ids: unresolved });
+                break;
+            }
+            const smallerBatches = balancedMetricBatches(unresolved, Math.max(1, Math.ceil(unresolved.length / 2)));
+            for (let index = 0; index < smallerBatches.length; index += 1) {
+                const batch = smallerBatches[index];
+                if (recoveryQueryCount >= maxRecoveryQueries) {
+                    recoveryLimitExhausted = true;
+                    recoveryQueue.push({ ids: smallerBatches.slice(index).flat(), error: pending.error });
+                    break;
+                }
+                const outcome = await runBatch(batch, 'recovery');
+                if (outcome.complete || !outcome.unresolved.length) continue;
+                if (outcome.unresolved.length === 1 && batch.length === 1 && !deadlineExhausted) {
+                    const id = outcome.unresolved[0];
+                    recordSingleSensorError(id, outcome.error);
+                } else if (!deadlineExhausted) {
+                    recoveryQueue.push({ ids: outcome.unresolved, error: outcome.error });
+                }
+            }
+        }
+
+        const queuedErrors = new Map();
+        recoveryQueue.forEach(item => item.ids.forEach(id => queuedErrors.set(id, item.error)));
+        requestedIds.forEach(id => {
+            if (conclusive.has(id) || sensorStatuses[id]) return;
+            const error = queuedErrors.get(id);
+            const status = deadlineExhausted ? 'timed_out'
+                : recoveryLimitExhausted ? terminalMetricStatus(error, 'batch_incomplete')
+                    : terminalMetricStatus(error, 'batch_incomplete');
+            sensorStatuses[id] = {
+                status,
+                detail: deadlineExhausted
+                    ? 'metric collection deadline exhausted before this sensor became conclusive'
+                    : recoveryLimitExhausted
+                        ? `metric batch recovery exhausted its ${maxRecoveryQueries}-query follow-up limit`
+                        : (error && error.message) || 'metric batch did not produce a conclusive sensor result'
+            };
+        });
+
+        const failedCount = Object.values(sensorFailures).filter(item => item.status === 'failed').length;
+        return {
+            chunks,
+            complete: Object.keys(sensorStatuses).length === 0,
+            sensor_failures: sensorFailures,
+            sensor_statuses: sensorStatuses,
+            collection_metadata: {
+                batch_cap: MAX_METRIC_BATCH_SIZE,
+                initial_batch_count: initialBatches.length,
+                initial_batch_sizes: initialBatches.map(batch => batch.length),
+                query_count: queryCount,
+                recovery_query_count: recoveryQueryCount,
+                conclusive_sensor_count: conclusive.size,
+                recovered_sensor_count: recovered.size,
+                empty_sensor_count: empty.size,
+                failed_sensor_count: failedCount,
+                unresolved_sensor_count: Object.keys(sensorStatuses).length,
+                deadline_exhausted: deadlineExhausted,
+                recovery_limit_exhausted: recoveryLimitExhausted
+            }
+        };
     }
 
     function resolveSensorId(stat, chunk, appliancesById) {
@@ -505,12 +791,8 @@
                 return;
             }
             if (options.error) {
-                const errorStatus = Number(options.error.status);
                 coverage[id] = {
-                    status: errorStatus === 401 || errorStatus === 403 ? 'unauthorized'
-                        : options.error instanceof SystemHealthIncompleteResultError ? 'timed_out'
-                            : errorStatus === 429 ? 'rate_limited'
-                                : 'failed',
+                    status: terminalMetricStatus(options.error, 'failed'),
                     detail: options.error.message || String(options.error)
                 };
                 return;
@@ -520,6 +802,14 @@
                 coverage[id] = {
                     status: sensorFailure.status || 'failed',
                     detail: sensorFailure.detail || 'sensor metric query failed'
+                };
+                return;
+            }
+            const collectionStatus = options.sensorStatuses && options.sensorStatuses[id];
+            if (collectionStatus) {
+                coverage[id] = {
+                    status: collectionStatus.status || 'batch_incomplete',
+                    detail: collectionStatus.detail || 'metric batch did not complete for this sensor'
                 };
                 return;
             }
@@ -563,6 +853,8 @@
         PACKETSTORE_TOTAL_METRICS,
         MAX_BUCKETS_PER_SENSOR,
         MAX_SCALAR_POINTS_PER_REPORT,
+        MAX_METRIC_BATCH_SIZE,
+        DEFAULT_MAX_RECOVERY_QUERIES,
         SystemHealthIncompleteResultError,
         idKey,
         nestedNumber,
@@ -570,10 +862,12 @@
         estimateBucketCount,
         chooseCyclePolicy,
         buildMetricRequest,
+        balancedMetricBatches,
         metricSensorFailure,
         isPacketstoreProbeMiss,
         hasMetricValue,
         collectMetricEndpoint,
+        collectMetricBatches,
         normalizeTimeSeriesChunks,
         normalizeAggregateChunks,
         summarizeTimeSeriesRows,

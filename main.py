@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.api_response_logger import ApiResponseLogger, LOG_VERBOSITIES
+from backend.build_identity import resolve_runtime_version
 from backend.connection_store import ConnectionStorageError, ConnectionStore
 from backend.extrahop_client import ExtraHopApiError, ExtraHopClient, ExtraHopResponse
 from backend.session_store import SessionStore
@@ -39,7 +40,6 @@ CHART_THEME_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 # Built-in theme ids ship in js/modules/chart-theme.js and must stay unshadowed.
 CHART_THEME_RESERVED_IDS = {"auto", "draft", "light", "dark", "midnight", "slate", "mono"}
 VERSION_PATH = APP_ROOT.parent / "VERSION" if APP_ROOT.name == "app" else APP_ROOT / "VERSION"
-APP_VERSION = VERSION_PATH.read_text(encoding="utf-8").strip() if VERSION_PATH.exists() else "development"
 COMMIT_PATH = VERSION_PATH.with_name("COMMIT")
 
 
@@ -79,6 +79,11 @@ def is_worktree_dirty() -> bool:
 
 
 APP_COMMIT = resolve_app_commit()
+APP_VERSION = resolve_runtime_version(
+    APP_ROOT,
+    VERSION_PATH,
+    None if COMMIT_PATH.exists() else APP_COMMIT if APP_COMMIT != "unknown" else "HEAD",
+)
 
 
 @asynccontextmanager
