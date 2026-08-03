@@ -425,7 +425,7 @@ async function collectSystemHealthTimeSeries(metricSensors, allSensors, applianc
         metricNames
     });
     try {
-        const result = await SystemHealthCollection.collectMetricEndpoint(
+        const result = await SystemHealthCollection.collectMetricBatches(
             window.apiClient.request.bind(window.apiClient),
             '/metrics',
             body,
@@ -451,7 +451,7 @@ async function collectSystemHealthTimeSeries(metricSensors, allSensors, applianc
             const coverage = SystemHealthCollection.buildSensorCoverage(
                 allSensors,
                 rows.map(row => ({ appliance_id: row.appliance_id, value: row.value })),
-                { sensorFailures: result.sensor_failures }
+                { sensorFailures: result.sensor_failures, sensorStatuses: result.sensor_statuses }
             );
             errors.push(...systemHealthCoverageErrors(coverage, metricName));
             metrics[metricName] = {
@@ -459,6 +459,7 @@ async function collectSystemHealthTimeSeries(metricSensors, allSensors, applianc
                 aggregation_mode: 'time_series',
                 rows,
                 collection_metadata: normalized.metadata,
+                batch_recovery: result.collection_metadata,
                 sensor_failures: result.sensor_failures,
                 summary: SystemHealthCollection.summarizeTimeSeriesRows(normalized.rows, metricName),
                 sensor_status: coverage,
@@ -505,7 +506,7 @@ async function collectSystemHealthTriggerDrops(metricSensors, allSensors, applia
         metricNames: ['trigger_drops']
     });
     try {
-        const result = await SystemHealthCollection.collectMetricEndpoint(
+        const result = await SystemHealthCollection.collectMetricBatches(
             window.apiClient.request.bind(window.apiClient),
             '/metrics/totalbyobject',
             body,
@@ -523,13 +524,14 @@ async function collectSystemHealthTriggerDrops(metricSensors, allSensors, applia
         const coverage = SystemHealthCollection.buildSensorCoverage(
             allSensors,
             normalized.rows,
-            { sensorFailures: result.sensor_failures }
+            { sensorFailures: result.sensor_failures, sensorStatuses: result.sensor_statuses }
         );
         return {
             metric_category_used: 'capture',
             aggregation_mode: 'total_by_object',
             rows: normalized.rows,
             collection_metadata: normalized.metadata,
+            batch_recovery: result.collection_metadata,
             sensor_failures: result.sensor_failures,
             summary: SystemHealthCollection.summarizeAggregateRows(normalized.rows),
             sensor_status: coverage,
@@ -601,14 +603,18 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
             metricNames: timeSeriesNames,
             metricCategory: 'cpc'
         });
-        const result = await SystemHealthCollection.collectMetricEndpoint(request, '/metrics', body, { signal: options.signal });
+        const result = await SystemHealthCollection.collectMetricBatches(request, '/metrics', body, { signal: options.signal });
         const normalized = SystemHealthCollection.normalizeTimeSeriesChunks(result.chunks, appliancesById, timeSeriesNames);
         timeSeriesNames.forEach(name => {
             const rows = decorateRows(normalized.rows.map(row => ({ ...row, metric: name, value: row.values[name] })));
-            const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, rows, { sensorFailures: result.sensor_failures });
+            const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, rows, {
+                sensorFailures: result.sensor_failures,
+                sensorStatuses: result.sensor_statuses
+            });
             metrics[name] = {
                 metric_category_used: 'cpc', aggregation_mode: 'time_series', rows,
                 collection_metadata: normalized.metadata, sensor_failures: result.sensor_failures,
+                batch_recovery: result.collection_metadata,
                 summary: SystemHealthCollection.summarizeTimeSeriesRows(normalized.rows, name),
                 sensor_status: coverage, errors: []
             };
@@ -633,14 +639,18 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
             metricNames: totalNames,
             metricCategory: 'cpc'
         });
-        const result = await SystemHealthCollection.collectMetricEndpoint(request, '/metrics/totalbyobject', body, { signal: options.signal });
+        const result = await SystemHealthCollection.collectMetricBatches(request, '/metrics/totalbyobject', body, { signal: options.signal });
         const normalized = SystemHealthCollection.normalizeAggregateChunks(result.chunks, appliancesById, totalNames);
         totalNames.forEach(name => {
             const rows = decorateRows(normalized.rows.filter(row => row.metric === name));
-            const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, rows, { sensorFailures: result.sensor_failures });
+            const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, rows, {
+                sensorFailures: result.sensor_failures,
+                sensorStatuses: result.sensor_statuses
+            });
             metrics[name] = {
                 metric_category_used: 'cpc', aggregation_mode: 'total_by_object', rows,
                 collection_metadata: normalized.metadata, sensor_failures: result.sensor_failures,
+                batch_recovery: result.collection_metadata,
                 summary: SystemHealthCollection.summarizeAggregateRows(rows),
                 sensor_status: coverage, errors: []
             };

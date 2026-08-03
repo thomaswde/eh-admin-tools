@@ -63,11 +63,14 @@ for file in $(find js -name '*.js'); do node --check "$file"; done
 
 ## System Health collection limits
 
-System Health uses one absolute report window, one batched time-series request for packet, byte,
-and aligned trigger-cycle metrics, and one per-object totals request for trigger drops. The client
-automatically coarsens the selected cycle to keep each sensor at or below 10,000 buckets and the
-whole time-series response at or below 500,000 scalar points. A request that still exceeds the
-report-wide budget at the 24-hour cycle is rejected before it reaches ExtraHop.
+System Health uses one absolute report window and balanced metric requests of no more than 40
+sensors for packet, byte, aligned trigger-cycle, and per-object trigger-drop metrics. If a batch
+fails after returning partial data, the collector retains conclusive sensors and recursively
+isolates unresolved sensors within one deadline and a bounded recovery-query budget. Authorization
+and rate-limit failures are not multiplied by batch recovery. The client also coarsens the selected
+cycle to keep each sensor at or below 10,000 buckets and the whole time-series response at or below
+500,000 scalar points. A request that still exceeds the report-wide budget at the 24-hour cycle is
+rejected before it reaches ExtraHop.
 
 ## API response logging
 
@@ -117,6 +120,7 @@ step and no utility-class framework.
 
 - `main.py` serves the static UI and exposes the local backend API.
 - `backend/extrahop_client.py` owns RevealX 360 OAuth, Enterprise API-key requests, token refresh, TLS policy, and request forwarding.
+- `backend/build_identity.py` derives source-checkout display versions from Git commit dates and validates packaged `VERSION` metadata.
 - `backend/session_store.py` keeps bounded, expiring server-side sessions keyed by an HTTP-only browser cookie.
 - `js/api-client/extrahop-api.js` preserves the existing frontend API surface while calling the local backend.
 - `scripts/build_dist.py` creates the end-user ZIP from an explicit file allowlist.

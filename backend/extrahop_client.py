@@ -525,7 +525,30 @@ class ExtraHopClient:
         }
         if response.headers.get("retry-after"):
             details["retry_after"] = response.headers["retry-after"]
+        if self._is_hopcloud_auth_redirect(response, response_body):
+            hint = (
+                "In a browser signed in to the same HopCloud remote-access URL, open Developer Tools, "
+                "then Application or Storage, then Cookies. Copy only the Value of the cookie named "
+                "'token' into Remote access proxy token and reconnect. Do not paste 'token=' or the "
+                "full Cookie header."
+            )
+            details["hint"] = hint
+            return ExtraHopApiError(
+                f"HopCloud Proxy authentication failed: the remote-access token was missing, expired, "
+                f"or not accepted. {hint}",
+                response.status_code,
+                details,
+            )
         return ExtraHopApiError(f"{prefix}: {response.status_code} - {message}", response.status_code, details)
+
+    @staticmethod
+    def _is_hopcloud_auth_redirect(response: httpx.Response, response_body: Any) -> bool:
+        host = (response.request.url.host or "").lower()
+        return (
+            response.status_code == 307
+            and host.endswith(".ra.hopcloud.extrahop.com")
+            and "redirecting for authentication" in str(response_body).lower()
+        )
 
     def _network_error(self, error: httpx.RequestError, url: str, prefix: str) -> ExtraHopApiError:
         message = str(error) or repr(error)
