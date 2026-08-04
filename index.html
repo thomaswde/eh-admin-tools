@@ -765,7 +765,7 @@
         <div id="pcap-analyzerModule" class="module-content page" style="display: none;">
             <div class="page-head">
                 <h1 class="page-title">Datafeed Analysis</h1>
-                <p class="page-desc">Inspect directional conversations, capture slicing, unidirectional flows, and observed TCP sequence gaps in a bounded packet capture.</p>
+                <p class="page-desc">Collect raw packets and inspect directional conversations, packet slicing, unidirectional flows, and observed TCP desync events.</p>
             </div>
 
             <div class="stack">
@@ -773,39 +773,43 @@
                     <span>A packetstore does not necessarily receive the exact same datafeed as a Packet Sensor. Findings here are limited to the data available in the retrieved packets.</span>
                 </div>
 
-                <section class="card" aria-labelledby="pcapSourceHeading">
-                    <div class="card-head">
-                        <h2 class="card-title" id="pcapSourceHeading">Capture source</h2>
-                        <p class="card-desc">Analyze a local PCAP or retrieve a bounded interval through the connected ExtraHop deployment.</p>
-                    </div>
+                <details class="disclosure" id="pcapSourcePanel" open>
+                    <summary>
+                        Capture source
+                        <span class="disclosure-hint">Local PCAP or connected ExtraHop</span>
+                    </summary>
+                    <div class="disclosure-body">
+                        <div class="card-head">
+                            <p class="card-desc">Analyze a local PCAP or retrieve a bounded interval through the connected ExtraHop deployment.</p>
+                        </div>
 
-                    <div class="seg pcap-mode-selector" role="group" aria-label="Capture source">
-                        <button type="button" id="pcapLocalMode" class="seg-btn active" data-pcap-mode="upload" aria-pressed="true">Local PCAP</button>
-                        <button type="button" id="pcapConnectedMode" class="seg-btn" data-pcap-mode="collect" aria-pressed="false">Connected ExtraHop</button>
-                    </div>
-                    <span id="pcapConnectedCapabilityHint" class="field-hint" hidden></span>
+                        <div class="seg pcap-mode-selector" role="group" aria-label="Capture source">
+                            <button type="button" id="pcapLocalMode" class="seg-btn active" data-pcap-mode="upload" aria-pressed="true">Local PCAP</button>
+                            <button type="button" id="pcapConnectedMode" class="seg-btn" data-pcap-mode="collect" aria-pressed="false">Connected ExtraHop</button>
+                        </div>
+                        <span id="pcapConnectedCapabilityHint" class="field-hint" hidden></span>
 
-                    <div id="pcapUploadFields" class="pcap-source-fields">
-                        <div class="field">
-                            <label for="pcapFileInput">PCAP file</label>
-                            <input type="file" id="pcapFileInput" accept=".pcap,application/vnd.tcpdump.pcap">
-                            <span class="field-hint">Classic libpcap files only. The local service enforces upload, packet, flow, and runtime limits.</span>
+                        <div id="pcapUploadFields" class="pcap-source-fields">
+                            <div class="field">
+                                <label for="pcapFileInput">PCAP file</label>
+                                <input type="file" id="pcapFileInput" accept=".pcap,application/vnd.tcpdump.pcap">
+                                <span class="field-hint">Classic libpcap files only. The local service enforces upload, packet, flow, and runtime limits.</span>
+                            </div>
+                        </div>
+
+                        <div id="pcapCollectFields" class="pcap-source-fields" hidden>
+                            <div class="field">
+                                <label for="pcapLookbackMinutes">Lookback (minutes)</label>
+                                <input type="number" id="pcapLookbackMinutes" min="1" max="10" step="1" value="5">
+                            </div>
+                        </div>
+
+                        <div class="row-tight pcap-actions">
+                            <button type="button" id="pcapStartButton" class="btn-primary">Analyze capture</button>
+                            <button type="button" id="pcapCancelButton" class="btn-danger" disabled>Cancel</button>
                         </div>
                     </div>
-
-                    <div id="pcapCollectFields" class="pcap-source-fields" hidden>
-                        <div class="field">
-                            <label for="pcapLookbackMinutes">Lookback (minutes)</label>
-                            <input type="number" id="pcapLookbackMinutes" min="1" max="10" step="1" value="5">
-                            <span class="field-hint">The start and end timestamps are fixed once when collection begins. Retrieval is split into bounded windows automatically.</span>
-                        </div>
-                    </div>
-
-                    <div class="row-tight pcap-actions">
-                        <button type="button" id="pcapStartButton" class="btn-primary">Analyze capture</button>
-                        <button type="button" id="pcapCancelButton" class="btn-danger" disabled>Cancel</button>
-                    </div>
-                </section>
+                </details>
 
                 <section id="pcapStatusCard" class="card" aria-labelledby="pcapStatusHeading">
                     <div class="row row-top">
@@ -844,7 +848,7 @@
                         <section class="card" aria-labelledby="pcapReverseChartHeading">
                             <div class="card-head">
                                 <h2 class="card-title" id="pcapReverseChartHeading">Top unidirectional flows</h2>
-                                <p class="card-desc" id="pcapReverseChartDescription">Traffic observed in only one direction, ranked by packet count.</p>
+                                <p class="card-desc" id="pcapReverseChartDescription">TCP flows where traffic is seen in only one direction, ranked by packet count.</p>
                             </div>
                             <div id="pcapReverseChartEmpty" class="empty-inline" hidden>No unidirectional flows were found.</div>
                             <div id="pcapReverseChartFrame" class="pcap-chart-frame">
@@ -854,12 +858,12 @@
 
                         <section class="card" aria-labelledby="pcapSequenceGapChartHeading">
                             <div class="card-head">
-                                <h2 class="card-title" id="pcapSequenceGapChartHeading">Top observed sequence gaps</h2>
-                                <p class="card-desc" id="pcapSequenceGapChartDescription">TCP byte ranges implied by observed sequence numbers but absent from the capture, ranked by total unobserved bytes. Gaps can reflect dropped, filtered, or sliced capture data and do not by themselves prove network packet loss.</p>
+                                <h2 class="card-title" id="pcapSequenceGapChartHeading">Top TCP desyncs</h2>
+                                <p class="card-desc" id="pcapSequenceGapChartDescription">TCP flows with gaps in observed sequence numbers, ranked by missing bytes in the capture. Desyncs can reflect dropped, filtered, or sliced capture data and do not by themselves prove network packet loss.</p>
                             </div>
-                            <div id="pcapSequenceGapChartEmpty" class="empty-inline" hidden>No observed TCP sequence gaps were found.</div>
+                            <div id="pcapSequenceGapChartEmpty" class="empty-inline" hidden>No TCP desyncs were found.</div>
                             <div id="pcapSequenceGapChartFrame" class="pcap-chart-frame">
-                                <canvas id="pcapSequenceGapChart" role="img" aria-label="Top observed TCP sequence gaps" aria-describedby="pcapSequenceGapChartDescription"></canvas>
+                                <canvas id="pcapSequenceGapChart" role="img" aria-label="Top TCP desyncs" aria-describedby="pcapSequenceGapChartDescription"></canvas>
                             </div>
                         </section>
                     </div>
@@ -868,7 +872,7 @@
                         <div class="card-head row row-top">
                             <div>
                                 <h2 class="card-title" id="pcapReverseHeading">Top unidirectional flows</h2>
-                                <p class="card-desc">Traffic observed in only one direction, ranked by packet count.</p>
+                                <p class="card-desc">TCP flows where traffic is seen in only one direction, ranked by packet count.</p>
                             </div>
                             <div class="spacer"></div>
                             <button type="button" id="pcapDownloadReverseCsv" class="btn btn-sm" disabled>Export full CSV</button>
@@ -894,21 +898,21 @@
                     <section class="card" aria-labelledby="pcapSequenceGapHeading">
                         <div class="card-head row row-top">
                             <div>
-                                <h2 class="card-title" id="pcapSequenceGapHeading">Top observed sequence gaps</h2>
-                                <p class="card-desc">TCP byte ranges implied by observed sequence numbers but absent from the capture, ranked by total unobserved bytes. Gaps can reflect dropped, filtered, or sliced capture data and do not by themselves prove network packet loss.</p>
+                                <h2 class="card-title" id="pcapSequenceGapHeading">Top TCP desyncs</h2>
+                                <p class="card-desc">TCP flows with gaps in observed sequence numbers, ranked by missing bytes in the capture. Desyncs can reflect dropped, filtered, or sliced capture data and do not by themselves prove network packet loss.</p>
                             </div>
                             <div class="spacer"></div>
                             <button type="button" id="pcapDownloadSequenceGapCsv" class="btn btn-sm" disabled>Export full CSV</button>
                         </div>
-                        <div id="pcapSequenceGapResultsEmpty" class="empty-inline" hidden>No observed TCP sequence gaps were found.</div>
+                        <div id="pcapSequenceGapResultsEmpty" class="empty-inline" hidden>No TCP desyncs were found.</div>
                         <div id="pcapSequenceGapResultsTable" class="table-container table-scroll pcap-top-table" hidden>
                             <table>
                                 <thead>
                                     <tr>
                                         <th>Source</th>
                                         <th>Destination</th>
-                                        <th class="num">Observed gaps</th>
-                                        <th class="num">Observed gap bytes</th>
+                                        <th class="num">Desyncs</th>
+                                        <th class="num">Missing bytes</th>
                                         <th class="num">Packets</th>
                                         <th class="num">Connection epochs</th>
                                         <th>First observed</th>
@@ -945,12 +949,12 @@
                             <div class="field">
                                 <label for="systemHealthCycle">Metric cycle</label>
                                 <select id="systemHealthCycle">
-                                    <option value="1hr" selected>1 hour</option>
+                                    <option value="auto" selected>Auto</option>
+                                    <option value="1hr">1 hour</option>
                                     <option value="24hr">24 hours</option>
                                     <option value="5min">5 minutes</option>
                                     <option value="30sec">30 seconds</option>
                                     <option value="1sec">1 second</option>
-                                    <option value="auto">Auto</option>
                                 </select>
                             </div>
                         </div>
@@ -1004,7 +1008,7 @@
                     </div>
                 </div>
 
-                <details class="disclosure" id="chartThemePanel" open>
+                <details class="disclosure" id="chartThemePanel">
                     <summary>
                         Chart theme
                         <span id="chartThemeHint" class="disclosure-hint">Auto</span>

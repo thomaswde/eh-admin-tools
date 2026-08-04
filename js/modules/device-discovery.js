@@ -12,7 +12,7 @@ const deviceDiscoveryState = {
 };
 
 const DEVICE_ANALYSIS = {
-    advanced: { key: 'advanced', label: 'Advanced', color: genericChartPrimaryColor() },
+    advanced: { key: 'advanced', label: 'Advanced', color: genericChartPaletteColor(0) },
     standard: { key: 'standard', label: 'Standard', color: stateIndicatorColor('warning') },
     discovery: { key: 'discovery', label: 'Discovery', color: stateIndicatorColor('error') },
     flow_log: { key: 'flow_log', label: 'Flow Log', color: genericChartPaletteColor(1) }

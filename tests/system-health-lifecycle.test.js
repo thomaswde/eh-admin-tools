@@ -184,7 +184,6 @@ test('Nodemap initialization installs listeners without starting its activation 
                 }
             }
         },
-        genericChartPrimaryColor() { return '#000'; },
         genericChartPaletteColor() { return '#000'; },
         featureRegistry: {
             register(name, hooks) {

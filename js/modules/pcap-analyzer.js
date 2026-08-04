@@ -300,12 +300,12 @@
             {
                 key: 'reverseNotObservedFlows',
                 label: 'Unidirectional flows',
-                description: 'Traffic observed in only one direction.'
+                description: 'The number of TCP flows where traffic is seen in only one direction.'
             },
             {
                 key: 'sequenceGapFlows',
-                label: 'TCP sequence gaps',
-                description: 'Sequence numbers imply TCP bytes that were not present in the capture.'
+                label: 'TCP desyncs',
+                description: 'The number of TCP flows with gaps in observed sequence numbers.'
             },
             {
                 key: 'truncatedFlows',
@@ -507,7 +507,7 @@
         if (!rows.length) return;
         const colors = chartColors();
         const valueKey = sequenceMode ? 'sequenceGapBytes' : 'packetCount';
-        const datasetLabel = sequenceMode ? 'Observed gap bytes' : 'Packets';
+        const datasetLabel = sequenceMode ? 'Missing TCP bytes' : 'Packets';
         const frame = element(frameId);
         frame.style.height = `${Math.max(230, rows.length * 34 + 70)}px`;
         pcapState.charts[chartName] = new Chart(element(canvasId), {
@@ -517,7 +517,7 @@
                 datasets: [{
                     label: datasetLabel,
                     data: rows.map(row => finiteNumber(row[valueKey])),
-                    backgroundColor: sequenceMode ? colors.mid : colors.low,
+                    backgroundColor: colors.low,
                     borderWidth: 0,
                     rows
                 }]
@@ -539,7 +539,7 @@
                                 const row = rows[context.dataIndex];
                                 if (!row) return '';
                                 return sequenceMode
-                                    ? `${formatNumber(row.sequenceGapBytes)} observed gap bytes · ${formatNumber(row.sequenceGapObservations)} gaps`
+                                    ? `${formatNumber(row.sequenceGapBytes)} missing TCP bytes · ${formatNumber(row.sequenceGapObservations)} desyncs`
                                     : `${formatNumber(row.packetCount)} packets · ${formatNumber(row.capturedBytes)} captured bytes`;
                             },
                             afterLabel(context) {
@@ -757,6 +757,7 @@
             if (!jobId) throw new Error('Datafeed Analysis did not return a job identifier.');
             pcapState.jobId = jobId;
             pcapState.jobState = job.state || 'queued';
+            element('pcapSourcePanel').open = false;
             renderJob({ state: 'queued', completeness: 'not_applicable', ...job });
             await pollPcapJob(jobId);
             return job;

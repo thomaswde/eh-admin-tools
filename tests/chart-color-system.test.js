@@ -10,7 +10,7 @@ function source(relativePath) {
     return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
-test('shared chart colors match the supplied categorical palette and cyan primary', () => {
+test('shared chart colors use one categorical palette plus semantic state colors', () => {
     const css = source('css/styles.css');
     const common = source('js/utils/common.js');
     const cssValues = Object.fromEntries(
@@ -30,33 +30,36 @@ test('shared chart colors match the supplied categorical palette and cyan primar
 
     vm.runInContext(common, context);
 
-    assert.equal(vm.runInContext('genericChartPrimaryColor()', context), '#00aaef');
     assert.deepEqual(
         Array.from(vm.runInContext(
             'Array.from({ length: 8 }, (_, index) => genericChartPaletteColor(index))',
             context
         )),
-        ['#72aed9', '#5e55d7', '#bb5fd8', '#d0638d', '#d28861', '#d4dd73', '#8fdb6f', '#86dba9']
+        ['#00aaef', '#5e55d7', '#bb5fd8', '#d0638d', '#d28861', '#d4dd73', '#8fdb6f', '#86dba9']
     );
     assert.equal(vm.runInContext("stateIndicatorColor('warning')", context), '#f59e0b');
     assert.equal(vm.runInContext("stateIndicatorColor('error')", context), '#ef4444');
+    assert.doesNotMatch(css, /--chart-primary:/);
+    assert.doesNotMatch(common, /genericChartPrimaryColor/);
 });
 
-test('generic chart modules use cyan for single series and the shared palette for categories', () => {
+test('generic charts use the shared palette while warning and error series stay semantic', () => {
     const audit = source('js/modules/audit-logs.js');
     const records = source('js/modules/records-report.js');
     const discovery = source('js/modules/device-discovery.js');
     const nodemap = source('js/modules/nodemap.js');
 
-    assert.match(audit, /backgroundColor:\s*genericChartPrimaryColor\(\)/);
+    assert.match(audit, /backgroundColor:\s*genericChartPaletteColor\(0\)/);
     assert.match(audit, /backgroundColor:\s*genericChartPaletteColor\(colorIndex\)/);
-    assert.match(records, /backgroundColor:\s*genericChartPrimaryColor\(\)/);
+    assert.match(records, /backgroundColor:\s*genericChartPaletteColor\(0\)/);
     assert.match(records, /backgroundColor:\s*genericChartPaletteColor\(i\)/);
     assert.doesNotMatch([audit, records, discovery, nodemap].join('\n'), /#(?:261f63|7f2854|ec0089)/i);
-    assert.match(discovery, /advanced:.*genericChartPrimaryColor\(\)/);
+    assert.doesNotMatch([audit, records, discovery, nodemap].join('\n'), /genericChartPrimaryColor/);
+    assert.match(discovery, /advanced:.*genericChartPaletteColor\(0\)/);
     assert.match(discovery, /standard:.*stateIndicatorColor\('warning'\)/);
     assert.match(discovery, /discovery:.*stateIndicatorColor\('error'\)/);
     assert.match(discovery, /flow_log:.*genericChartPaletteColor\(1\)/);
+    assert.match(nodemap, /'command':\s*genericChartPaletteColor\(3\)/);
     assert.match(nodemap, /stateIndicatorColor\('warning'\)/);
     assert.match(nodemap, /stateIndicatorColor\('error'\)/);
 });

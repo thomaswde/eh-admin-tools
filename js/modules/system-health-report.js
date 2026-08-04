@@ -238,7 +238,7 @@ async function generateSystemHealthReport() {
 
     try {
         const lookbackDays = Number(document.getElementById('systemHealthLookback').value || 7);
-        const requestedCycle = document.getElementById('systemHealthCycle').value || '1hr';
+        const requestedCycle = document.getElementById('systemHealthCycle').value || 'auto';
         const untilMs = Date.now();
         const fromMs = untilMs - (lookbackDays * SYSTEM_HEALTH_DAY_MS);
 

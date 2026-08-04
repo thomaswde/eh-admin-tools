@@ -49,8 +49,7 @@
     --lime: #daed43;
 
     /* Charts — identical in both themes */
-    --chart-primary: #00aaef;
-    --chart-1: #72aed9;
+    --chart-1: #00aaef;
     --chart-2: #5e55d7;
     --chart-3: #bb5fd8;
     --chart-4: #d0638d;
@@ -2677,7 +2676,7 @@ td.actions .btn-danger { margin-left: 6px; }
 
 .pcap-progress-bar {
     height: 100%;
-    background-color: var(--chart-primary);
+    background-color: var(--cyan);
     border-radius: inherit;
     transition: width .2s ease;
 }
@@ -2779,7 +2778,7 @@ td.actions .btn-danger { margin-left: 6px; }
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px;
-    align-items: start;
+    align-items: stretch;
 }
 
 .pcap-chart-grid > .card { min-width: 0; }

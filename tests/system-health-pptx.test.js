@@ -57,6 +57,14 @@ test('provided PowerPoint dialog values override defaults without changing repor
     assert.equal(meta.cycle_label, '5min');
 });
 
+test('PowerPoint fallback palette uses the shared chart color and semantic thresholds', () => {
+    const model = pptxApi.buildDeckModel({ meta, rows: [] });
+
+    assert.equal(model.palette.low, '#00aaef');
+    assert.equal(model.palette.mid, '#f59e0b');
+    assert.equal(model.palette.high, '#ef4444');
+});
+
 test('deck model keeps legitimate zero values distinct from unavailable collection data', () => {
     const baseRow = {
         license_platform: 'EDA 9300',

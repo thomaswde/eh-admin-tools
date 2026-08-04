@@ -154,6 +154,9 @@ class PdfStyleColorTests(unittest.TestCase):
         colors = pdf.system_health_pdf_style_colors(None)
         for key, value in pdf.SYSTEM_HEALTH_PDF_FALLBACK_COLORS.items():
             self.assertEqual(colors[key], value)
+        self.assertEqual(colors["low"], "#00aaef")
+        self.assertEqual(colors["mid"], "#f59e0b")
+        self.assertEqual(colors["high"], "#ef4444")
 
 
 if __name__ == "__main__":

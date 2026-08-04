@@ -54,15 +54,17 @@ test('Devices use a horizontal borderless chart with state-aware colors', () => 
     assert.match(discovery, /wrapper\.style\.height/);
 });
 
-test('System Health and Records labels and layouts match the revised UI', () => {
+test('System Health and Records defaults, labels, and layouts match the revised UI', () => {
     const html = source('index.html');
     const systemHealth = source('js/modules/system-health-report.js');
 
     assert.match(html, /<h2 class="card-title">Report<\/h2>/);
     assert.match(html, /<h2 class="card-title">Import and export<\/h2>/);
+    assert.match(html, /id="systemHealthCycle">\s*<option value="auto" selected>Auto<\/option>/);
     assert.match(html, /Charts, titles, findings, recommendations, and appendix tables use editable PowerPoint elements/);
     assert.doesNotMatch(html, /Charts are embedded as high-resolution PNGs/);
-    assert.match(html, /id="chartThemePanel" open/);
+    assert.match(html, /<details class="disclosure" id="chartThemePanel">/);
+    assert.doesNotMatch(html, /id="chartThemePanel" open/);
     assert.match(html, /Import capacity data/);
     assert.match(html, /Reserved daily capacity \(GB\)/);
     assert.match(html, /Utilized daily capacity \(GB\)/);
@@ -77,4 +79,10 @@ test('Selected controls use neutral shading instead of cyan outlines', () => {
     assert.match(css, /:focus-visible\s*\{\s*outline: 2px solid var\(--text-2\)/);
     assert.match(css, /\.theme-card\.is-active\s*\{[\s\S]*?background-color: var\(--chip-bg\)/);
     assert.doesNotMatch(css, /outline: 2px solid var\(--cyan\)/);
+});
+
+test('Datafeed Analysis keeps side-by-side chart cards equal height', () => {
+    const css = source('css/styles.css');
+
+    assert.match(css, /\.pcap-chart-grid\s*\{[\s\S]*?align-items:\s*stretch;/);
 });

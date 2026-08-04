@@ -32,7 +32,6 @@ function loadDeviceDiscovery(overrides = {}) {
         AbortController,
         DOMException,
         Chart: function Chart() {},
-        genericChartPrimaryColor: () => '#00a4e4',
         genericChartPaletteColor: () => '#7655c8',
         stateIndicatorColor: () => '#f59e0b',
         escapeHtml: value => String(value)

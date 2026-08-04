@@ -35,6 +35,7 @@ function fakeElement(id = '', tagName = 'div') {
         dataset: {},
         style: {},
         hidden: false,
+        open: false,
         disabled: false,
         value: '',
         valueAsNumber: Number.NaN,
@@ -126,7 +127,7 @@ function createHarness(responses = [], options = {}) {
     const ids = [
         'pcapUploadFields', 'pcapCollectFields', 'pcapStartButton', 'pcapCancelButton',
         'pcapConnectedCapabilityHint',
-        'pcapFileInput', 'pcapLookbackMinutes', 'pcapStatusCard',
+        'pcapFileInput', 'pcapLookbackMinutes', 'pcapSourcePanel', 'pcapStatusCard',
         'pcapProgressTrack', 'pcapProgressBar', 'pcapWarnings', 'pcapStateBadge', 'pcapStatusText',
         'pcapResults', 'pcapSummary', 'pcapFindingHeroes', 'pcapEnrichmentStatus', 'pcapExportStatus',
         'pcapDownloadAllFindingsCsv', 'pcapDownloadReverseCsv', 'pcapDownloadSequenceGapCsv',
@@ -137,6 +138,7 @@ function createHarness(responses = [], options = {}) {
     ];
     const elements = Object.fromEntries(ids.map(id => [id, fakeElement(id)]));
     const progressTrack = elements.pcapProgressTrack;
+    elements.pcapSourcePanel.open = true;
     elements.pcapLookbackMinutes.valueAsNumber = 5;
     const modeButtons = [fakeElement('local', 'button'), fakeElement('connected', 'button')];
     modeButtons[0].dataset.pcapMode = 'upload';
@@ -250,12 +252,16 @@ function createHarness(responses = [], options = {}) {
 test('presents the feature as Datafeed Analysis', () => {
     assert.match(html, /data-module="pcap-analyzer"[\s\S]*?<span class="nav-title">Datafeed Analysis<\/span>/);
     assert.match(html, /id="pcap-analyzerModule"[\s\S]*?<h1 class="page-title">Datafeed Analysis<\/h1>/);
+    assert.match(html, /<details class="disclosure" id="pcapSourcePanel" open>[\s\S]*?<summary>[\s\S]*?Capture source/);
+    assert.match(html, /Collect raw packets and inspect directional conversations, packet slicing, unidirectional flows, and observed TCP desync events\./);
+    assert.doesNotMatch(html, /The start and end timestamps are fixed once when collection begins/);
     assert.doesNotMatch(html, /id="pcapFindingFilter"|id="pcapPager"/);
     assert.match(html, /id="pcapFindingHeroes"/);
     assert.doesNotMatch(html, /Reverse visibility|Affected flows by finding|Counts describe the entire bounded analysis result/);
     assert.match(html, /A packetstore does not necessarily receive the exact same datafeed as a Packet Sensor/);
     assert.doesNotMatch(html, /pcapWindowSeconds|data-pcap-chart-mode/);
     assert.match(html, /class="pcap-chart-grid"/);
+    assert.match(html, /Top TCP desyncs/);
     assert.match(html, /dropped, filtered, or sliced capture data.*do not by themselves prove network packet loss/);
 });
 
@@ -301,6 +307,11 @@ test('registers Datafeed Analysis and uploads the selected File as the raw reque
     assert.equal(harness.elements.pcapFindingHeroes.children[0].children[0].textContent, 'Unidirectional flows');
     assert.equal(harness.elements.pcapFindingHeroes.children[0].children[1].textContent, '50%');
     assert.equal(harness.elements.pcapFindingHeroes.children[0].children[2].textContent, '1 of 2 directional flows');
+    assert.equal(
+        harness.elements.pcapFindingHeroes.children[0].children[3].textContent,
+        'The number of TCP flows where traffic is seen in only one direction.'
+    );
+    assert.equal(harness.elements.pcapFindingHeroes.children[1].children[0].textContent, 'TCP desyncs');
 });
 
 test('renders completed analysis with app CSS colors when the chart theme export is unavailable', async () => {
@@ -358,7 +369,7 @@ test('renders at most 25 canonical rows with IP primary and useful device name s
     assert.equal(harness.charts[0].config.data.labels.length, 15);
 });
 
-test('renders unidirectional and sequence-gap charts together with independent metrics', async () => {
+test('renders unidirectional and TCP-desync charts with independent metrics and matching palette bars', async () => {
     const harness = createHarness([
         jsonResponse({ id: 'job-mode', state: 'queued' }, 202),
         jsonResponse({
@@ -374,11 +385,12 @@ test('renders unidirectional and sequence-gap charts together with independent m
     const [reverseChart, sequenceChart] = harness.charts;
     assert.equal(reverseChart.config.data.datasets[0].label, 'Packets');
     assert.equal(reverseChart.config.data.datasets[0].data[0], 99);
-    assert.equal(sequenceChart.config.data.datasets[0].label, 'Observed gap bytes');
+    assert.equal(sequenceChart.config.data.datasets[0].label, 'Missing TCP bytes');
     assert.equal(sequenceChart.config.data.datasets[0].data[0], 199);
+    assert.equal(sequenceChart.config.data.datasets[0].backgroundColor, reverseChart.config.data.datasets[0].backgroundColor);
     assert.match(
         sequenceChart.config.options.plugins.tooltip.callbacks.label({ dataIndex: 0 }),
-        /199 observed gap bytes.*2 gaps/
+        /199 missing TCP bytes.*2 desyncs/
     );
 });
 
@@ -474,6 +486,7 @@ test('connected collection computes one absolute window and sends the same bound
     harness.definition.initialize();
     await harness.definition.activate();
     harness.modeButtons[1].click();
+    assert.equal(harness.elements.pcapSourcePanel.open, true);
 
     await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
 
@@ -483,6 +496,7 @@ test('connected collection computes one absolute window and sends the same bound
         untilMs: Date.parse('2026-08-03T15:00:00.000Z')
     });
     assert.equal(harness.progressTrack.attributes['aria-valuenow'], '33');
+    assert.equal(harness.elements.pcapSourcePanel.open, false);
     assert.equal(harness.timers.size, 1);
 });
 

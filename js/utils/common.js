@@ -1,6 +1,6 @@
 /* exported showStatus, toggleApiConfig, showConnectedState, showOfflineState, hideConnectedState, showErrorModal,
 switchModule, openConnectedAppliances, hideModal, detailItem, escapeAttribute,
-genericChartPrimaryColor, genericChartPaletteColor, stateIndicatorColor */
+genericChartPaletteColor, stateIndicatorColor */
 // Shared utility functions
 
 function showStatus(message, isError = false) {
@@ -149,7 +149,7 @@ function escapeAttribute(text) {
 /* --------------------------- shared color system --------------------------- */
 
 const GENERIC_CHART_COLOR_FALLBACKS = [
-    '#72aed9',
+    '#00aaef',
     '#5e55d7',
     '#bb5fd8',
     '#d0638d',
@@ -167,10 +167,6 @@ function appCssColor(token, fallback) {
     ) return fallback;
     const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
     return value || fallback;
-}
-
-function genericChartPrimaryColor() {
-    return appCssColor('--chart-primary', '#00aaef');
 }
 
 function genericChartPaletteColor(index) {
