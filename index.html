@@ -793,16 +793,11 @@
                         </div>
                     </div>
 
-                    <div id="pcapCollectFields" class="pcap-source-fields grid-fields" hidden>
+                    <div id="pcapCollectFields" class="pcap-source-fields" hidden>
                         <div class="field">
                             <label for="pcapLookbackMinutes">Lookback (minutes)</label>
                             <input type="number" id="pcapLookbackMinutes" min="1" max="10" step="1" value="5">
-                            <span class="field-hint">The start and end timestamps are fixed once when collection begins.</span>
-                        </div>
-                        <div class="field">
-                            <label for="pcapWindowSeconds">Search window (seconds)</label>
-                            <input type="number" id="pcapWindowSeconds" min="10" max="300" step="10" value="60">
-                            <span class="field-hint">Longer lookbacks are collected in bounded windows.</span>
+                            <span class="field-hint">The start and end timestamps are fixed once when collection begins. Retrieval is split into bounded windows automatically.</span>
                         </div>
                     </div>
 
@@ -821,7 +816,7 @@
                         <div class="spacer"></div>
                         <span id="pcapStateBadge" class="badge">Ready</span>
                     </div>
-                    <div class="pcap-progress-track" role="progressbar" aria-label="Analysis progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <div id="pcapProgressTrack" class="pcap-progress-track" role="progressbar" aria-label="Analysis progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                         <div id="pcapProgressBar" class="pcap-progress-bar" style="width: 0%;"></div>
                     </div>
                     <div id="pcapWarnings" class="stack-sm pcap-warnings" aria-live="polite"></div>
@@ -845,23 +840,29 @@
                         <p id="pcapExportStatus" class="field-hint pcap-export-status" role="status" aria-live="polite"></p>
                     </section>
 
-                    <section class="card" aria-labelledby="pcapTopConversationsHeading">
-                        <div class="card-head row row-top">
-                            <div>
-                                <h2 class="card-title" id="pcapTopConversationsHeading">Top conversations</h2>
-                                <p class="card-desc" id="pcapTopConversationsDescription">Unidirectional flows ranked by packet count.</p>
+                    <div class="pcap-chart-grid" aria-label="Top conversations by finding">
+                        <section class="card" aria-labelledby="pcapReverseChartHeading">
+                            <div class="card-head">
+                                <h2 class="card-title" id="pcapReverseChartHeading">Top unidirectional flows</h2>
+                                <p class="card-desc" id="pcapReverseChartDescription">Traffic observed in only one direction, ranked by packet count.</p>
                             </div>
-                            <div class="spacer"></div>
-                            <div class="segmented pcap-chart-mode" role="group" aria-label="Top conversation metric">
-                                <button type="button" class="is-active" data-pcap-chart-mode="reverse" aria-pressed="true">Unidirectional flows</button>
-                                <button type="button" data-pcap-chart-mode="sequence_gap" aria-pressed="false">Sequence gaps</button>
+                            <div id="pcapReverseChartEmpty" class="empty-inline" hidden>No unidirectional flows were found.</div>
+                            <div id="pcapReverseChartFrame" class="pcap-chart-frame">
+                                <canvas id="pcapReverseChart" role="img" aria-label="Top unidirectional flows" aria-describedby="pcapReverseChartDescription"></canvas>
                             </div>
-                        </div>
-                        <div id="pcapTopConversationsEmpty" class="empty-inline" hidden>No matching conversations were observed.</div>
-                        <div id="pcapTopConversationsChartFrame" class="pcap-chart-frame">
-                            <canvas id="pcapTopConversationsChart" role="img" aria-label="Top conversations" aria-describedby="pcapTopConversationsDescription"></canvas>
-                        </div>
-                    </section>
+                        </section>
+
+                        <section class="card" aria-labelledby="pcapSequenceGapChartHeading">
+                            <div class="card-head">
+                                <h2 class="card-title" id="pcapSequenceGapChartHeading">Top observed sequence gaps</h2>
+                                <p class="card-desc" id="pcapSequenceGapChartDescription">TCP byte ranges implied by observed sequence numbers but absent from the capture, ranked by total unobserved bytes. Gaps can reflect dropped, filtered, or sliced capture data and do not by themselves prove network packet loss.</p>
+                            </div>
+                            <div id="pcapSequenceGapChartEmpty" class="empty-inline" hidden>No observed TCP sequence gaps were found.</div>
+                            <div id="pcapSequenceGapChartFrame" class="pcap-chart-frame">
+                                <canvas id="pcapSequenceGapChart" role="img" aria-label="Top observed TCP sequence gaps" aria-describedby="pcapSequenceGapChartDescription"></canvas>
+                            </div>
+                        </section>
+                    </div>
 
                     <section class="card" aria-labelledby="pcapReverseHeading">
                         <div class="card-head row row-top">
@@ -894,7 +895,7 @@
                         <div class="card-head row row-top">
                             <div>
                                 <h2 class="card-title" id="pcapSequenceGapHeading">Top observed sequence gaps</h2>
-                                <p class="card-desc">Directional flows with uncovered TCP sequence ranges, ranked by observed gap bytes.</p>
+                                <p class="card-desc">TCP byte ranges implied by observed sequence numbers but absent from the capture, ranked by total unobserved bytes. Gaps can reflect dropped, filtered, or sliced capture data and do not by themselves prove network packet loss.</p>
                             </div>
                             <div class="spacer"></div>
                             <button type="button" id="pcapDownloadSequenceGapCsv" class="btn btn-sm" disabled>Export full CSV</button>

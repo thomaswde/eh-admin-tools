@@ -126,32 +126,23 @@ function createHarness(responses = [], options = {}) {
     const ids = [
         'pcapUploadFields', 'pcapCollectFields', 'pcapStartButton', 'pcapCancelButton',
         'pcapConnectedCapabilityHint',
-        'pcapFileInput', 'pcapLookbackMinutes', 'pcapWindowSeconds', 'pcapStatusCard',
-        'pcapProgressBar', 'pcapWarnings', 'pcapStateBadge', 'pcapStatusText',
+        'pcapFileInput', 'pcapLookbackMinutes', 'pcapStatusCard',
+        'pcapProgressTrack', 'pcapProgressBar', 'pcapWarnings', 'pcapStateBadge', 'pcapStatusText',
         'pcapResults', 'pcapSummary', 'pcapFindingHeroes', 'pcapEnrichmentStatus', 'pcapExportStatus',
         'pcapDownloadAllFindingsCsv', 'pcapDownloadReverseCsv', 'pcapDownloadSequenceGapCsv',
-        'pcapTopConversationsHeading', 'pcapTopConversationsDescription',
-        'pcapTopConversationsEmpty', 'pcapTopConversationsChartFrame', 'pcapTopConversationsChart',
+        'pcapReverseChartEmpty', 'pcapReverseChartFrame', 'pcapReverseChart',
+        'pcapSequenceGapChartEmpty', 'pcapSequenceGapChartFrame', 'pcapSequenceGapChart',
         'pcapReverseResultsBody', 'pcapReverseResultsEmpty', 'pcapReverseResultsTable',
         'pcapSequenceGapResultsBody', 'pcapSequenceGapResultsEmpty', 'pcapSequenceGapResultsTable'
     ];
     const elements = Object.fromEntries(ids.map(id => [id, fakeElement(id)]));
-    const progressTrack = fakeElement('progress');
-    elements.pcapStatusCard.querySelector = selector => {
-        assert.equal(selector, '[role="progressbar"]');
-        return progressTrack;
-    };
+    const progressTrack = elements.pcapProgressTrack;
     elements.pcapLookbackMinutes.valueAsNumber = 5;
-    elements.pcapWindowSeconds.valueAsNumber = 60;
     const modeButtons = [fakeElement('local', 'button'), fakeElement('connected', 'button')];
     modeButtons[0].dataset.pcapMode = 'upload';
     modeButtons[1].dataset.pcapMode = 'collect';
     elements.pcapLocalMode = modeButtons[0];
     elements.pcapConnectedMode = modeButtons[1];
-    const chartModeButtons = [fakeElement('reverse', 'button'), fakeElement('sequence', 'button')];
-    chartModeButtons[0].dataset.pcapChartMode = 'reverse';
-    chartModeButtons[1].dataset.pcapChartMode = 'sequence_gap';
-
     const calls = [];
     const charts = [];
     const anchors = [];
@@ -225,7 +216,6 @@ function createHarness(responses = [], options = {}) {
             getElementById(id) { return elements[id] || null; },
             querySelectorAll(selector) {
                 if (selector === '[data-pcap-mode]') return modeButtons;
-                if (selector === '[data-pcap-chart-mode]') return chartModeButtons;
                 assert.fail(`Unexpected selector: ${selector}`);
             },
             createElement(tagName) {
@@ -252,7 +242,7 @@ function createHarness(responses = [], options = {}) {
     });
     vm.runInContext(source, context, { filename: 'pcap-analyzer.js' });
     return {
-        context, definition, elements, modeButtons, chartModeButtons, calls, charts,
+        context, definition, elements, modeButtons, calls, charts,
         anchors, timers, progressTrack
     };
 }
@@ -264,6 +254,9 @@ test('presents the feature as Datafeed Analysis', () => {
     assert.match(html, /id="pcapFindingHeroes"/);
     assert.doesNotMatch(html, /Reverse visibility|Affected flows by finding|Counts describe the entire bounded analysis result/);
     assert.match(html, /A packetstore does not necessarily receive the exact same datafeed as a Packet Sensor/);
+    assert.doesNotMatch(html, /pcapWindowSeconds|data-pcap-chart-mode/);
+    assert.match(html, /class="pcap-chart-grid"/);
+    assert.match(html, /dropped, filtered, or sliced capture data.*do not by themselves prove network packet loss/);
 });
 
 test('registers Datafeed Analysis and uploads the selected File as the raw request body', async () => {
@@ -291,6 +284,9 @@ test('registers Datafeed Analysis and uploads the selected File as the raw reque
     assert.equal(harness.calls[0].options.body, file);
     assert.equal(harness.calls[0].options.headers['Content-Type'], 'application/vnd.tcpdump.pcap');
     assert.equal(harness.elements.pcapStateBadge.textContent, 'Completed');
+    assert.equal(harness.elements.pcapStatusText.hidden, true);
+    assert.equal(harness.elements.pcapStatusText.textContent, '');
+    assert.equal(harness.progressTrack.hidden, true);
     assert.equal(harness.elements.pcapResults.hidden, false);
     assert.equal(harness.calls.length, 2);
     assert.equal(harness.elements.pcapReverseResultsBody.children.length, 1);
@@ -322,7 +318,7 @@ test('renders completed analysis with app CSS colors when the chart theme export
     await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
 
     assert.equal(harness.elements.pcapStateBadge.textContent, 'Completed');
-    assert.equal(harness.charts.length, 1);
+    assert.equal(harness.charts.length, 2);
     assert.equal(harness.charts[0].config.options.scales.y.ticks.color, '#ececf2');
     assert.equal(harness.charts[0].config.options.scales.x.grid.color, '#2e2d3a');
     assert.equal(harness.charts[0].config.data.datasets[0].backgroundColor, '#00aaef');
@@ -362,7 +358,7 @@ test('renders at most 25 canonical rows with IP primary and useful device name s
     assert.equal(harness.charts[0].config.data.labels.length, 15);
 });
 
-test('top conversation control changes metric, copy, tooltip data, and chart rows together', async () => {
+test('renders unidirectional and sequence-gap charts together with independent metrics', async () => {
     const harness = createHarness([
         jsonResponse({ id: 'job-mode', state: 'queued' }, 202),
         jsonResponse({
@@ -374,21 +370,16 @@ test('top conversation control changes metric, copy, tooltip data, and chart row
     await harness.definition.activate();
     harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
     await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
-    const reverseChart = harness.charts[0];
-
-    harness.chartModeButtons[1].click();
-
-    const sequenceChart = harness.charts[1];
-    assert.equal(reverseChart.destroyed, true);
-    assert.match(harness.elements.pcapTopConversationsHeading.textContent, /Sequence gaps/);
-    assert.equal(harness.elements.pcapTopConversationsDescription.textContent, 'Flows with uncovered TCP sequence ranges, ranked by gap bytes.');
+    assert.equal(harness.charts.length, 2);
+    const [reverseChart, sequenceChart] = harness.charts;
+    assert.equal(reverseChart.config.data.datasets[0].label, 'Packets');
+    assert.equal(reverseChart.config.data.datasets[0].data[0], 99);
     assert.equal(sequenceChart.config.data.datasets[0].label, 'Observed gap bytes');
     assert.equal(sequenceChart.config.data.datasets[0].data[0], 199);
     assert.match(
         sequenceChart.config.options.plugins.tooltip.callbacks.label({ dataIndex: 0 }),
         /199 observed gap bytes.*2 gaps/
     );
-    assert.equal(harness.chartModeButtons[1].attributes['aria-pressed'], 'true');
 });
 
 test('empty states and export availability are independent by finding category', async () => {
@@ -416,10 +407,10 @@ test('empty states and export availability are independent by finding category',
     assert.equal(harness.elements.pcapDownloadAllFindingsCsv.disabled, false);
     assert.equal(harness.elements.pcapDownloadReverseCsv.disabled, true);
     assert.equal(harness.elements.pcapDownloadSequenceGapCsv.disabled, false);
-    assert.equal(harness.elements.pcapTopConversationsEmpty.hidden, false);
-
-    harness.chartModeButtons[1].click();
-    assert.equal(harness.elements.pcapTopConversationsEmpty.hidden, true);
+    assert.equal(harness.elements.pcapReverseChartEmpty.hidden, false);
+    assert.equal(harness.elements.pcapSequenceGapChartEmpty.hidden, true);
+    assert.equal(harness.charts.length, 1);
+    assert.equal(harness.charts[0].target, harness.elements.pcapSequenceGapChart);
 });
 
 test('scoped CSV controls use server filenames and never export visible top rows locally', async () => {
@@ -472,7 +463,7 @@ test('chart instances are destroyed on deactivation and recreated on activation'
     await harness.definition.deactivate();
     assert.equal(initialCharts.every(chart => chart.destroyed), true);
     await harness.definition.activate();
-    assert.equal(harness.charts.length, initialCharts.length + 1);
+    assert.equal(harness.charts.length, initialCharts.length + 2);
 });
 
 test('connected collection computes one absolute window and sends the same bounds together', async () => {
@@ -489,8 +480,7 @@ test('connected collection computes one absolute window and sends the same bound
     assert.equal(harness.calls[0].url, '/backend/pcap-analyzer/collect');
     assert.deepEqual(JSON.parse(harness.calls[0].options.body), {
         fromMs: Date.parse('2026-08-03T14:55:00.000Z'),
-        untilMs: Date.parse('2026-08-03T15:00:00.000Z'),
-        windowSeconds: 60
+        untilMs: Date.parse('2026-08-03T15:00:00.000Z')
     });
     assert.equal(harness.progressTrack.attributes['aria-valuenow'], '33');
     assert.equal(harness.timers.size, 1);
@@ -533,7 +523,9 @@ test('renders an explicit warning when uniform packet slicing is suspected', asy
 
     assert.equal(harness.elements.pcapWarnings.children.length, 1);
     assert.match(harness.elements.pcapWarnings.children[0].textContent, /suspiciously uniform captured length/i);
-    assert.match(harness.elements.pcapStatusText.textContent, /Indeterminate result/);
+    assert.equal(harness.elements.pcapStatusText.hidden, true);
+    assert.equal(harness.elements.pcapStatusText.textContent, '');
+    assert.equal(harness.progressTrack.hidden, true);
     assert.equal(harness.elements.pcapFindingHeroes.children.length, 3);
     assert.equal(harness.elements.pcapFindingHeroes.children[0].children[1].textContent, '0%');
     assert.equal(harness.elements.pcapDownloadAllFindingsCsv.disabled, true);
@@ -580,9 +572,9 @@ test('cancel aborts an upload before a backend job identifier is available', asy
     assert.equal(harness.elements.pcapStateBadge.textContent, 'Cancelled');
 });
 
-test('collection window rejects unbounded lookback and packet-search windows', () => {
+test('collection window rejects unbounded lookback and invalid end time', () => {
     const harness = createHarness();
     const api = vm.runInContext('window.PcapAnalyzer.buildCollectionWindow', harness.context);
-    assert.throws(() => api(11, 60, 1000), /Lookback/);
-    assert.throws(() => api(5, 301, 1000), /Search window/);
+    assert.throws(() => api(11, 1000), /Lookback/);
+    assert.throws(() => api(5, Number.POSITIVE_INFINITY), /end time/);
 });

@@ -2653,9 +2653,11 @@ td.actions .btn-danger { margin-left: 6px; }
 
 .pcap-source-fields[hidden],
 #pcapResults[hidden],
-#pcapTopConversationsChartFrame[hidden],
+#pcapReverseChartFrame[hidden],
+#pcapSequenceGapChartFrame[hidden],
 #pcapReverseResultsTable[hidden],
 #pcapSequenceGapResultsTable[hidden],
+.pcap-progress-track[hidden],
 .pcap-enrichment-status[hidden] { display: none; }
 
 .pcap-actions {
@@ -2773,7 +2775,14 @@ td.actions .btn-danger { margin-left: 6px; }
     max-width: 100%;
 }
 
-.pcap-chart-mode { flex: 0 0 auto; }
+.pcap-chart-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    align-items: start;
+}
+
+.pcap-chart-grid > .card { min-width: 0; }
 
 .pcap-top-table table { min-width: 860px; }
 
@@ -2798,8 +2807,10 @@ td.actions .btn-danger { margin-left: 6px; }
     .pcap-finding-heroes { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 1100px) {
+    .pcap-chart-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (max-width: 720px) {
     .pcap-action-tile { width: 100%; }
-    .pcap-chart-mode { width: 100%; }
-    .pcap-chart-mode button { flex: 1; }
 }

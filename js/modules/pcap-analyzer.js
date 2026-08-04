@@ -29,9 +29,9 @@
         jobId: null,
         jobState: null,
         completedJob: null,
-        topConversationMode: 'reverse',
         charts: {
-            topConversations: null
+            reverse: null,
+            sequenceGap: null
         },
         resizeTimer: null,
         pollTimer: null,
@@ -55,21 +55,16 @@
             : true;
     }
 
-    function buildPcapCollectionWindow(lookbackMinutes, windowSeconds, nowMs = Date.now()) {
+    function buildPcapCollectionWindow(lookbackMinutes, nowMs = Date.now()) {
         const lookback = Number(lookbackMinutes);
-        const windowSize = Number(windowSeconds);
         const untilMs = Number(nowMs);
         if (!Number.isInteger(lookback) || lookback < 1 || lookback > 10) {
             throw new Error('Lookback must be a whole number from 1 through 10 minutes.');
         }
-        if (!Number.isInteger(windowSize) || windowSize < 10 || windowSize > 300) {
-            throw new Error('Search window must be a whole number from 10 through 300 seconds.');
-        }
         if (!Number.isFinite(untilMs)) throw new Error('Collection end time is invalid.');
         return {
             fromMs: untilMs - (lookback * 60_000),
-            untilMs,
-            windowSeconds: windowSize
+            untilMs
         };
     }
 
@@ -126,7 +121,6 @@
         element('pcapCancelButton').disabled = !busy;
         element('pcapFileInput').disabled = busy;
         element('pcapLookbackMinutes').disabled = busy;
-        element('pcapWindowSeconds').disabled = busy;
         document.querySelectorAll('[data-pcap-mode]').forEach(button => {
             button.disabled = busy;
         });
@@ -233,9 +227,10 @@
     function renderJob(job) {
         pcapState.jobState = job.state;
         const progress = normalizeProgress(job);
-        const progressTrack = element('pcapStatusCard').querySelector('[role="progressbar"]');
+        const progressTrack = element('pcapProgressTrack');
         element('pcapProgressBar').style.width = `${progress}%`;
         progressTrack.setAttribute('aria-valuenow', String(Math.round(progress)));
+        progressTrack.hidden = TERMINAL_STATES.has(job.state);
 
         const badge = element('pcapStateBadge');
         badge.textContent = stateLabel(job.state);
@@ -249,11 +244,14 @@
         if (Number.isFinite(Number(job.progress?.windowsTotal))) {
             status += ` · ${Number(job.progress?.windowsCompleted) || 0} of ${Number(job.progress.windowsTotal)} windows`;
         }
-        if (job.completeness && job.completeness !== 'not_applicable') {
+        if (job.state !== 'completed' && job.completeness && job.completeness !== 'not_applicable') {
             status += ` · ${stateLabel(job.completeness)} result`;
         }
         if (job.error) status = `${status}: ${normalizeWarning(job.error) || String(job.error)}`;
-        element('pcapStatusText').textContent = status;
+        const statusText = element('pcapStatusText');
+        const completedSuccessfully = job.state === 'completed' && !job.error;
+        statusText.textContent = completedSuccessfully ? '' : status;
+        statusText.hidden = completedSuccessfully;
         renderWarnings(job);
     }
 
@@ -307,7 +305,7 @@
             {
                 key: 'sequenceGapFlows',
                 label: 'TCP sequence gaps',
-                description: 'Flows with an uncovered TCP sequence range.'
+                description: 'Sequence numbers imply TCP bytes that were not present in the capture.'
             },
             {
                 key: 'truncatedFlows',
@@ -493,43 +491,26 @@
     }
 
     function destroyPcapCharts() {
-        destroyPcapChart('topConversations');
+        destroyPcapChart('reverse');
+        destroyPcapChart('sequenceGap');
     }
 
     function topChartLimit() {
         return finiteNumber(window.innerWidth, 1200) < 900 ? 10 : 15;
     }
 
-    function renderTopConversationsChart(job, dashboard) {
-        destroyPcapChart('topConversations');
-        const sequenceMode = pcapState.topConversationMode === 'sequence_gap';
-        const sourceRows = sequenceMode ? dashboard.topSequenceGaps : dashboard.topReverse;
+    function renderConversationChart({ chartName, sourceRows, emptyId, frameId, canvasId, sequenceMode }) {
+        destroyPcapChart(chartName);
         const rows = (Array.isArray(sourceRows) ? sourceRows : []).slice(0, topChartLimit());
-        const title = sequenceMode ? 'Top conversations — Sequence gaps' : 'Top conversations — Unidirectional flows';
-        const description = sequenceMode
-            ? 'Flows with uncovered TCP sequence ranges, ranked by gap bytes.'
-            : 'Traffic observed in only one direction, ranked by packet count.';
-        element('pcapTopConversationsHeading').textContent = title;
-        element('pcapTopConversationsDescription').textContent = description;
-        document.querySelectorAll('[data-pcap-chart-mode]').forEach(button => {
-            const selected = button.dataset.pcapChartMode === pcapState.topConversationMode;
-            button.classList.toggle('is-active', selected);
-            button.setAttribute('aria-pressed', String(selected));
-        });
-        element('pcapTopConversationsEmpty').hidden = rows.length > 0;
-        element('pcapTopConversationsChartFrame').hidden = rows.length === 0;
-        if (!rows.length) {
-            element('pcapTopConversationsEmpty').textContent = sequenceMode
-                ? 'No observed TCP sequence gaps were found.'
-                : 'No unidirectional flows were found.';
-            return;
-        }
+        element(emptyId).hidden = rows.length > 0;
+        element(frameId).hidden = rows.length === 0;
+        if (!rows.length) return;
         const colors = chartColors();
         const valueKey = sequenceMode ? 'sequenceGapBytes' : 'packetCount';
         const datasetLabel = sequenceMode ? 'Observed gap bytes' : 'Packets';
-        const frame = element('pcapTopConversationsChartFrame');
+        const frame = element(frameId);
         frame.style.height = `${Math.max(230, rows.length * 34 + 70)}px`;
-        pcapState.charts.topConversations = new Chart(element('pcapTopConversationsChart'), {
+        pcapState.charts[chartName] = new Chart(element(canvasId), {
             type: 'bar',
             data: {
                 labels: rows.map(row => `${endpointDetails(row, 'source').label} → ${endpointDetails(row, 'destination').label}`),
@@ -585,6 +566,25 @@
         });
     }
 
+    function renderConversationCharts(dashboard) {
+        renderConversationChart({
+            chartName: 'reverse',
+            sourceRows: dashboard.topReverse,
+            emptyId: 'pcapReverseChartEmpty',
+            frameId: 'pcapReverseChartFrame',
+            canvasId: 'pcapReverseChart',
+            sequenceMode: false
+        });
+        renderConversationChart({
+            chartName: 'sequenceGap',
+            sourceRows: dashboard.topSequenceGaps,
+            emptyId: 'pcapSequenceGapChartEmpty',
+            frameId: 'pcapSequenceGapChartFrame',
+            canvasId: 'pcapSequenceGapChart',
+            sequenceMode: true
+        });
+    }
+
     function renderEnrichmentStatus(dashboard) {
         const status = dashboard.enrichment || {};
         const container = element('pcapEnrichmentStatus');
@@ -624,7 +624,7 @@
         renderEnrichmentStatus(dashboard);
         renderReverseRows(dashboard.topReverse);
         renderSequenceGapRows(dashboard.topSequenceGaps);
-        renderTopConversationsChart(job, dashboard);
+        renderConversationCharts(dashboard);
         updateExportButtons(dashboard);
         element('pcapResults').hidden = false;
     }
@@ -690,7 +690,10 @@
         setBusy(false);
         element('pcapStateBadge').textContent = 'Error';
         element('pcapStateBadge').className = 'badge badge-danger';
-        element('pcapStatusText').textContent = error?.message || 'The Datafeed Analysis request failed.';
+        element('pcapProgressTrack').hidden = true;
+        const statusText = element('pcapStatusText');
+        statusText.hidden = false;
+        statusText.textContent = error?.message || 'The Datafeed Analysis request failed.';
     }
 
     async function startPcapAnalysis() {
@@ -708,7 +711,6 @@
         pcapState.jobId = null;
         pcapState.jobState = null;
         pcapState.completedJob = null;
-        pcapState.topConversationMode = 'reverse';
         destroyPcapCharts();
         const startController = new AbortController();
         pcapState.startController = startController;
@@ -719,8 +721,11 @@
         element('pcapExportStatus').textContent = '';
         element('pcapWarnings').replaceChildren();
         setBusy(true);
+        element('pcapProgressTrack').hidden = false;
+        element('pcapProgressBar').style.width = '0%';
         element('pcapStateBadge').textContent = 'Starting';
         element('pcapStateBadge').className = 'badge';
+        element('pcapStatusText').hidden = false;
         element('pcapStatusText').textContent = pcapState.mode === 'upload'
             ? 'Uploading capture…'
             : 'Starting bounded packet retrieval…';
@@ -738,8 +743,7 @@
                 });
             } else {
                 const collectionWindow = buildPcapCollectionWindow(
-                    element('pcapLookbackMinutes').valueAsNumber,
-                    element('pcapWindowSeconds').valueAsNumber
+                    element('pcapLookbackMinutes').valueAsNumber
                 );
                 job = await pcapRequest('/collect', {
                     method: 'POST',
@@ -844,19 +848,6 @@
         element('pcapCancelButton').addEventListener('click', () => {
             cancelPcapAnalysis().catch(handlePcapError);
         });
-        document.querySelectorAll('[data-pcap-chart-mode]').forEach(button => {
-            button.addEventListener('click', () => {
-                pcapState.topConversationMode = button.dataset.pcapChartMode === 'sequence_gap'
-                    ? 'sequence_gap'
-                    : 'reverse';
-                if (pcapState.completedJob) {
-                    renderTopConversationsChart(
-                        pcapState.completedJob,
-                        dashboardFromJob(pcapState.completedJob)
-                    );
-                }
-            });
-        });
         Object.entries(EXPORT_SCOPES).forEach(([scope, config]) => {
             element(config.buttonId).addEventListener('click', () => downloadPcapCsv(scope));
         });
@@ -866,10 +857,7 @@
             pcapState.resizeTimer = setTimeout(() => {
                 pcapState.resizeTimer = null;
                 if (pcapState.active && pcapState.completedJob) {
-                    renderTopConversationsChart(
-                        pcapState.completedJob,
-                        dashboardFromJob(pcapState.completedJob)
-                    );
+                    renderConversationCharts(dashboardFromJob(pcapState.completedJob));
                 }
             }, 150);
         });
