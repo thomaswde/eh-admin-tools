@@ -34,6 +34,7 @@ function navButton(moduleName) {
         setAttribute(name, value) {
             attributes[name] = value;
         },
+        title: '',
         reason
     };
 }
@@ -87,7 +88,7 @@ test('navigation keeps unsupported modules visible with a concise reason', () =>
     assert.equal(users.reason.hidden, true);
 });
 
-test('offline navigation enables only local Datafeed Analysis and System Health', () => {
+test('offline navigation enables local tools without repeating connection guidance', () => {
     const dashboards = navButton('dashboards');
     const datafeed = navButton('pcap-analyzer');
     const systemHealth = navButton('system-health');
@@ -97,7 +98,9 @@ test('offline navigation enables only local Datafeed Analysis and System Health'
 
     assert.equal(dashboards.hidden, false);
     assert.equal(dashboards.disabled, true);
-    assert.match(dashboards.reason.textContent, /Connect to an ExtraHop deployment/);
+    assert.equal(dashboards.title, '');
+    assert.equal(dashboards.reason.textContent, '');
+    assert.equal(dashboards.reason.hidden, true);
     assert.equal(datafeed.disabled, false);
     assert.equal(systemHealth.disabled, false);
 });

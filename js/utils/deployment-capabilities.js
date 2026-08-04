@@ -115,9 +115,7 @@ function runtimeSupportsAction(runtimeContext, actionName) {
 
 function moduleCapabilityReason(runtimeContext, moduleName) {
     if (deploymentSupportsModule(runtimeContext, moduleName)) return '';
-    if (runtimeContext === 'offline') {
-        return 'Connect to an ExtraHop deployment to use this tool.';
-    }
+    if (runtimeContext === 'offline') return '';
     if (runtimeContext === '360' && moduleName === 'users') {
         return 'Available only with RevealX Enterprise.';
     }
