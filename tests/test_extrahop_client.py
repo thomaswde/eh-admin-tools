@@ -102,6 +102,10 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(requests), 2)
         await client.aclose()
         self.assertTrue(shared_client.is_closed)
+        with self.assertRaises(ExtraHopApiError) as raised:
+            await client.request("GET", "/appliances")
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertEqual(len(requests), 2, "a closed client must never recreate an authenticated transport")
 
     async def test_coalesces_identical_concurrent_dashboard_mutations_only_while_in_flight(self):
         attempts = 0

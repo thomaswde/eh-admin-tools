@@ -113,7 +113,16 @@ api_response_logger = ApiResponseLogger(
     os.environ.get("EH_API_LOG_VERBOSITY", "errors"),
 )
 connection_store = ConnectionStore(APP_ROOT)
-pcap_jobs = PcapJobManager(APP_ROOT / ".runtime" / "pcap-analyzer")
+
+
+async def detach_pcap_client(session_id: str, client: ExtraHopClient) -> bool:
+    return await sessions.adetach_if(session_id, client)
+
+
+pcap_jobs = PcapJobManager(
+    APP_ROOT / ".runtime" / "pcap-analyzer",
+    authentication_failure_callback=detach_pcap_client,
+)
 sessions.set_remove_callback(pcap_jobs.cancel_owner)
 
 
@@ -778,9 +787,16 @@ async def proxy_extrahop_request(
     except ExtraHopApiError as error:
         exception = http_exception(error)
         if error.status_code == 401:
-            await pcap_jobs.cancel_owner_collections(eh_admin_session)
-            await sessions.adetach(eh_admin_session)
-            exception.detail["code"] = "extrahop_session_expired"
+            detached = await sessions.adetach_if(eh_admin_session, client)
+            if detached:
+                await pcap_jobs.cancel_owner_collections(eh_admin_session)
+                exception.detail["code"] = "extrahop_session_expired"
+            else:
+                exception.status_code = 409
+                exception.detail = {
+                    "message": "The request used an ExtraHop connection that has since been replaced. Retry the operation.",
+                    "code": "extrahop_connection_replaced",
+                }
         raise exception from error
     finally:
         for task in (upstream_task, disconnect_task):

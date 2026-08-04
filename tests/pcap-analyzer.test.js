@@ -149,6 +149,7 @@ function createHarness(responses = [], options = {}) {
     const charts = [];
     const anchors = [];
     const timers = new Map();
+    let parseCalls = 0;
     let timerId = 0;
     let definition;
     class FixedDate extends Date {
@@ -164,6 +165,29 @@ function createHarness(responses = [], options = {}) {
             bg: '#fff', text: '#111', muted: '#666', grid: '#ddd',
             low: '#00a', mid: '#fa0', high: '#e00'
         });
+    }
+    async function backendFetch(url, fetchOptions = {}) {
+        calls.push({ url, options: fetchOptions });
+        const next = responses.shift();
+        if (!next) throw new Error(`Unexpected request to ${url}`);
+        return typeof next === 'function' ? next(url, fetchOptions) : next;
+    }
+    async function parseStaticResponse(response) {
+        parseCalls += 1;
+        if (typeof options.parseStaticResponse === 'function') {
+            return options.parseStaticResponse(response);
+        }
+        if (response.status === 204) return {};
+        const body = await response.json();
+        if (!response.ok) {
+            const detail = body?.detail || {};
+            const error = new Error(detail.message || body?.message || `Request failed with HTTP ${response.status}.`);
+            error.status = response.status;
+            error.code = detail.code || '';
+            error.details = detail.details || body;
+            throw error;
+        }
+        return body;
     }
     const context = vm.createContext({
         console: { log() {}, warn() {}, error() {} },
@@ -229,11 +253,10 @@ function createHarness(responses = [], options = {}) {
                 return node;
             }
         },
-        async fetch(url, options = {}) {
-            calls.push({ url, options });
-            const next = responses.shift();
-            if (!next) throw new Error(`Unexpected request to ${url}`);
-            return typeof next === 'function' ? next(url, options) : next;
+        fetch: backendFetch,
+        ExtraHopAPI: {
+            backendFetch,
+            parseStaticResponse
         },
         featureRegistry: {
             register(name, hooks) {
@@ -245,7 +268,8 @@ function createHarness(responses = [], options = {}) {
     vm.runInContext(source, context, { filename: 'pcap-analyzer.js' });
     return {
         context, definition, elements, modeButtons, calls, charts,
-        anchors, timers, progressTrack
+        anchors, timers, progressTrack,
+        get parseCalls() { return parseCalls; }
     };
 }
 
@@ -290,6 +314,7 @@ test('registers Datafeed Analysis and uploads the selected File as the raw reque
     assert.equal(harness.calls[0].options.body, file);
     assert.equal(harness.calls[0].options.headers['Content-Type'], 'application/vnd.tcpdump.pcap');
     assert.equal(harness.elements.pcapStateBadge.textContent, 'Completed');
+    assert.equal(harness.elements.pcapStateBadge.classList.values.has('badge-success'), true);
     assert.equal(harness.elements.pcapStatusText.hidden, true);
     assert.equal(harness.elements.pcapStatusText.textContent, '');
     assert.equal(harness.progressTrack.hidden, true);
@@ -381,6 +406,10 @@ test('renders unidirectional and TCP-desync charts with independent metrics and 
     await harness.definition.activate();
     harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
     await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
+    assert.equal(harness.elements.pcapStateBadge.classList.values.has('badge-warning'), true);
+    assert.equal(harness.elements.pcapStateBadge.classList.values.has('badge-success'), false);
+    assert.equal(harness.elements.pcapStatusText.hidden, false);
+    assert.equal(harness.elements.pcapStatusText.textContent, 'Analysis completed · Partial result');
     assert.equal(harness.charts.length, 2);
     const [reverseChart, sequenceChart] = harness.charts;
     assert.equal(reverseChart.config.data.datasets[0].label, 'Packets');
@@ -518,6 +547,39 @@ test('offline mode disables Packetstore retrieval and rejects programmatic colle
     assert.equal(harness.calls.length, 0);
 });
 
+test('routes analyzer 401 responses through the shared backend parser', async () => {
+    let parsedCode = '';
+    const harness = createHarness([
+        jsonResponse({
+            detail: {
+                code: 'workspace_expired',
+                message: 'The local workspace expired.'
+            }
+        }, 401)
+    ], {
+        async parseStaticResponse(response) {
+            const body = await response.json();
+            parsedCode = body.detail.code;
+            const error = new Error(body.detail.message);
+            error.status = response.status;
+            error.code = body.detail.code;
+            throw error;
+        }
+    });
+    harness.definition.initialize();
+    await harness.definition.activate();
+    harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
+
+    await assert.rejects(
+        vm.runInContext('window.PcapAnalyzer.start()', harness.context),
+        error => error.status === 401 && error.code === 'workspace_expired'
+    );
+
+    assert.equal(parsedCode, 'workspace_expired');
+    assert.equal(harness.parseCalls, 1);
+    assert.equal(harness.elements.pcapStatusText.textContent, 'The local workspace expired.');
+});
+
 test('renders an explicit warning when uniform packet slicing is suspected', async () => {
     const harness = createHarness([
         jsonResponse({ id: 'job-sliced', state: 'queued' }, 202),
@@ -537,8 +599,10 @@ test('renders an explicit warning when uniform packet slicing is suspected', asy
 
     assert.equal(harness.elements.pcapWarnings.children.length, 1);
     assert.match(harness.elements.pcapWarnings.children[0].textContent, /suspiciously uniform captured length/i);
-    assert.equal(harness.elements.pcapStatusText.hidden, true);
-    assert.equal(harness.elements.pcapStatusText.textContent, '');
+    assert.equal(harness.elements.pcapStateBadge.classList.values.has('badge-warning'), true);
+    assert.equal(harness.elements.pcapStateBadge.classList.values.has('badge-success'), false);
+    assert.equal(harness.elements.pcapStatusText.hidden, false);
+    assert.equal(harness.elements.pcapStatusText.textContent, 'Analysis completed · Coverage indeterminate');
     assert.equal(harness.progressTrack.hidden, true);
     assert.equal(harness.elements.pcapFindingHeroes.children.length, 3);
     assert.equal(harness.elements.pcapFindingHeroes.children[0].children[1].textContent, '0%');

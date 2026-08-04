@@ -14,7 +14,7 @@ import secrets
 import shutil
 import threading
 import time
-from typing import Any, AsyncIterator, Callable, Iterable
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterable
 
 from backend.extrahop_client import ExtraHopApiError, ExtraHopClient
 
@@ -38,6 +38,7 @@ FINDING_ALIASES = {
 DASHBOARD_ROW_LIMIT = 25
 CSV_SCOPES = frozenset({"all_findings", "reverse_not_observed", "sequence_gap"})
 DEVICE_RESULT_FIELDS = ("id", "node_id", "display_name", "default_name", "ipaddr4", "ipaddr6")
+AuthenticationFailureCallback = Callable[[str, ExtraHopClient], Awaitable[bool]]
 
 
 class PcapJobError(Exception):
@@ -186,10 +187,12 @@ class PcapJobManager:
         *,
         settings: PcapJobSettings | None = None,
         analyzer: Callable[..., AnalysisResult] = analyze_pcaps,
+        authentication_failure_callback: AuthenticationFailureCallback | None = None,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.settings = settings or PcapJobSettings.from_environment()
         self.analyzer = analyzer
+        self.authentication_failure_callback = authentication_failure_callback
         self._jobs: dict[str, PcapJob] = {}
         self._semaphore = asyncio.Semaphore(self.settings.max_concurrent_jobs)
 
@@ -428,7 +431,12 @@ class PcapJobManager:
             self._jobs.pop(job.id, None)
             await self._cleanup_files(job)
 
-    async def cancel_owner_collections(self, owner_session: str | None) -> None:
+    async def cancel_owner_collections(
+        self,
+        owner_session: str | None,
+        *,
+        exclude_job_id: str | None = None,
+    ) -> None:
         if not owner_session:
             return
         owned = [
@@ -436,6 +444,7 @@ class PcapJobManager:
             for job in self._jobs.values()
             if job.source_type == "extrahop"
             and job.state not in TERMINAL_STATES
+            and job.id != exclude_job_id
             and secrets.compare_digest(job.owner_session, owner_session)
         ]
         for job in owned:
@@ -592,6 +601,8 @@ class PcapJobManager:
                                 "A packet-search response reached the local byte limit; remaining collection was stopped."
                             )
                             break
+                        if error.status_code == 401:
+                            await self._handle_authentication_failure(job, client)
                         if error.status_code in {401, 402, 403, 422}:
                             terminal_error = error
                             job.collection["skippedWindows"] += len(windows) - index - 1
@@ -731,7 +742,12 @@ class PcapJobManager:
             )
         except AnalysisCancelled:
             raise
-        except (TimeoutError, ExtraHopApiError, ValueError, TypeError, json.JSONDecodeError):
+        except ExtraHopApiError as error:
+            if error.status_code == 401:
+                await self._handle_authentication_failure(job, client)
+            job.enrichment["status"] = "unavailable"
+            return
+        except (TimeoutError, ValueError, TypeError, json.JSONDecodeError):
             job.enrichment["status"] = "unavailable"
             return
         except Exception:
@@ -768,6 +784,21 @@ class PcapJobManager:
                 "addressesAmbiguous": ambiguous,
             }
         )
+
+    async def _handle_authentication_failure(
+        self,
+        job: PcapJob,
+        client: ExtraHopClient,
+    ) -> None:
+        callback = self.authentication_failure_callback
+        if callback is None:
+            return
+        detached = await callback(job.owner_session, client)
+        if detached:
+            await self.cancel_owner_collections(
+                job.owner_session,
+                exclude_job_id=job.id,
+            )
 
     async def _collect_device_matches(
         self,

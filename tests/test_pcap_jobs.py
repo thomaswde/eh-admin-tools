@@ -377,6 +377,39 @@ async def _test_initial_enrichment_failure_does_not_fail_analysis(tmp_path):
         await manager.shutdown()
 
 
+def test_upload_enrichment_401_invalidates_matching_connection_without_failing_analysis(tmp_path):
+    asyncio.run(_test_upload_enrichment_401_invalidates_matching_connection_without_failing_analysis(tmp_path))
+
+
+async def _test_upload_enrichment_401_invalidates_matching_connection_without_failing_analysis(tmp_path):
+    callback_calls = []
+
+    async def authentication_failed(owner_session, client):
+        callback_calls.append((owner_session, client))
+        return True
+
+    manager = PcapJobManager(
+        tmp_path / ".runtime" / "pcap",
+        settings=settings(),
+        authentication_failure_callback=authentication_failed,
+    )
+    await manager.startup()
+    capture = pcap_bytes([tcp_packet()])
+    client = SearchClient(b"", [ExtraHopApiError("authentication expired", 401)])
+    try:
+        created = await manager.create_upload("owner", client, chunks(capture), declared_length=len(capture))
+        job = manager._jobs[created["id"]]
+        await job.task
+
+        snapshot = manager.get("owner", job.id)
+        assert snapshot["state"] == "completed"
+        assert snapshot["completeness"] == "complete"
+        assert snapshot["enrichment"]["status"] == "unavailable"
+        assert callback_calls == [("owner", client)]
+    finally:
+        await manager.shutdown()
+
+
 def test_dashboard_uses_full_result_and_limits_top_rankings_to_25(tmp_path):
     asyncio.run(_test_dashboard_uses_full_result_and_limits_top_rankings_to_25(tmp_path))
 
@@ -579,6 +612,49 @@ async def _test_dynamic_422_reports_missing_packetstore_without_speculative_prob
         assert snapshot["state"] == "failed"
         assert "Packetstore" in snapshot["error"]["message"]
         assert snapshot["collection"]["failedWindows"] == 1
+    finally:
+        await manager.shutdown()
+
+
+def test_collection_401_detaches_matching_client_and_cancels_sibling_jobs(tmp_path):
+    asyncio.run(_test_collection_401_detaches_matching_client_and_cancels_sibling_jobs(tmp_path))
+
+
+async def _test_collection_401_detaches_matching_client_and_cancels_sibling_jobs(tmp_path):
+    callback_calls = []
+
+    async def authentication_failed(owner_session, client):
+        callback_calls.append((owner_session, client))
+        return True
+
+    manager = PcapJobManager(
+        tmp_path / ".runtime" / "pcap",
+        settings=settings(),
+        authentication_failure_callback=authentication_failed,
+    )
+    await manager.startup()
+    client = DownloadClient(b"", error=ExtraHopApiError("authentication expired", 401))
+    try:
+        created = await manager.create_collection(
+            "owner",
+            client,
+            from_ms=1_000,
+            until_ms=31_000,
+            window_seconds=30,
+        )
+        current_job = manager._jobs[created["id"]]
+        sibling_job = await manager._new_job("owner", "extrahop")
+        sibling_job.state = "collecting"
+        sibling_job.task = asyncio.create_task(asyncio.sleep(60))
+
+        await current_job.task
+
+        snapshot = manager.get("owner", current_job.id)
+        assert snapshot["state"] == "failed"
+        assert snapshot["error"]["message"] == "authentication expired"
+        assert callback_calls == [("owner", client)]
+        assert sibling_job.cancel_event.is_set()
+        assert sibling_job.task.cancelled()
     finally:
         await manager.shutdown()
 

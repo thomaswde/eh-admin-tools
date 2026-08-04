@@ -143,6 +143,19 @@ class SessionStoreTests(unittest.TestCase):
         self.assertTrue(store.has_workspace(workspace_id))
         self.assertIsNone(store.get(workspace_id))
 
+    def test_detach_if_preserves_a_replacement_client(self):
+        store = SessionStore(ttl_seconds=60, max_sessions=2)
+        workspace_id = store.ensure()
+        stale_client = object()
+        replacement_client = object()
+        store.attach(workspace_id, stale_client)
+        store.attach(workspace_id, replacement_client)
+
+        self.assertFalse(store.detach_if(workspace_id, stale_client))
+        self.assertIs(store.get(workspace_id), replacement_client)
+        self.assertTrue(store.detach_if(workspace_id, replacement_client))
+        self.assertIsNone(store.get(workspace_id))
+
     def test_replace_removes_old_session(self):
         store = SessionStore(ttl_seconds=60, max_sessions=4)
         first_client = object()
@@ -316,6 +329,28 @@ class BackendRouteSecurityTests(unittest.TestCase):
         self.assertTrue(main.sessions.has_workspace(workspace_id))
         self.assertIsNone(main.sessions.get(workspace_id))
         failing_client.aclose.assert_awaited_once_with()
+
+    def test_stale_upstream_401_does_not_detach_a_replacement_client(self):
+        workspace_id = main.sessions.ensure()
+        stale_client = unittest.mock.Mock()
+        replacement_client = unittest.mock.Mock()
+        stale_client.aclose = AsyncMock()
+        replacement_client.aclose = AsyncMock()
+
+        async def fail_after_replacement(*_args, **_kwargs):
+            main.sessions.attach(workspace_id, replacement_client)
+            raise ExtraHopApiError("authentication expired", status_code=401)
+
+        stale_client.request = AsyncMock(side_effect=fail_after_replacement)
+        main.sessions.attach(workspace_id, stale_client)
+        self.client.cookies.set(main.SESSION_COOKIE, workspace_id)
+
+        response = self.client.get("/backend/extrahop/api/v1/appliances")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "extrahop_connection_replaced")
+        self.assertIs(main.sessions.get(workspace_id), replacement_client)
+        replacement_client.aclose.assert_not_awaited()
 
     def test_proxy_preserves_int64_identifiers_as_strings_for_browser_json(self):
         unsafe_id = 9007199254740993

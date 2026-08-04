@@ -22,6 +22,8 @@ TCP_PROTOCOL = 6
 TCP_SYN = 0x02
 TCP_FIN = 0x01
 TCP_RST = 0x04
+VLAN_ETHER_TYPES = frozenset({0x8100, 0x88A8})
+MAX_VLAN_TAGS = 2
 SEQUENCE_MODULUS = 1 << 32
 SEQUENCE_HALF = 1 << 31
 
@@ -493,10 +495,20 @@ def _parse_ethernet_tcp(packet: bytes) -> _ParsedTcp:
     if len(packet) < 14:
         raise _PacketParseError
     ether_type = struct.unpack("!H", packet[12:14])[0]
+    payload_offset = 14
+    vlan_tags = 0
+    while ether_type in VLAN_ETHER_TYPES and vlan_tags < MAX_VLAN_TAGS:
+        if len(packet) < payload_offset + 4:
+            raise _PacketParseError
+        ether_type = struct.unpack("!H", packet[payload_offset + 2 : payload_offset + 4])[0]
+        payload_offset += 4
+        vlan_tags += 1
+    if ether_type in VLAN_ETHER_TYPES:
+        raise _UnsupportedPacket
     if ether_type == 0x0800:
-        return _parse_ipv4_tcp(packet, 14)
+        return _parse_ipv4_tcp(packet, payload_offset)
     if ether_type == 0x86DD:
-        return _parse_ipv6_tcp(packet, 14)
+        return _parse_ipv6_tcp(packet, payload_offset)
     raise _UnsupportedPacket
 
 

@@ -22,6 +22,14 @@ def _ethernet(payload, ether_type):
     return b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b" + struct.pack("!H", ether_type) + payload
 
 
+def _with_vlan_tags(packet, *ether_types):
+    tagged = bytearray(packet[:12])
+    for ether_type in ether_types:
+        tagged.extend(struct.pack("!HH", ether_type, 0))
+    tagged.extend(packet[12:])
+    return bytes(tagged)
+
+
 def _ipv4_tcp(
     source="192.0.2.1",
     destination="198.51.100.2",
@@ -115,6 +123,19 @@ def test_ipv4_and_ipv6_tcp_are_aggregated_and_stably_sorted():
         (4, "203.0.113.8"),
         (6, "2001:db8::1"),
     ]
+
+
+def test_single_and_stacked_vlan_tags_are_unwrapped_with_a_fixed_depth_bound():
+    single_tag = _with_vlan_tags(_ipv4_tcp(), 0x8100)
+    stacked_tags = _with_vlan_tags(_ipv6_tcp(), 0x88A8, 0x8100)
+    too_many_tags = _with_vlan_tags(_ipv4_tcp(), 0x88A8, 0x8100, 0x8100)
+
+    result = analyze_pcaps([_pcap([single_tag, stacked_tags, too_many_tags])])
+
+    assert result.summary.tcp_packets == 2
+    assert result.summary.flow_count == 2
+    assert result.summary.unsupported_packets == 1
+    assert {flow.ip_version for flow in result.flows} == {4, 6}
 
 
 def test_reverse_direction_is_computed_after_all_input_files():

@@ -69,26 +69,11 @@
     }
 
     async function pcapRequest(path, options = {}) {
-        const response = await fetch(`${API_ROOT}${path}`, {
+        const response = await ExtraHopAPI.backendFetch(`${API_ROOT}${path}`, {
             credentials: 'same-origin',
-            cache: 'no-store',
             ...options
         });
-        if (!response.ok) {
-            let detail = `Request failed with HTTP ${response.status}.`;
-            try {
-                const body = await response.json();
-                const responseDetail = body.detail || body.error;
-                detail = typeof responseDetail === 'string'
-                    ? responseDetail
-                    : responseDetail?.message || responseDetail?.detail || detail;
-            } catch {}
-            const error = new Error(String(detail));
-            error.status = response.status;
-            throw error;
-        }
-        if (response.status === 204) return null;
-        return response.json();
+        return ExtraHopAPI.parseStaticResponse(response);
     }
 
     function setMode(mode) {
@@ -235,9 +220,16 @@
         const badge = element('pcapStateBadge');
         badge.textContent = stateLabel(job.state);
         badge.className = 'badge';
-        if (job.state === 'completed') badge.classList.add('badge-success');
+        if (job.state === 'completed' && job.completeness === 'complete') {
+            badge.classList.add('badge-success');
+        }
         if (job.state === 'failed') badge.classList.add('badge-danger');
-        if (job.state === 'cancelled' || job.completeness === 'partial') badge.classList.add('badge-warning');
+        if (
+            job.state === 'cancelled'
+            || (job.state === 'completed' && job.completeness !== 'complete')
+        ) {
+            badge.classList.add('badge-warning');
+        }
 
         const stage = job.stage || job.progress?.stage || job.state;
         let status = stateLabel(stage);
@@ -247,9 +239,18 @@
         if (job.state !== 'completed' && job.completeness && job.completeness !== 'not_applicable') {
             status += ` · ${stateLabel(job.completeness)} result`;
         }
+        if (job.state === 'completed' && job.completeness === 'partial') {
+            status = 'Analysis completed · Partial result';
+        } else if (job.state === 'completed' && job.completeness === 'indeterminate') {
+            status = 'Analysis completed · Coverage indeterminate';
+        }
         if (job.error) status = `${status}: ${normalizeWarning(job.error) || String(job.error)}`;
         const statusText = element('pcapStatusText');
-        const completedSuccessfully = job.state === 'completed' && !job.error;
+        const completedSuccessfully = (
+            job.state === 'completed'
+            && job.completeness === 'complete'
+            && !job.error
+        );
         statusText.textContent = completedSuccessfully ? '' : status;
         statusText.hidden = completedSuccessfully;
         renderWarnings(job);
@@ -813,11 +814,13 @@
         updateExportButtons(dashboardFromJob(pcapState.completedJob), scope);
         try {
             const params = new URLSearchParams({ scope });
-            const response = await fetch(`${API_ROOT}/jobs/${encodeURIComponent(jobId)}/csv?${params}`, {
-                credentials: 'same-origin',
-                cache: 'no-store'
-            });
-            if (!response.ok) throw new Error(`CSV download failed with HTTP ${response.status}.`);
+            const response = await ExtraHopAPI.backendFetch(
+                `${API_ROOT}/jobs/${encodeURIComponent(jobId)}/csv?${params}`,
+                { credentials: 'same-origin' }
+            );
+            if (!response.ok) {
+                await ExtraHopAPI.parseStaticResponse(response);
+            }
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');

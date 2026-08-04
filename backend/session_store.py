@@ -187,6 +187,39 @@ class SessionStore:
         await self._close_clients(detached_clients)
         return detached
 
+    def detach_if(self, session_id: str | None, client: ExtraHopClient) -> bool:
+        detached, removed_sessions, detached_clients = self._detach_if(session_id, client)
+        self._schedule_cleanup(removed_sessions)
+        self._schedule_client_close(detached_clients)
+        return detached
+
+    async def adetach_if(self, session_id: str | None, client: ExtraHopClient) -> bool:
+        detached, removed_sessions, detached_clients = self._detach_if(session_id, client)
+        await self._cleanup_removed(removed_sessions)
+        await self._close_clients(detached_clients)
+        return detached
+
+    def _detach_if(
+        self,
+        session_id: str | None,
+        client: ExtraHopClient,
+    ) -> tuple[
+        bool,
+        list[tuple[str, ExtraHopClient | None]],
+        list[ExtraHopClient | None],
+    ]:
+        now = time.monotonic()
+        detached_clients: list[ExtraHopClient | None] = []
+        with self._lock:
+            removed_sessions = self._prune_locked(now)
+            entry = self._sessions.get(session_id) if session_id else None
+            if not entry or entry.client is not client:
+                return False, removed_sessions, detached_clients
+            detached_clients.append(entry.client)
+            entry.client = None
+            entry.last_accessed_at = now
+        return True, removed_sessions, detached_clients
+
     def _detach(
         self,
         session_id: str | None,

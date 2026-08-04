@@ -148,6 +148,7 @@ class ExtraHopClient:
         self.access_token_expires_at = 0.0
         self.verify_tls = True
         self._http_client: httpx.AsyncClient | None = None
+        self._closed = False
         self._auth_lock = asyncio.Lock()
         self._mutation_lock = asyncio.Lock()
         self._inflight_mutations: dict[tuple[Any, ...], asyncio.Task[Any]] = {}
@@ -702,13 +703,31 @@ class ExtraHopClient:
         raise ExtraHopApiError("API request failed after retry exhaustion", 502, {"url": url})
 
     def _client(self) -> httpx.AsyncClient:
+        if self._closed:
+            raise ExtraHopApiError("The ExtraHop connection is closed", 401)
         if self._http_client is None or self._http_client.is_closed:
             self._http_client = httpx.AsyncClient(timeout=60.0, verify=self.verify_tls)
         return self._http_client
 
     async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        current_task = asyncio.current_task()
+        async with self._mutation_lock:
+            inflight = [
+                task
+                for task in self._inflight_mutations.values()
+                if task is not current_task and not task.done()
+            ]
+        for task in inflight:
+            task.cancel()
+        if inflight:
+            await asyncio.gather(*inflight, return_exceptions=True)
         if self._http_client is not None and not self._http_client.is_closed:
             await self._http_client.aclose()
+        self.access_token = None
+        self.access_token_expires_at = 0.0
 
     @staticmethod
     def _retryable_network_error(error: httpx.RequestError) -> bool:
