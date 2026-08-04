@@ -8,6 +8,7 @@ const source = fs.readFileSync(
     path.join(__dirname, '..', 'js', 'modules', 'pcap-analyzer.js'),
     'utf8'
 );
+const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 
 class FakeClassList {
     constructor(owner) {
@@ -140,7 +141,12 @@ function createHarness(responses = []) {
     return { context, definition, elements, modeButtons, calls, timers, progressTrack };
 }
 
-test('registers the PCAP Analyzer and uploads the selected File as the raw request body', async () => {
+test('presents the feature as Datafeed Analysis', () => {
+    assert.match(html, /data-module="pcap-analyzer"[\s\S]*?<span class="nav-title">Datafeed Analysis<\/span>/);
+    assert.match(html, /id="pcap-analyzerModule"[\s\S]*?<h1 class="page-title">Datafeed Analysis<\/h1>/);
+});
+
+test('registers Datafeed Analysis and uploads the selected File as the raw request body', async () => {
     const file = { name: 'capture.pcap', marker: 'raw-file-body' };
     const harness = createHarness([
         jsonResponse({ id: 'job-upload', state: 'queued' }, 202),

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import platform
 import re
 import threading
 from typing import Any, Callable, Mapping
@@ -36,6 +38,59 @@ PLACEHOLDER_SECRET_VALUES = {
 
 class ConnectionStorageError(RuntimeError):
     """Raised when the operating-system credential store cannot be used."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "unavailable",
+        recovery: Mapping[str, str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.recovery = dict(recovery) if recovery else None
+
+    def public_status(self) -> dict[str, Any]:
+        return {
+            "available": False,
+            "message": str(self),
+            "code": self.code,
+            "recovery": self.recovery,
+        }
+
+
+def _is_wsl() -> bool:
+    if platform.system() != "Linux":
+        return False
+    release = platform.release().casefold()
+    return "microsoft" in release or bool(os.environ.get("WSL_INTEROP"))
+
+
+def _wsl_secret_service_setup_command() -> str:
+    try:
+        os_release = platform.freedesktop_os_release()
+    except OSError:
+        os_release = {}
+
+    distribution_ids = {
+        str(os_release.get("ID", "")).casefold(),
+        *str(os_release.get("ID_LIKE", "")).casefold().split(),
+    }
+    if distribution_ids & {"debian", "ubuntu"}:
+        return "sudo apt install gnome-keyring"
+    if distribution_ids & {"fedora", "rhel", "centos"}:
+        return "sudo dnf install gnome-keyring"
+    if "arch" in distribution_ids:
+        return "sudo pacman -S gnome-keyring"
+    if distribution_ids & {"opensuse", "suse"}:
+        return "sudo zypper install gnome-keyring"
+    return ""
+
+
+def _is_missing_keyring_backend(error: Exception) -> bool:
+    errors = getattr(keyring, "errors", None) if keyring is not None else None
+    error_type = getattr(errors, "NoKeyringError", None)
+    return isinstance(error, error_type) if isinstance(error_type, type) else False
 
 
 def resolve_local_env_path(app_root: Path) -> Path:
@@ -77,11 +132,11 @@ class ConnectionStore:
     def list_connections(self) -> dict[str, Any]:
         env_configs, env_warnings = self._read_env_configs()
         keychain_configs: dict[str, dict[str, Any]] = {}
-        storage_error: str | None = None
+        storage_error: ConnectionStorageError | None = None
         try:
             keychain_configs = self._read_keychain_configs()
         except ConnectionStorageError as error:
-            storage_error = str(error)
+            storage_error = error
 
         env_configs, skipped_env = self._without_placeholders(env_configs)
         keychain_configs, skipped_keychain = self._without_placeholders(keychain_configs)
@@ -114,7 +169,15 @@ class ConnectionStore:
                 f"{'' if skipped_placeholders == 1 else 's'} with placeholder values."
             )
         if storage_error:
-            warnings.append(storage_error)
+            warnings.append(str(storage_error))
+
+        secure_storage = {
+            "available": storage_error is None and self._keyring is not None,
+            "connectionCount": len(keychain_configs),
+            "message": str(storage_error) if storage_error else None,
+            "code": storage_error.code if storage_error else None,
+            "recovery": storage_error.recovery if storage_error else None,
+        }
 
         return {
             "connections": connections,
@@ -123,13 +186,22 @@ class ConnectionStore:
                 "found": self.env_path.is_file(),
                 "connectionCount": len(env_configs),
             },
-            "secureStorage": {
-                "available": storage_error is None and self._keyring is not None,
-                "connectionCount": len(keychain_configs),
-                "message": storage_error,
-            },
+            "secureStorage": secure_storage,
             "warnings": warnings,
         }
+
+    def recheck_secure_storage(self) -> dict[str, Any]:
+        """Refresh keyring backend discovery after the user changes OS setup."""
+        with self._lock:
+            if self._keyring is keyring and keyring is not None:
+                initializer = getattr(
+                    getattr(keyring, "core", None),
+                    "init_backend",
+                    None,
+                )
+                if callable(initializer):
+                    initializer()
+            return self.list_connections()
 
     def get(self, connection_id: str) -> dict[str, Any]:
         env_configs, _warnings = self._read_env_configs()
@@ -208,9 +280,7 @@ class ConnectionStore:
                     KEYRING_ACCOUNT,
                 )
             except Exception as error:
-                raise ConnectionStorageError(
-                    "The operating-system credential store is unavailable."
-                ) from error
+                raise self._unavailable_error(error, update=False) from error
             if not payload:
                 return {}
             try:
@@ -251,10 +321,7 @@ class ConnectionStore:
                 payload,
             )
         except Exception as error:
-            raise ConnectionStorageError(
-                "The operating-system credential store is unavailable; "
-                "saved connections were not updated."
-            ) from error
+            raise self._unavailable_error(error, update=True) from error
 
     def _read_env_configs(self) -> tuple[dict[str, dict[str, Any]], list[str]]:
         if not self.env_path.is_file():
@@ -307,6 +374,30 @@ class ConnectionStore:
                 "The operating-system credential store dependency is unavailable."
             )
         return self._keyring
+
+    @staticmethod
+    def _unavailable_error(error: Exception, *, update: bool) -> ConnectionStorageError:
+        if _is_wsl() and _is_missing_keyring_backend(error):
+            message = "Secure saved connections are not set up in WSL"
+            if update:
+                message += "; this connection was not saved."
+            else:
+                message += "."
+            return ConnectionStorageError(
+                message,
+                code="wsl-secret-service-unavailable",
+                recovery={
+                    "kind": "wsl-secret-service",
+                    "command": _wsl_secret_service_setup_command(),
+                },
+            )
+
+        message = "The operating-system credential store is unavailable"
+        if update:
+            message += "; saved connections were not updated."
+        else:
+            message += "."
+        return ConnectionStorageError(message)
 
     @classmethod
     def _without_placeholders(

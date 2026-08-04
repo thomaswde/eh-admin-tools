@@ -62,6 +62,19 @@
                         </select>
                         <span id="savedConnectionStatus" class="field-hint">Checking the local .env file and secure credential store.</span>
                     </div>
+                    <div id="secureStorageRecovery" class="secure-storage-recovery notice notice-warn" role="status" aria-live="polite" hidden>
+                        <div class="secure-storage-recovery-content">
+                            <strong>Set up secure saved connections in WSL</strong>
+                            <p>This WSL distribution does not currently provide the Linux Secret Service used to protect saved credentials. Active connections still work, but new connections cannot be saved securely yet.</p>
+                            <p id="secureStorageRecoveryInstruction">Copy and run this command in your WSL terminal, then return here and check again. If prompted, create or unlock the keyring.</p>
+                            <code id="secureStorageSetupCommand" class="secure-storage-command"></code>
+                            <div class="secure-storage-recovery-actions">
+                                <button type="button" id="copySecureStorageSetupCommand" class="btn btn-sm">Copy setup command</button>
+                                <button type="button" id="recheckSecureStorageBtn" class="btn btn-sm">Check again</button>
+                            </div>
+                            <span id="secureStorageRecoveryStatus" class="field-hint" aria-live="polite"></span>
+                        </div>
+                    </div>
                     <div id="savedEnterpriseProxyTokenField" class="field" hidden>
                         <label for="savedEnterpriseProxyToken">
                             Remote access proxy token
@@ -246,7 +259,7 @@
                         <path d="M4 6h16v12H4z"></path><path d="M7 9h2M11 9h6M7 13h5M14 13h3"></path>
                     </svg>
                     <span class="nav-text">
-                        <span class="nav-title">PCAP Analyzer</span>
+                        <span class="nav-title">Datafeed Analysis</span>
                     </span>
                 </button>
 
@@ -738,10 +751,10 @@
             </div>
         </div>
 
-        <!-- ---------------------- PCAP Analyzer ---------------------- -->
+        <!-- ---------------------- Datafeed Analysis ---------------------- -->
         <div id="pcap-analyzerModule" class="module-content page" style="display: none;">
             <div class="page-head">
-                <h1 class="page-title">PCAP Capture Analyzer</h1>
+                <h1 class="page-title">Datafeed Analysis</h1>
                 <p class="page-desc">Inspect directional conversations, capture slicing, reverse-direction visibility, and observed TCP sequence gaps in a bounded packet capture.</p>
             </div>
 

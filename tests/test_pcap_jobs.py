@@ -109,7 +109,7 @@ async def _test_upload_job_is_session_bound_and_produces_results_and_csv(tmp_pat
         assert result["total"] == 1
         assert result["items"][0]["findingKinds"] == ["reverse_not_observed"]
         filename, lines = manager.csv_rows("owner", job.id)
-        assert filename.endswith(".csv")
+        assert filename == f"datafeed-analysis-{job.id[:12]}.csv"
         assert "sourceAddress" in "".join(lines)
         with pytest.raises(PcapJobError) as denied:
             manager.get("different-owner", job.id)
@@ -181,7 +181,7 @@ async def _test_dynamic_collection_uses_same_documented_post_contract_for_both_d
         assert body["until"] == "30999"
         assert body["output"] == "pcap"
         assert body["always_return_body"] is False
-        assert any("Packetstore traffic can differ" in warning for warning in snapshot["warnings"])
+        assert snapshot["warnings"] == []
     finally:
         await manager.shutdown()
 

@@ -96,7 +96,7 @@ test('Records Report loads the shared collector before its registered feature', 
     );
 });
 
-test('PCAP Analyzer loads its cohesive feature script without unrelated dependencies', async () => {
+test('Datafeed Analysis loads its cohesive feature script without unrelated dependencies', async () => {
     const { loader, scripts } = createHarness();
     assert.equal(await loader.loadModule('pcap-analyzer'), true);
     assert.deepEqual(

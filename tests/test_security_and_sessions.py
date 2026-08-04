@@ -29,6 +29,7 @@ class DummyConnectionStore:
     def __init__(self):
         self.saved = []
         self.configs = {}
+        self.rechecks = 0
 
     def save(self, config):
         self.saved.append(config)
@@ -79,6 +80,10 @@ class DummyConnectionStore:
             "secureStorage": {"available": True, "connectionCount": len(self.configs)},
             "warnings": [],
         }
+
+    def recheck_secure_storage(self):
+        self.rechecks += 1
+        return self.list_connections()
 
 
 class ExtraHopClientValidationTests(unittest.TestCase):
@@ -417,8 +422,13 @@ class BackendRouteSecurityTests(unittest.TestCase):
                 store,
                 "save",
                 side_effect=ConnectionStorageError(
-                    "The operating-system credential store is unavailable; "
-                    "the connection was not saved."
+                    "Secure saved connections are not set up in WSL; "
+                    "this connection was not saved.",
+                    code="wsl-secret-service-unavailable",
+                    recovery={
+                        "kind": "wsl-secret-service",
+                        "command": "sudo apt install gnome-keyring",
+                    },
                 ),
             ),
         ):
@@ -427,6 +437,10 @@ class BackendRouteSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["connected"])
         self.assertFalse(response.json()["savedConnection"])
+        self.assertEqual(
+            response.json()["connectionStorage"]["code"],
+            "wsl-secret-service-unavailable",
+        )
         self.assertIsNotNone(main.sessions.get(self.client.cookies.get(main.SESSION_COOKIE)))
 
     def test_saved_connection_endpoint_resolves_credentials_server_side(self):
@@ -537,6 +551,17 @@ class BackendRouteSecurityTests(unittest.TestCase):
             "sensor.example.test",
         )
         self.assertNotIn("secret", response.text)
+
+    def test_secure_storage_recheck_refreshes_server_side_discovery(self):
+        store = DummyConnectionStore()
+        with patch("main.connection_store", store):
+            response = self.client.post(
+                "/backend/connections/secure-storage/recheck"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["secureStorage"]["available"])
+        self.assertEqual(store.rechecks, 1)
 
 
 if __name__ == "__main__":

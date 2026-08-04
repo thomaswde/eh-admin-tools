@@ -395,7 +395,7 @@
         setBusy(false);
         element('pcapStateBadge').textContent = 'Error';
         element('pcapStateBadge').className = 'badge badge-danger';
-        element('pcapStatusText').textContent = error?.message || 'The PCAP Analyzer request failed.';
+        element('pcapStatusText').textContent = error?.message || 'The Datafeed Analysis request failed.';
     }
 
     async function startPcapAnalysis() {
@@ -441,7 +441,7 @@
             }
             if (pcapState.startController === startController) pcapState.startController = null;
             const jobId = String(job.id || job.jobId || job.job_id || '');
-            if (!jobId) throw new Error('The PCAP Analyzer did not return a job identifier.');
+            if (!jobId) throw new Error('Datafeed Analysis did not return a job identifier.');
             pcapState.jobId = jobId;
             pcapState.jobState = job.state || 'queued';
             renderJob({ state: 'queued', completeness: 'not_applicable', ...job });
@@ -485,7 +485,7 @@
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = 'pcap-analysis.csv';
+            link.download = 'datafeed-analysis.csv';
             link.rel = 'noopener';
             document.body.appendChild(link);
             link.click();

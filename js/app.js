@@ -137,6 +137,14 @@ function setupGlobalEventListeners() {
     document.getElementById('cancelAddConnectionBtn').addEventListener('click', () => {
         showNewConnectionForm(false);
     });
+    document.getElementById('copySecureStorageSetupCommand').addEventListener(
+        'click',
+        copySecureStorageSetupCommand
+    );
+    document.getElementById('recheckSecureStorageBtn').addEventListener(
+        'click',
+        recheckSecureStorage
+    );
     document.getElementById('disconnectBtn').addEventListener('click', handleDisconnect);
 
     const apiLoggingVerbosity = document.getElementById('apiLoggingVerbosity');

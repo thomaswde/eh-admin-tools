@@ -311,10 +311,7 @@ async def establish_session(
             result.update(
                 {
                     "savedConnection": False,
-                    "connectionStorage": {
-                        "available": False,
-                        "message": str(error),
-                    },
+                    "connectionStorage": error.public_status(),
                 }
             )
     return result
@@ -323,6 +320,11 @@ async def establish_session(
 @app.get("/backend/connections")
 async def list_saved_connections() -> dict[str, Any]:
     return await asyncio.to_thread(connection_store.list_connections)
+
+
+@app.post("/backend/connections/secure-storage/recheck")
+async def recheck_secure_storage() -> dict[str, Any]:
+    return await asyncio.to_thread(connection_store.recheck_secure_storage)
 
 
 @app.post("/backend/connections/{connection_id}/session")
@@ -397,13 +399,20 @@ async def create_saved_connection_session(
                 }
             )
         except (ConnectionStorageError, KeyError) as error:
+            storage_status = (
+                error.public_status()
+                if isinstance(error, ConnectionStorageError)
+                else {
+                    "available": False,
+                    "message": str(error),
+                    "code": "unavailable",
+                    "recovery": None,
+                }
+            )
             result.update(
                 {
                     "savedConnection": False,
-                    "connectionStorage": {
-                        "available": False,
-                        "message": str(error),
-                    },
+                    "connectionStorage": storage_status,
                 }
             )
     return result

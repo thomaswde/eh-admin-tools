@@ -1,4 +1,4 @@
-/* exported editSavedConnection, deleteSavedConnection, handleSavedConnect, handleConnect, handleDisconnect */
+/* exported copySecureStorageSetupCommand, deleteSavedConnection, editSavedConnection, handleConnect, handleDisconnect, handleSavedConnect, recheckSecureStorage */
 function groupSavedConnections(connections) {
     const sorted = [...(connections || [])].sort((left, right) => {
         const labelOrder = String(left.label || '').localeCompare(
@@ -95,7 +95,75 @@ function syncSavedConnectionSelection(connections = savedConnectionCatalog) {
     window.refreshCustomSelect?.(select);
 }
 
-async function loadSavedConnections() {
+function renderSecureStorageRecovery(secureStorage) {
+    const panel = document.getElementById('secureStorageRecovery');
+    const command = document.getElementById('secureStorageSetupCommand');
+    const copyButton = document.getElementById('copySecureStorageSetupCommand');
+    const instruction = document.getElementById('secureStorageRecoveryInstruction');
+    const recoveryStatus = document.getElementById('secureStorageRecoveryStatus');
+    if (!panel || !command || !copyButton || !instruction || !recoveryStatus) return;
+
+    const recovery = secureStorage?.recovery;
+    const show = secureStorage?.available === false
+        && recovery?.kind === 'wsl-secret-service';
+    panel.hidden = !show;
+    if (!show) return;
+
+    const setupCommand = typeof recovery.command === 'string'
+        ? recovery.command.trim()
+        : '';
+    command.textContent = setupCommand;
+    command.hidden = !setupCommand;
+    copyButton.hidden = !setupCommand;
+    instruction.textContent = setupCommand
+        ? 'Copy and run this command in your WSL terminal, then return here and check again. If prompted, create or unlock the keyring.'
+        : 'Install GNOME Keyring with this WSL distribution\'s package manager, then return here and check again. If prompted, create or unlock the keyring.';
+    recoveryStatus.textContent = '';
+    copyButton.textContent = 'Copy setup command';
+}
+
+async function copySecureStorageSetupCommand() {
+    const command = document.getElementById('secureStorageSetupCommand')?.textContent?.trim();
+    const button = document.getElementById('copySecureStorageSetupCommand');
+    const status = document.getElementById('secureStorageRecoveryStatus');
+    if (!command || !button || !status) return;
+
+    try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(command);
+        } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = command;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            const copied = document.execCommand('copy');
+            textarea.remove();
+            if (!copied) throw new Error('Copy command was rejected');
+        }
+        button.textContent = 'Copied';
+        status.textContent = 'Run the command in your WSL terminal, then check again.';
+    } catch {
+        status.textContent = 'Automatic copy was unavailable. Select and copy the command above.';
+    }
+}
+
+function visibleSavedConnectionWarnings(catalog) {
+    const hasStructuredStorageRecovery = catalog?.secureStorage?.available === false
+        && catalog.secureStorage?.recovery?.kind === 'wsl-secret-service';
+    return [...new Set(
+        (Array.isArray(catalog?.warnings) ? catalog.warnings : [])
+            .filter(message => typeof message === 'string' && message)
+            .filter(message => (
+                !hasStructuredStorageRecovery
+                || message !== catalog.secureStorage?.message
+            ))
+    )];
+}
+
+async function loadSavedConnections({ recheckSecureStorage = false } = {}) {
     const select = document.getElementById('savedConnectionSelect');
     const connectBtn = document.getElementById('connectSavedBtn');
     const status = document.getElementById('savedConnectionStatus');
@@ -106,9 +174,12 @@ async function loadSavedConnections() {
     status.textContent = 'Checking the local .env file and secure credential store.';
 
     try {
-        const catalog = await ExtraHopAPI.listSavedConnections();
+        const catalog = recheckSecureStorage
+            ? await ExtraHopAPI.recheckSecureStorage()
+            : await ExtraHopAPI.listSavedConnections();
         const connections = Array.isArray(catalog.connections) ? catalog.connections : [];
         savedConnectionCatalog = connections;
+        renderSecureStorageRecovery(catalog.secureStorage);
         select.replaceChildren();
 
         if (connections.length === 0) {
@@ -150,10 +221,7 @@ async function loadSavedConnections() {
         if (catalog.secureStorage?.connectionCount) {
             sourceParts.push(`${catalog.secureStorage.connectionCount} from secure storage`);
         }
-        const warnings = [...new Set(
-            (Array.isArray(catalog.warnings) ? catalog.warnings : [])
-                .filter(message => typeof message === 'string' && message)
-        )];
+        const warnings = visibleSavedConnectionWarnings(catalog);
         if (connections.length === 0) {
             status.textContent = warnings.join(' ') || 'No saved connections found.';
         } else {
@@ -166,6 +234,7 @@ async function loadSavedConnections() {
         }
     } catch (error) {
         savedConnectionCatalog = [];
+        renderSecureStorageRecovery(null);
         select.replaceChildren();
         const option = document.createElement('option');
         option.value = '';
@@ -176,6 +245,26 @@ async function loadSavedConnections() {
         syncSavedEnterpriseProxyTokenVisibility();
         window.refreshCustomSelect?.(select);
         status.textContent = error.message;
+    }
+}
+
+async function recheckSecureStorage() {
+    const button = document.getElementById('recheckSecureStorageBtn');
+    const status = document.getElementById('secureStorageRecoveryStatus');
+    if (!button || !status) return;
+
+    button.disabled = true;
+    button.textContent = 'Checking...';
+    status.textContent = 'Checking for a Linux Secret Service...';
+    try {
+        await loadSavedConnections({ recheckSecureStorage: true });
+        const panel = document.getElementById('secureStorageRecovery');
+        if (!panel?.hidden) {
+            status.textContent = 'Secure storage is still unavailable. Finish the setup in WSL, then check again.';
+        }
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Check again';
     }
 }
 

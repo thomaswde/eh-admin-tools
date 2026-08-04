@@ -90,9 +90,9 @@ Use the API Logging control in the sidebar to write proxied ExtraHop API respons
 
 Full response logs can still contain sensitive operational data. Review them before sharing. Preview and entry sizes are bounded, oversized JSON is not parsed solely for logging, and the log rotates by bytes with a fixed backup count. API response logging defaults to `Errors`; the default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
 
-## PCAP Capture Analyzer
+## Datafeed Analysis
 
-PCAP Capture Analyzer accepts a local classic PCAP or retrieves bounded PCAP windows from the
+Datafeed Analysis accepts a local classic PCAP or retrieves bounded PCAP windows from the
 connected ExtraHop system. Connected collection uses the same authenticated server-side client for
 RevealX Enterprise and RevealX 360; packet bytes never pass through the browser-facing JSON proxy.
 

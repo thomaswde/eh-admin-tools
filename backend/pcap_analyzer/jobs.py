@@ -254,12 +254,6 @@ class PcapJobManager:
             "bytesCollected": 0,
             "windows": [],
         }
-        job.warnings.extend(
-            [
-                "Packetstore traffic can differ from the Packet Sensor feed; findings describe only the retrieved capture.",
-                "ExtraHop packet-search byte and duration limits are approximate, so successful collection coverage can be indeterminate.",
-            ]
-        )
         job.task = asyncio.create_task(self._run_collection(job, client, windows))
         return self.snapshot(job)
 
@@ -348,7 +342,7 @@ class PcapJobManager:
                 )
                 yield buffer.getvalue()
 
-        return f"pcap-capture-analysis-{job.id[:12]}.csv", lines()
+        return f"datafeed-analysis-{job.id[:12]}.csv", lines()
 
     async def cancel(self, owner_session: str, job_id: str) -> dict[str, Any]:
         job = self._owned_job(owner_session, job_id)
@@ -398,7 +392,7 @@ class PcapJobManager:
         await self._prune_expired()
         active = sum(job.state not in TERMINAL_STATES for job in self._jobs.values())
         if active >= self.settings.max_jobs:
-            raise PcapJobError(429, "Too many PCAP analyzer jobs are already active.")
+            raise PcapJobError(429, "Too many Datafeed Analysis jobs are already active.")
         if len(self._jobs) >= self.settings.max_jobs:
             terminal = sorted(
                 (job for job in self._jobs.values() if job.state in TERMINAL_STATES),
@@ -409,7 +403,7 @@ class PcapJobManager:
                 self._jobs.pop(discarded.id, None)
                 await self._cleanup_files(discarded)
         if len(self._jobs) >= self.settings.max_jobs:
-            raise PcapJobError(429, "The PCAP analyzer job limit has been reached.")
+            raise PcapJobError(429, "The Datafeed Analysis job limit has been reached.")
         job_id = secrets.token_urlsafe(24)
         temp_dir = self.state_dir / job_id
         temp_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -625,9 +619,9 @@ class PcapJobManager:
     def _owned_job(self, owner_session: str, job_id: str) -> PcapJob:
         job = self._jobs.get(job_id)
         if not job or not secrets.compare_digest(job.owner_session, owner_session):
-            raise PcapJobError(404, "PCAP analyzer job was not found.")
+            raise PcapJobError(404, "Datafeed Analysis job was not found.")
         if time.time() >= job.expires_at:
-            raise PcapJobError(410, "PCAP analyzer job has expired.")
+            raise PcapJobError(410, "Datafeed Analysis job has expired.")
         return job
 
     async def _prune_expired(self) -> None:

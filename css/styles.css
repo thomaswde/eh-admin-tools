@@ -411,6 +411,44 @@ a { color: var(--cyan); }
 
 #configForm { margin-top: 14px; }
 
+.secure-storage-recovery {
+    display: block;
+    color: var(--text-2);
+}
+
+.secure-storage-recovery[hidden] { display: none; }
+
+.secure-storage-recovery-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.secure-storage-recovery-content strong { color: var(--warn); }
+
+.secure-storage-recovery-content p { margin: 0; }
+
+.secure-storage-command {
+    display: block;
+    padding: 8px 9px;
+    overflow-x: auto;
+    color: var(--ink);
+    background-color: var(--input-bg);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+
+.secure-storage-command[hidden] { display: none; }
+
+.secure-storage-recovery-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
 .conn-divider {
     height: 1px;
     background-color: var(--hairline);
@@ -2590,7 +2628,7 @@ td.actions .btn-danger { margin-left: 6px; }
     font-weight: 700;
 }
 
-/* --------------------------- PCAP Capture Analyzer --------------------------- */
+/* --------------------------- Datafeed Analysis --------------------------- */
 .pcap-feed-notice strong { flex: 0 0 auto; }
 
 .pcap-mode-selector { margin-bottom: 16px; }

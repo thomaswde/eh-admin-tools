@@ -53,6 +53,17 @@ class ExtraHopAPI {
         return ExtraHopAPI.parseStaticResponse(response);
     }
 
+    static async recheckSecureStorage() {
+        const response = await ExtraHopAPI.backendFetch(
+            '/backend/connections/secure-storage/recheck',
+            {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' }
+            }
+        );
+        return ExtraHopAPI.parseStaticResponse(response);
+    }
+
     static async deleteSavedConnection(connectionId) {
         const response = await ExtraHopAPI.backendFetch(
             `/backend/connections/${encodeURIComponent(connectionId)}`,
