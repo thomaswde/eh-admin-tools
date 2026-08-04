@@ -5,6 +5,7 @@ import random
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -17,6 +18,7 @@ DEFAULT_360_TOKEN_TTL_SECONDS = 30 * 60
 TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
 MAX_REQUEST_ATTEMPTS = 4
 MAX_INFLIGHT_MUTATIONS = 128
+MAX_DOWNLOAD_ERROR_BYTES = 64 * 1024
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 DECIMAL_IDENTIFIER_PATTERN = re.compile(r"^-?(?:0|[1-9][0-9]*)$")
@@ -129,6 +131,13 @@ class ExtraHopResponse:
     data: Any
     status_code: int
     location: str | None = None
+
+
+@dataclass(frozen=True)
+class ExtraHopDownload:
+    status_code: int
+    content_type: str
+    bytes_written: int
 
 
 class ExtraHopClient:
@@ -277,6 +286,257 @@ class ExtraHopClient:
             body=body,
             content_type=content_type,
             include_metadata=include_metadata,
+        )
+
+    async def download_to_file(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        destination: Path,
+        json_body: dict[str, Any] | None,
+        max_bytes: int,
+        deadline: float | None = None,
+        accept: str = "application/vnd.tcpdump.pcap",
+    ) -> ExtraHopDownload:
+        """Stream an authenticated API response to a file within a hard byte limit."""
+        destination = Path(destination)
+        endpoint = self._normalize_endpoint(endpoint)
+        normalized_method = method.upper()
+        byte_limit = int(max_bytes)
+        if byte_limit < 1:
+            raise ValueError("max_bytes must be at least 1")
+
+        async def operation() -> ExtraHopDownload:
+            await self.refresh_if_needed()
+            try:
+                return await self._download_with_retries(
+                    normalized_method,
+                    endpoint,
+                    destination=destination,
+                    json_body=json_body,
+                    max_bytes=byte_limit,
+                    accept=accept,
+                )
+            except ExtraHopApiError as error:
+                if error.status_code != 401 or self.config["type"] != "360":
+                    raise
+                await self._authenticate_360(force=True)
+                return await self._download_with_retries(
+                    normalized_method,
+                    endpoint,
+                    destination=destination,
+                    json_body=json_body,
+                    max_bytes=byte_limit,
+                    accept=accept,
+                )
+
+        try:
+            if deadline is None:
+                return await operation()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+            return await asyncio.wait_for(operation(), timeout=remaining)
+        except asyncio.CancelledError:
+            destination.unlink(missing_ok=True)
+            raise
+        except asyncio.TimeoutError as error:
+            destination.unlink(missing_ok=True)
+            raise ExtraHopApiError(
+                "API download deadline exceeded",
+                504,
+                {"endpoint": endpoint, "status": "Deadline Exceeded"},
+            ) from error
+        except BaseException:
+            destination.unlink(missing_ok=True)
+            raise
+
+    async def _download_with_retries(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        destination: Path,
+        json_body: dict[str, Any] | None,
+        max_bytes: int,
+        accept: str,
+    ) -> ExtraHopDownload:
+        headers = {"Accept": accept}
+        if self.config["type"] == "360":
+            headers["Authorization"] = f"Bearer {self.access_token}"
+        else:
+            headers["Authorization"] = f"ExtraHop apikey={self.config['apiKey']}"
+            if self.config.get("proxyToken"):
+                headers["Cookie"] = f"token={self.config['proxyToken']}"
+
+        content = None
+        if json_body is not None:
+            headers["Content-Type"] = "application/json"
+            content = json.dumps(json_body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+        url = f"{self.base_url}{endpoint}"
+        last_error: httpx.RequestError | None = None
+        for attempt in range(MAX_REQUEST_ATTEMPTS):
+            destination.unlink(missing_ok=True)
+            started_at = time.perf_counter()
+            retry_delay: float | None = None
+            try:
+                async with self._client().stream(
+                    method,
+                    url,
+                    headers=headers,
+                    content=content,
+                ) as response:
+                    if response.status_code < 200 or response.status_code >= 300:
+                        error_response, has_error_body = await self._bounded_download_error_response(response)
+                        if self.response_logger:
+                            if has_error_body:
+                                self.response_logger.log_response(
+                                    method=method,
+                                    endpoint=endpoint,
+                                    response=error_response,
+                                    started_at=started_at,
+                                )
+                            else:
+                                self.response_logger.log_binary_response(
+                                    method=method,
+                                    endpoint=endpoint,
+                                    response=response,
+                                    started_at=started_at,
+                                    response_bytes=0,
+                                )
+
+                        if (
+                            response.status_code in RETRYABLE_STATUS_CODES
+                            and self._retryable_request(method, endpoint)
+                            and attempt < MAX_REQUEST_ATTEMPTS - 1
+                        ):
+                            retry_delay = self._retry_delay_seconds(
+                                attempt,
+                                response.headers.get("retry-after"),
+                            )
+                        else:
+                            raise self._api_error_from_response(error_response, "API request failed")
+                    elif response.status_code == 204:
+                        if self.response_logger:
+                            self.response_logger.log_binary_response(
+                                method=method,
+                                endpoint=endpoint,
+                                response=response,
+                                started_at=started_at,
+                                response_bytes=0,
+                            )
+                        return ExtraHopDownload(
+                            status_code=response.status_code,
+                            content_type=response.headers.get("content-type", ""),
+                            bytes_written=0,
+                        )
+                    else:
+                        declared_length = response.headers.get("content-length")
+                        if declared_length is not None:
+                            try:
+                                if int(declared_length) > max_bytes:
+                                    raise self._download_size_error(max_bytes)
+                            except ValueError:
+                                pass
+
+                        bytes_written = 0
+                        with destination.open("wb") as handle:
+                            async for chunk in response.aiter_bytes():
+                                if not chunk:
+                                    continue
+                                if bytes_written + len(chunk) > max_bytes:
+                                    raise self._download_size_error(max_bytes)
+                                handle.write(chunk)
+                                bytes_written += len(chunk)
+
+                        if self.response_logger:
+                            self.response_logger.log_binary_response(
+                                method=method,
+                                endpoint=endpoint,
+                                response=response,
+                                started_at=started_at,
+                                response_bytes=bytes_written,
+                            )
+                        return ExtraHopDownload(
+                            status_code=response.status_code,
+                            content_type=response.headers.get("content-type", ""),
+                            bytes_written=bytes_written,
+                        )
+            except asyncio.CancelledError:
+                raise
+            except ExtraHopApiError:
+                raise
+            except httpx.RequestError as error:
+                last_error = error
+                destination.unlink(missing_ok=True)
+                if self.response_logger:
+                    self.response_logger.log_network_error(
+                        method=method,
+                        endpoint=endpoint,
+                        url=url,
+                        error=error,
+                        started_at=started_at,
+                        context="binary_download",
+                    )
+                if (
+                    not self._retryable_request(method, endpoint)
+                    or not self._retryable_download_network_error(error)
+                    or attempt >= MAX_REQUEST_ATTEMPTS - 1
+                ):
+                    raise self._network_error(error, url, "API download failed") from error
+                retry_delay = self._retry_delay_seconds(attempt, None)
+
+            if retry_delay is not None:
+                await asyncio.sleep(retry_delay)
+
+        if last_error:
+            raise self._network_error(last_error, url, "API download failed") from last_error
+        raise ExtraHopApiError("API download failed after retry exhaustion", 502, {"url": url})
+
+    @staticmethod
+    async def _bounded_download_error_response(response: httpx.Response) -> tuple[httpx.Response, bool]:
+        media_type = response.headers.get("content-type", "").partition(";")[0].strip().lower()
+        if (
+            media_type != "application/json"
+            and not media_type.endswith("+json")
+            and not media_type.startswith("text/")
+        ):
+            return (
+                httpx.Response(
+                    response.status_code,
+                    headers=response.headers,
+                    content=b"",
+                    request=response.request,
+                ),
+                False,
+            )
+
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            remaining = MAX_DOWNLOAD_ERROR_BYTES - len(body)
+            if remaining <= 0:
+                break
+            body.extend(chunk[:remaining])
+            if len(chunk) > remaining:
+                break
+        return (
+            httpx.Response(
+                response.status_code,
+                headers=response.headers,
+                content=bytes(body),
+                request=response.request,
+            ),
+            True,
+        )
+
+    @staticmethod
+    def _download_size_error(max_bytes: int) -> ExtraHopApiError:
+        return ExtraHopApiError(
+            f"API download exceeded the {max_bytes}-byte limit",
+            413,
+            {"limit_bytes": max_bytes, "status": "Download Too Large"},
         )
 
     async def _request_normalized(
@@ -462,6 +722,10 @@ class ExtraHopClient:
             ),
         )
 
+    @classmethod
+    def _retryable_download_network_error(cls, error: httpx.RequestError) -> bool:
+        return cls._retryable_network_error(error) or isinstance(error, httpx.ReadError)
+
     @staticmethod
     def _retryable_request(method: str, endpoint: str) -> bool:
         if method.upper() in {"GET", "HEAD", "OPTIONS"}:
@@ -472,6 +736,7 @@ class ExtraHopClient:
             "/api/v1/metrics/total",
             "/api/v1/metrics/totalbyobject",
             "/api/v1/metrics/catalog/search",
+            "/api/v1/packets/search",
         }
 
     @staticmethod

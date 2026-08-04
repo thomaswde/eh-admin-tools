@@ -100,6 +100,19 @@ The launcher prints the writable log directory during startup and diagnostics.
 - `api-responses.jsonl` records failed API responses and network errors by default; logging can be changed or disabled in the UI.
 - **Full** API logging can contain sensitive operational data even though credential-shaped fields are redacted. Review logs before sharing them.
 
+## PCAP Capture Analyzer
+
+After connecting to RevealX Enterprise or RevealX 360, open **PCAP Capture Analyzer** to upload a
+classic PCAP or collect a bounded recent interval from the connected system. Connected collection
+requires packets to be available from Packetstore; many deployments do not include one. A
+Packetstore can also receive a different feed from the Packet Sensor, so findings describe the
+retrieved capture rather than proving Packet Sensor behavior.
+
+The tool reports capture-level observations using cautious labels. Uniform short packet records
+can indicate packet slicing or restricted packet access. Uploaded and downloaded captures are
+temporary and are removed automatically after the job; bounded results expire after 30 minutes by
+default. Packet bodies are not included in API response logs.
+
 ## Launcher options
 
 ```text

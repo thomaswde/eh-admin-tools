@@ -241,6 +241,15 @@
                     </span>
                 </button>
 
+                <button type="button" class="nav-item module-btn" data-module="pcap-analyzer">
+                    <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M4 6h16v12H4z"></path><path d="M7 9h2M11 9h6M7 13h5M14 13h3"></path>
+                    </svg>
+                    <span class="nav-text">
+                        <span class="nav-title">PCAP Analyzer</span>
+                    </span>
+                </button>
+
                 <button type="button" class="nav-item module-btn" data-module="users">
                     <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
                         <path d="M16 20v-1.5a4 4 0 00-4-4H7a4 4 0 00-4 4V20"></path><circle cx="9.5" cy="7.5" r="3.5"></circle>
@@ -726,6 +735,120 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- ---------------------- PCAP Analyzer ---------------------- -->
+        <div id="pcap-analyzerModule" class="module-content page" style="display: none;">
+            <div class="page-head">
+                <h1 class="page-title">PCAP Capture Analyzer</h1>
+                <p class="page-desc">Inspect directional conversations, capture slicing, reverse-direction visibility, and observed TCP sequence gaps in a bounded packet capture.</p>
+            </div>
+
+            <div class="stack">
+                <div class="notice notice-warn pcap-feed-notice">
+                    <strong>Capture perspective matters.</strong>
+                    <span>A Packetstore commonly receives its own feed, which can differ from a Packet Sensor feed, and many deployments have no Packetstore. Findings describe only the packets in this capture.</span>
+                </div>
+
+                <section class="card" aria-labelledby="pcapSourceHeading">
+                    <div class="card-head">
+                        <h2 class="card-title" id="pcapSourceHeading">Capture source</h2>
+                        <p class="card-desc">Analyze a local PCAP or retrieve a bounded interval through the connected ExtraHop deployment.</p>
+                    </div>
+
+                    <div class="seg pcap-mode-selector" role="group" aria-label="Capture source">
+                        <button type="button" id="pcapLocalMode" class="seg-btn active" data-pcap-mode="upload" aria-pressed="true">Local PCAP</button>
+                        <button type="button" id="pcapConnectedMode" class="seg-btn" data-pcap-mode="collect" aria-pressed="false">Connected ExtraHop</button>
+                    </div>
+
+                    <div id="pcapUploadFields" class="pcap-source-fields">
+                        <div class="field">
+                            <label for="pcapFileInput">PCAP file</label>
+                            <input type="file" id="pcapFileInput" accept=".pcap,application/vnd.tcpdump.pcap">
+                            <span class="field-hint">Classic libpcap files only. The local service enforces upload, packet, flow, and runtime limits.</span>
+                        </div>
+                    </div>
+
+                    <div id="pcapCollectFields" class="pcap-source-fields grid-fields" hidden>
+                        <div class="field">
+                            <label for="pcapLookbackMinutes">Lookback (minutes)</label>
+                            <input type="number" id="pcapLookbackMinutes" min="1" max="10" step="1" value="5">
+                            <span class="field-hint">The start and end timestamps are fixed once when collection begins.</span>
+                        </div>
+                        <div class="field">
+                            <label for="pcapWindowSeconds">Search window (seconds)</label>
+                            <input type="number" id="pcapWindowSeconds" min="10" max="300" step="10" value="60">
+                            <span class="field-hint">Longer lookbacks are collected in bounded windows.</span>
+                        </div>
+                    </div>
+
+                    <div class="row-tight pcap-actions">
+                        <button type="button" id="pcapStartButton" class="btn-primary">Analyze capture</button>
+                        <button type="button" id="pcapCancelButton" class="btn-danger" disabled>Cancel</button>
+                    </div>
+                </section>
+
+                <section id="pcapStatusCard" class="card" aria-labelledby="pcapStatusHeading">
+                    <div class="row row-top">
+                        <div>
+                            <h2 class="card-title" id="pcapStatusHeading">Status</h2>
+                            <p id="pcapStatusText" class="card-desc" role="status" aria-live="polite">Choose a capture source to begin.</p>
+                        </div>
+                        <div class="spacer"></div>
+                        <span id="pcapStateBadge" class="badge">Ready</span>
+                    </div>
+                    <div class="pcap-progress-track" role="progressbar" aria-label="Analysis progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                        <div id="pcapProgressBar" class="pcap-progress-bar" style="width: 0%;"></div>
+                    </div>
+                    <div id="pcapWarnings" class="stack-sm pcap-warnings" aria-live="polite"></div>
+                </section>
+
+                <section id="pcapResults" class="stack" hidden>
+                    <div id="pcapSummary" class="stats" aria-label="Capture summary"></div>
+
+                    <div class="card">
+                        <div class="toolbar pcap-results-toolbar">
+                            <div class="field pcap-filter-field">
+                                <label for="pcapFindingFilter">Finding</label>
+                                <select id="pcapFindingFilter">
+                                    <option value="">All findings</option>
+                                    <option value="reverse_not_observed">Reverse direction not observed</option>
+                                    <option value="capture_truncated">Capture truncated/sliced</option>
+                                    <option value="sequence_gap">Observed TCP sequence gap</option>
+                                </select>
+                            </div>
+                            <div class="spacer"></div>
+                            <button type="button" id="pcapDownloadCsv" class="btn" disabled>Download CSV</button>
+                        </div>
+
+                        <div id="pcapResultsEmpty" class="empty-inline">No matching findings were returned.</div>
+                        <div id="pcapResultsTable" class="table-container table-scroll" hidden>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Finding</th>
+                                        <th>Source</th>
+                                        <th>Destination</th>
+                                        <th>Protocol</th>
+                                        <th class="num">Packets</th>
+                                        <th>First observed</th>
+                                        <th>Last observed</th>
+                                        <th>Detail</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pcapResultsBody"></tbody>
+                            </table>
+                        </div>
+                        <div id="pcapPager" class="pager" hidden>
+                            <span id="pcapPagerInfo"></span>
+                            <div class="row-tight">
+                                <button type="button" id="pcapPreviousPage" class="btn btn-sm">Previous</button>
+                                <button type="button" id="pcapNextPage" class="btn btn-sm">Next</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </div>
         </div>
 

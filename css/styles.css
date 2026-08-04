@@ -2589,3 +2589,63 @@ td.actions .btn-danger { margin-left: 6px; }
     color: var(--danger-text);
     font-weight: 700;
 }
+
+/* --------------------------- PCAP Capture Analyzer --------------------------- */
+.pcap-feed-notice strong { flex: 0 0 auto; }
+
+.pcap-mode-selector { margin-bottom: 16px; }
+
+.pcap-source-fields {
+    margin-top: 2px;
+    max-width: 760px;
+}
+
+.pcap-source-fields[hidden],
+#pcapResults[hidden],
+#pcapResultsTable[hidden],
+#pcapPager[hidden] { display: none; }
+
+.pcap-actions {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--hairline);
+}
+
+.pcap-progress-track {
+    height: 8px;
+    margin-top: 16px;
+    overflow: hidden;
+    background-color: var(--surface-sub);
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+}
+
+.pcap-progress-bar {
+    height: 100%;
+    background-color: var(--chart-primary);
+    border-radius: inherit;
+    transition: width .2s ease;
+}
+
+.pcap-warnings { margin-top: 14px; }
+
+.pcap-results-toolbar {
+    margin-bottom: 14px;
+    align-items: end;
+}
+
+.pcap-filter-field {
+    width: min(100%, 310px);
+}
+
+#pcapResultsBody td {
+    max-width: 360px;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+    .pcap-feed-notice { display: block; }
+    .pcap-feed-notice strong { display: block; margin-bottom: 4px; }
+    .pcap-results-toolbar { align-items: stretch; }
+    .pcap-filter-field { width: 100%; }
+}

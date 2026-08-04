@@ -83,6 +83,23 @@ Use the API Logging control in the sidebar to write proxied ExtraHop API respons
 
 Full response logs can still contain sensitive operational data. Review them before sharing. Preview and entry sizes are bounded, oversized JSON is not parsed solely for logging, and the log rotates by bytes with a fixed backup count. API response logging defaults to `Errors`; the default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
 
+## PCAP Capture Analyzer
+
+PCAP Capture Analyzer accepts a local classic PCAP or retrieves bounded PCAP windows from the
+connected ExtraHop system. Connected collection uses the same authenticated server-side client for
+RevealX Enterprise and RevealX 360; packet bytes never pass through the browser-facing JSON proxy.
+
+The results report directional TCP flows where the reverse direction was not observed, capture
+records that were truncated or sliced, and observed TCP sequence gaps. These are capture-level
+observations, not proof of network packet loss. Packetstore traffic can differ from the Packet
+Sensor feed, and deployments without a Packetstore return an explicit unavailable result.
+
+Uploads, collection bytes, intervals, packets, flows, findings, runtime, concurrent jobs, result
+pages, and retention are bounded. Captures use owner-only generated paths during a job and are
+deleted after completion, failure, or cancellation. Results expire after 30 minutes by default.
+Operators can use the `EH_PCAP_*` environment variables in `backend/pcap_analyzer/jobs.py` to lower
+or deliberately raise individual ceilings.
+
 ## Security defaults
 
 - The server binds to `127.0.0.1` only.
@@ -122,6 +139,7 @@ step and no utility-class framework.
 - `backend/extrahop_client.py` owns RevealX 360 OAuth, Enterprise API-key requests, token refresh, TLS policy, and request forwarding.
 - `backend/build_identity.py` derives source-checkout display versions from Git commit dates and validates packaged `VERSION` metadata.
 - `backend/session_store.py` keeps bounded, expiring server-side sessions keyed by an HTTP-only browser cookie.
+- `backend/pcap_analyzer/` owns bounded PCAP parsing, collection jobs, results, CSV, cancellation, and cleanup.
 - `js/api-client/extrahop-api.js` preserves the existing frontend API surface while calling the local backend.
 - `scripts/build_dist.py` creates the end-user ZIP from an explicit file allowlist.
 

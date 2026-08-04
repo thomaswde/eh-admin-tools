@@ -1,6 +1,8 @@
 import asyncio
 import json
 from pathlib import Path
+import tempfile
+import time
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -9,6 +11,24 @@ import httpx
 from backend import system_health_pdf as pdf
 from backend.extrahop_client import ExtraHopApiError, ExtraHopClient
 from backend.session_store import SessionStore
+
+
+class ChunkedAsyncStream(httpx.AsyncByteStream):
+    def __init__(self, chunks, *, error=None, wait_for=None, started=None):
+        self.chunks = chunks
+        self.error = error
+        self.wait_for = wait_for
+        self.started = started
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            yield chunk
+        if self.started:
+            self.started.set()
+        if self.wait_for:
+            await self.wait_for.wait()
+        if self.error:
+            raise self.error
 
 
 class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
@@ -325,6 +345,281 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(untrusted.verify_tls)
         self.assertTrue(default.verify_tls)
         self.assertTrue(cloud.verify_tls)
+
+    async def test_streams_enterprise_download_with_auth_headers_and_json_body(self):
+        requests = []
+
+        async def handler(request):
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/vnd.tcpdump.pcap"},
+                stream=ChunkedAsyncStream([b"pcap", b"-bytes"]),
+            )
+
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "console.ra.hopcloud.extrahop.com",
+                "apiKey": "key",
+                "proxyToken": "proxy-token",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "capture.pcap"
+            result = await client.download_to_file(
+                "POST",
+                "/packets/search",
+                destination=destination,
+                json_body={"from": "-5m", "output": "pcap"},
+                max_bytes=64,
+            )
+
+            self.assertEqual(destination.read_bytes(), b"pcap-bytes")
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.content_type, "application/vnd.tcpdump.pcap")
+            self.assertEqual(result.bytes_written, 10)
+
+        self.assertEqual(len(requests), 1)
+        request = requests[0]
+        self.assertEqual(request.headers["Authorization"], "ExtraHop apikey=key")
+        self.assertEqual(request.headers["Cookie"], "token=proxy-token")
+        self.assertEqual(request.headers["Accept"], "application/vnd.tcpdump.pcap")
+        self.assertEqual(json.loads(request.content), {"from": "-5m", "output": "pcap"})
+        await client.aclose()
+
+    async def test_360_download_refreshes_after_401_and_uses_new_bearer_token(self):
+        authorizations = []
+        token_attempts = 0
+
+        async def handler(request):
+            nonlocal token_attempts
+            if request.url.path == "/oauth2/token":
+                token_attempts += 1
+                return httpx.Response(200, json={"access_token": "fresh", "expires_in": 3600})
+            authorizations.append(request.headers["Authorization"])
+            if len(authorizations) == 1:
+                return httpx.Response(401, json={"error": "expired"})
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/vnd.tcpdump.pcap"},
+                stream=ChunkedAsyncStream([b"pcap"]),
+            )
+
+        client = ExtraHopClient(
+            {
+                "type": "360",
+                "tenant": "tenant",
+                "apiId": "id",
+                "apiSecret": "secret",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client.access_token = "stale"
+        client.access_token_expires_at = 10**12
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "capture.pcap"
+            result = await client.download_to_file(
+                "POST",
+                "/api/v1/packets/search",
+                destination=destination,
+                json_body={"from": "-5m"},
+                max_bytes=64,
+            )
+
+            self.assertEqual(result.bytes_written, 4)
+            self.assertEqual(destination.read_bytes(), b"pcap")
+
+        self.assertEqual(authorizations, ["Bearer stale", "Bearer fresh"])
+        self.assertEqual(token_attempts, 1)
+        await client.aclose()
+
+    async def test_204_download_removes_stale_destination_and_returns_zero_bytes(self):
+        async def handler(_request):
+            return httpx.Response(204)
+
+        client = ExtraHopClient(
+            {"type": "enterprise", "host": "sensor.example.test", "apiKey": "key"}
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "capture.pcap"
+            destination.write_bytes(b"stale")
+            result = await client.download_to_file(
+                "POST",
+                "/packets/search",
+                destination=destination,
+                json_body={"from": "-5m"},
+                max_bytes=64,
+            )
+
+            self.assertEqual(result.status_code, 204)
+            self.assertEqual(result.bytes_written, 0)
+            self.assertFalse(destination.exists())
+        await client.aclose()
+
+    async def test_download_hard_limit_removes_partial_destination(self):
+        async def handler(_request):
+            return httpx.Response(200, stream=ChunkedAsyncStream([b"1234", b"5678"]))
+
+        client = ExtraHopClient(
+            {"type": "enterprise", "host": "sensor.example.test", "apiKey": "key"}
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "capture.pcap"
+            with self.assertRaises(ExtraHopApiError) as raised:
+                await client.download_to_file(
+                    "POST",
+                    "/packets/search",
+                    destination=destination,
+                    json_body={"from": "-5m"},
+                    max_bytes=6,
+                )
+
+            self.assertEqual(raised.exception.status_code, 413)
+            self.assertFalse(destination.exists())
+        await client.aclose()
+
+    async def test_download_maps_json_error_through_existing_api_error(self):
+        async def handler(_request):
+            return httpx.Response(400, json={"error_message": "invalid packet filter"})
+
+        client = ExtraHopClient(
+            {"type": "enterprise", "host": "sensor.example.test", "apiKey": "key"}
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "capture.pcap"
+            with self.assertRaisesRegex(ExtraHopApiError, "invalid packet filter") as raised:
+                await client.download_to_file(
+                    "POST",
+                    "/packets/search",
+                    destination=destination,
+                    json_body={"from": "bad"},
+                    max_bytes=64,
+                )
+
+            self.assertEqual(raised.exception.status_code, 400)
+            self.assertEqual(raised.exception.details["response"]["error_message"], "invalid packet filter")
+            self.assertFalse(destination.exists())
+        await client.aclose()
+
+    async def test_download_maps_binary_error_without_reading_packet_bytes(self):
+        class MustNotReadStream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                raise AssertionError("binary error body must not be read")
+                yield b"packet bytes"  # pragma: no cover
+
+        async def handler(_request):
+            return httpx.Response(
+                403,
+                headers={"content-type": "application/vnd.tcpdump.pcap"},
+                stream=MustNotReadStream(),
+            )
+
+        client = ExtraHopClient(
+            {"type": "enterprise", "host": "sensor.example.test", "apiKey": "key"}
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "capture.pcap"
+            with self.assertRaises(ExtraHopApiError) as raised:
+                await client.download_to_file(
+                    "POST",
+                    "/packets/search",
+                    destination=destination,
+                    json_body={"from": "-5m"},
+                    max_bytes=64,
+                )
+
+            self.assertEqual(raised.exception.status_code, 403)
+            self.assertFalse(destination.exists())
+        await client.aclose()
+
+    async def test_download_retries_status_and_midstream_transport_errors_from_a_clean_file(self):
+        attempts = 0
+
+        async def handler(request):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return httpx.Response(503, json={"error": "busy"}, headers={"retry-after": "0"})
+            if attempts == 2:
+                return httpx.Response(
+                    200,
+                    stream=ChunkedAsyncStream(
+                        [b"partial"],
+                        error=httpx.ReadError("connection dropped", request=request),
+                    ),
+                )
+            return httpx.Response(200, stream=ChunkedAsyncStream([b"complete"]))
+
+        client = ExtraHopClient(
+            {"type": "enterprise", "host": "sensor.example.test", "apiKey": "key"}
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "capture.pcap"
+            with patch("backend.extrahop_client.asyncio.sleep", new=AsyncMock()) as sleep:
+                result = await client.download_to_file(
+                    "POST",
+                    "/packets/search",
+                    destination=destination,
+                    json_body={"from": "-5m"},
+                    max_bytes=64,
+                )
+
+            self.assertEqual(result.bytes_written, 8)
+            self.assertEqual(destination.read_bytes(), b"complete")
+            self.assertEqual(attempts, 3)
+            self.assertEqual(sleep.await_count, 2)
+        await client.aclose()
+
+    async def test_download_cancellation_and_deadline_propagate_and_remove_partial_files(self):
+        for mode in ("cancel", "deadline"):
+            started = asyncio.Event()
+            never = asyncio.Event()
+
+            async def handler(_request):
+                return httpx.Response(
+                    200,
+                    stream=ChunkedAsyncStream(
+                        [b"partial"],
+                        wait_for=never,
+                        started=started,
+                    ),
+                )
+
+            client = ExtraHopClient(
+                {"type": "enterprise", "host": "sensor.example.test", "apiKey": "key"}
+            )
+            client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            with tempfile.TemporaryDirectory() as directory:
+                destination = Path(directory) / "capture.pcap"
+                deadline = time.monotonic() + 0.02 if mode == "deadline" else None
+                task = asyncio.create_task(
+                    client.download_to_file(
+                        "POST",
+                        "/packets/search",
+                        destination=destination,
+                        json_body={"from": "-5m"},
+                        max_bytes=64,
+                        deadline=deadline,
+                    )
+                )
+                await started.wait()
+                if mode == "cancel":
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                else:
+                    with self.assertRaises(ExtraHopApiError) as raised:
+                        await task
+                    self.assertEqual(raised.exception.status_code, 504)
+                self.assertFalse(destination.exists())
+            await client.aclose()
 
 
 class ClosableClient:

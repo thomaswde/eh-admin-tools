@@ -17,6 +17,7 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
             localities: true,
             'crs-usage': true,
             'system-health': true,
+            'pcap-analyzer': true,
             users: true
         })
     }),
@@ -36,6 +37,7 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
             localities: true,
             'crs-usage': true,
             'system-health': true,
+            'pcap-analyzer': true,
             users: false
         })
     })

@@ -96,6 +96,15 @@ test('Records Report loads the shared collector before its registered feature', 
     );
 });
 
+test('PCAP Analyzer loads its cohesive feature script without unrelated dependencies', async () => {
+    const { loader, scripts } = createHarness();
+    assert.equal(await loader.loadModule('pcap-analyzer'), true);
+    assert.deepEqual(
+        scripts.map(script => script.src.replace(/\?v=\d+$/, '')),
+        ['js/modules/pcap-analyzer.js']
+    );
+});
+
 test('switch order is initialize then visible DOM then awaited activate', async () => {
     const events = [];
     const harness = createHarness({

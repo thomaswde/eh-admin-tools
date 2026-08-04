@@ -18,6 +18,7 @@ from backend.api_response_logger import ApiResponseLogger, LOG_VERBOSITIES
 from backend.build_identity import resolve_runtime_version
 from backend.connection_store import ConnectionStorageError, ConnectionStore
 from backend.extrahop_client import ExtraHopApiError, ExtraHopClient, ExtraHopResponse
+from backend.pcap_analyzer.jobs import PcapJobError, PcapJobManager
 from backend.session_store import SessionStore
 from backend import system_health_pdf as system_health_pdf_backend
 
@@ -88,13 +89,17 @@ APP_VERSION = resolve_runtime_version(
 
 @asynccontextmanager
 async def app_lifespan(_: FastAPI):
+    await pcap_jobs.startup()
     try:
         yield
     finally:
         try:
-            await sessions.aclose()
+            await pcap_jobs.shutdown()
         finally:
-            await asyncio.to_thread(api_response_logger.close)
+            try:
+                await sessions.aclose()
+            finally:
+                await asyncio.to_thread(api_response_logger.close)
 
 
 app = FastAPI(title="ExtraHop Admin Tools", lifespan=app_lifespan)
@@ -108,6 +113,7 @@ api_response_logger = ApiResponseLogger(
     os.environ.get("EH_API_LOG_VERBOSITY", "errors"),
 )
 connection_store = ConnectionStore(APP_ROOT)
+pcap_jobs = PcapJobManager(APP_ROOT / ".runtime" / "pcap-analyzer")
 
 app.mount("/css", StaticFiles(directory=APP_ROOT / "css"), name="css")
 app.mount("/js", StaticFiles(directory=APP_ROOT / "js"), name="js")
@@ -170,6 +176,14 @@ class ApiLoggingConfig(BaseModel):
 
     verbosity: str = Field(pattern="^(off|errors|metadata|full)$")
     path: str | None = None
+
+
+class PcapCollectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fromMs: int = Field(ge=0)
+    untilMs: int = Field(ge=0)
+    windowSeconds: int | None = None
 
 
 class ChartThemeColors(BaseModel):
@@ -268,6 +282,7 @@ async def establish_session(
             },
         ) from error
 
+    await pcap_jobs.cancel_owner(replace_session_id)
     session_id = await sessions.acreate(client, replace_session_id=replace_session_id)
     response.set_cookie(
         SESSION_COOKIE,
@@ -569,9 +584,113 @@ async def delete_session(
     response: Response,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, bool]:
+    await pcap_jobs.cancel_owner(eh_admin_session)
     await sessions.adelete(eh_admin_session)
     response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
     return {"connected": False}
+
+
+@app.post("/backend/pcap-analyzer/upload", status_code=202)
+async def create_pcap_upload_job(
+    request: Request,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    require_session_id(eh_admin_session)
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type not in {"application/vnd.tcpdump.pcap", "application/octet-stream"}:
+        raise HTTPException(
+            status_code=415,
+            detail={"message": "Upload a classic PCAP as application/vnd.tcpdump.pcap."},
+        )
+    declared_length = parse_optional_content_length(request.headers.get("content-length"))
+    try:
+        return await pcap_jobs.create_upload(
+            eh_admin_session,
+            request.stream(),
+            declared_length=declared_length,
+        )
+    except PcapJobError as error:
+        raise pcap_job_http_exception(error) from error
+
+
+@app.post("/backend/pcap-analyzer/collect", status_code=202)
+async def create_pcap_collection_job(
+    payload: PcapCollectionRequest,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    client = get_session_client(eh_admin_session)
+    try:
+        return await pcap_jobs.create_collection(
+            require_session_id(eh_admin_session),
+            client,
+            from_ms=payload.fromMs,
+            until_ms=payload.untilMs,
+            window_seconds=payload.windowSeconds,
+        )
+    except PcapJobError as error:
+        raise pcap_job_http_exception(error) from error
+
+
+@app.get("/backend/pcap-analyzer/jobs/{job_id}")
+async def read_pcap_job(
+    job_id: str,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    get_session_client(eh_admin_session)
+    try:
+        return pcap_jobs.get(require_session_id(eh_admin_session), job_id)
+    except PcapJobError as error:
+        raise pcap_job_http_exception(error) from error
+
+
+@app.get("/backend/pcap-analyzer/jobs/{job_id}/results")
+async def read_pcap_job_results(
+    job_id: str,
+    offset: int = 0,
+    limit: int = 200,
+    finding: str | None = None,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    get_session_client(eh_admin_session)
+    try:
+        return pcap_jobs.results(
+            require_session_id(eh_admin_session),
+            job_id,
+            offset=offset,
+            limit=limit,
+            finding=finding,
+        )
+    except PcapJobError as error:
+        raise pcap_job_http_exception(error) from error
+
+
+@app.get("/backend/pcap-analyzer/jobs/{job_id}/csv")
+async def download_pcap_job_csv(
+    job_id: str,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> StreamingResponse:
+    get_session_client(eh_admin_session)
+    try:
+        filename, rows = pcap_jobs.csv_rows(require_session_id(eh_admin_session), job_id)
+    except PcapJobError as error:
+        raise pcap_job_http_exception(error) from error
+    return StreamingResponse(
+        rows,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.delete("/backend/pcap-analyzer/jobs/{job_id}")
+async def cancel_pcap_job(
+    job_id: str,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    get_session_client(eh_admin_session)
+    try:
+        return await pcap_jobs.cancel(require_session_id(eh_admin_session), job_id)
+    except PcapJobError as error:
+        raise pcap_job_http_exception(error) from error
 
 
 @app.api_route(
@@ -670,6 +789,37 @@ async def wait_for_client_disconnect(request: Request) -> None:
         message = await request.receive()
         if message["type"] == "http.disconnect":
             return
+
+
+def parse_optional_content_length(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        length = int(value)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "The upload has an invalid Content-Length header."},
+        ) from None
+    if length < 0:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "The upload has an invalid Content-Length header."},
+        )
+    return length
+
+
+def require_session_id(session_id: str | None) -> str:
+    if not session_id:
+        raise HTTPException(status_code=401, detail={"message": "Not connected to an ExtraHop instance"})
+    return session_id
+
+
+def pcap_job_http_exception(error: PcapJobError) -> HTTPException:
+    return HTTPException(
+        status_code=error.status_code,
+        detail={"message": error.message, "details": error.details},
+    )
 
 
 def get_session_client(session_id: str | None) -> ExtraHopClient:

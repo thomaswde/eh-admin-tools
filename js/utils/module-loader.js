@@ -13,6 +13,7 @@ class ModuleLoader {
             'crs-usage': 'records-report.js',
             'device-discovery': 'device-discovery.js',
             'system-health': 'system-health-report.js',
+            'pcap-analyzer': 'pcap-analyzer.js',
             'localities': 'network-localities.js',
             'audit-logs': 'audit-logs.js',
             'nodemap': 'nodemap.js'
