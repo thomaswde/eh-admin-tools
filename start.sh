@@ -127,6 +127,17 @@ PY
 )
 
 SYSTEM_NAME=$(uname -s 2>/dev/null || echo unknown)
+KERNEL_RELEASE=$(uname -r 2>/dev/null || echo unknown)
+SERVER_HOST=127.0.0.1
+case "$KERNEL_RELEASE" in
+    *[Mm][Ii][Cc][Rr][Oo][Ss][Oo][Ff][Tt]-standard-[Ww][Ss][Ll]2*)
+        # Windows reaches WSL 2 through its virtual network adapter. Listening
+        # only on WSL's loopback interface makes explicit Windows port proxies
+        # connect and immediately reset, even though in-WSL health checks pass.
+        SERVER_HOST=0.0.0.0
+        ;;
+esac
+
 if [ -n "${EH_ADMIN_TOOLS_STATE_DIR:-}" ]; then
     STATE_ROOT=$EH_ADMIN_TOOLS_STATE_DIR
 elif [ "$SYSTEM_NAME" = "Darwin" ]; then
@@ -147,6 +158,7 @@ safe_diagnostics() {
     echo "ExtraHop Admin Tools diagnostics"
     echo "  Package version: $(cat "$VERSION_FILE" 2>/dev/null || echo development)"
     echo "  Operating system: $SYSTEM_NAME"
+    echo "  Server bind address: $SERVER_HOST"
     echo "  Bootstrap Python: $("$BOOTSTRAP_PYTHON" --version 2>&1)"
     echo "  Package directory: $SCRIPT_DIR"
     echo "  Application directory: $APP_DIR"
@@ -271,13 +283,14 @@ if [ "$SKIP_PDF_SETUP" != "1" ] && ! pdf_browser_is_ready; then
     fi
 fi
 
-PORT_RESULT=$("$BOOTSTRAP_PYTHON" - "$REQUESTED_PORT" <<'PY'
+PORT_RESULT=$("$BOOTSTRAP_PYTHON" - "$REQUESTED_PORT" "$SERVER_HOST" <<'PY'
 import json
 import socket
 import sys
 import urllib.request
 
 requested = sys.argv[1]
+bind_host = sys.argv[2]
 if requested:
     try:
         port = int(requested)
@@ -306,7 +319,7 @@ for port in candidates:
 
     sock = socket.socket()
     try:
-        sock.bind(("127.0.0.1", port))
+        sock.bind((bind_host, port))
     except OSError:
         if requested:
             print(f"error:Port {port} is already used by another application.")
@@ -394,7 +407,7 @@ echo
 cd "$APP_DIR"
 "$VENV_PYTHON" -m uvicorn main:app \
     --app-dir "$APP_DIR" \
-    --host 127.0.0.1 \
+    --host "$SERVER_HOST" \
     --port "$PORT" \
     --workers 1 \
     2>&1 | tee -a "$SERVER_LOG"

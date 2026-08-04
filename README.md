@@ -10,7 +10,7 @@ Requires Python 3.10 or newer and internet access on the first launch.
 ./start.sh
 ```
 
-The launcher creates a private, versioned Python environment outside the repository, installs the locked dependencies, installs Chromium for PDF export when possible, selects a free loopback port, opens the browser, and keeps the server in the foreground. Never open `index.html` directly.
+The launcher creates a private, versioned Python environment outside the repository, installs the locked dependencies, installs Chromium for PDF export when possible, selects a free local port, opens the browser, and keeps the server in the foreground. Never open `index.html` directly.
 
 Useful options:
 
@@ -21,6 +21,13 @@ Useful options:
 ./start.sh --reset-runtime
 ./start.sh --skip-pdf-setup
 ```
+
+### Windows Subsystem for Linux (WSL 2)
+
+Run `./start.sh` inside WSL, keep that terminal open, and open the printed URL in
+the Windows browser. The launcher automatically listens on the WSL virtual
+network interface so Windows localhost forwarding and explicit port proxies can
+reach it; native Linux and macOS launches remain loopback-only.
 
 ## Developer start
 
@@ -102,7 +109,7 @@ or deliberately raise individual ceilings.
 
 ## Security defaults
 
-- The server binds to `127.0.0.1` only.
+- The launcher binds to `127.0.0.1` on native Linux and macOS. Under WSL it binds to the WSL virtual network interfaces so the Windows host can reach it; explicit Windows port proxies should listen on `127.0.0.1` to avoid exposing the app to the LAN.
 - Browser sessions use HTTP-only, SameSite cookies and expire after 12 idle hours.
 - RevealX 360 tenant names are restricted to one DNS label.
 - Enterprise TLS certificates are verified by default. The UI provides an explicit opt-in for a known self-signed lab certificate.

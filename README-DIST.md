@@ -20,6 +20,13 @@ Open a terminal in this extracted folder and run:
 
 If the file is not executable, run `chmod +x start.sh` once and retry.
 
+### Windows Subsystem for Linux (WSL 2)
+
+Run `./start.sh` inside WSL, keep that terminal open, and open the printed URL in
+the Windows browser. The launcher automatically listens on the WSL virtual
+network interface so Windows localhost forwarding and explicit port proxies can
+reach it; native Linux and macOS launches remain loopback-only.
+
 ## What happens on the first launch
 
 - Python 3.10 or newer is required.
