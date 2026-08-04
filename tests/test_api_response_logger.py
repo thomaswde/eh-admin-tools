@@ -86,6 +86,35 @@ class ApiResponseLoggerTests(unittest.TestCase):
             logger.configure("full")
             self.assertTrue(logger.wants_request_body())
 
+    def test_binary_logging_records_only_metadata_without_reading_or_previewing_body(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "responses.jsonl"
+            logger = self.make_logger(path, "full")
+            request = httpx.Request("POST", "https://sensor.example.test/api/v1/packets/search")
+            response = httpx.Response(
+                200,
+                request=request,
+                headers={"content-type": "application/vnd.tcpdump.pcap"},
+                stream=httpx.ByteStream(b"secret-packet-bytes"),
+            )
+
+            logger.log_binary_response(
+                method="POST",
+                endpoint="/api/v1/packets/search",
+                response=response,
+                started_at=time.perf_counter(),
+                response_bytes=19,
+            )
+            self.assertTrue(logger.flush())
+
+            raw_log = path.read_text(encoding="utf-8")
+            entry = json.loads(raw_log)
+            self.assertEqual(entry["context"], "binary_download")
+            self.assertEqual(entry["response_bytes"], 19)
+            self.assertEqual(entry["response_shape"], {"type": "binary"})
+            self.assertNotIn("response", entry)
+            self.assertNotIn("secret-packet-bytes", raw_log)
+
     def test_product_keys_are_redacted_from_structured_and_text_response_logging(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "responses.jsonl"

@@ -13,6 +13,7 @@ class ModuleLoader {
             'crs-usage': 'records-report.js',
             'device-discovery': 'device-discovery.js',
             'system-health': 'system-health-report.js',
+            'pcap-analyzer': 'pcap-analyzer.js',
             'localities': 'network-localities.js',
             'audit-logs': 'audit-logs.js',
             'nodemap': 'nodemap.js'
@@ -20,6 +21,7 @@ class ModuleLoader {
         this.moduleDependencies = {
             'nodemap': ['appliance-management.js'],
             'crs-usage': ['system-health-collection.js'],
+            'pcap-analyzer': ['chart-theme.js'],
             'system-health': [
                 'chart-theme.js',
                 'system-health-collection.js',
@@ -130,9 +132,11 @@ class ModuleLoader {
     }
 
     async switchToModule(moduleName) {
-        const deploymentType = window.state?.apiConfig?.type;
-        if (!deploymentSupportsModule(deploymentType, moduleName)) {
-            console.warn(`Module '${moduleName}' is unavailable for deployment type '${deploymentType || 'unknown'}'`);
+        const runtimeContext = typeof runtimeContextForState === 'function'
+            ? runtimeContextForState(window.state)
+            : window.state?.apiConfig?.type || 'offline';
+        if (!deploymentSupportsModule(runtimeContext, moduleName)) {
+            console.warn(`Module '${moduleName}' is unavailable in runtime context '${runtimeContext}'`);
             return false;
         }
 

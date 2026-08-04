@@ -2,6 +2,9 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
+
+from keyring.errors import NoKeyringError
 
 from backend.connection_store import (
     ConnectionStorageError,
@@ -30,6 +33,16 @@ class FailingKeyring:
     def set_password(self, service, account, password):
         del service, account, password
         raise RuntimeError("no secure backend")
+
+
+class MissingBackendKeyring:
+    def get_password(self, service, account):
+        del service, account
+        raise NoKeyringError("no recommended backend")
+
+    def set_password(self, service, account, password):
+        del service, account, password
+        raise NoKeyringError("no recommended backend")
 
 
 class ConnectionStoreTests(unittest.TestCase):
@@ -345,6 +358,52 @@ class ConnectionStoreTests(unittest.TestCase):
                     }
                 )
 
+    def test_wsl_without_secret_service_returns_actionable_recovery(self):
+        with TemporaryDirectory() as directory, patch(
+            "backend.connection_store._is_wsl",
+            return_value=True,
+        ), patch(
+            "backend.connection_store.platform.freedesktop_os_release",
+            return_value={"ID": "ubuntu", "ID_LIKE": "debian"},
+        ), patch(
+            "backend.connection_store.shutil.which",
+            side_effect=lambda executable: (
+                "/usr/bin/apt" if executable == "apt" else None
+            ),
+        ):
+            store = ConnectionStore(
+                Path(directory),
+                keyring_backend=MissingBackendKeyring(),
+            )
+
+            catalog = store.list_connections()
+
+            self.assertFalse(catalog["secureStorage"]["available"])
+            self.assertEqual(
+                catalog["secureStorage"]["code"],
+                "wsl-secret-service-unavailable",
+            )
+            self.assertEqual(
+                catalog["secureStorage"]["recovery"],
+                {
+                    "kind": "wsl-secret-service",
+                    "command": "sudo apt install gnome-keyring",
+                },
+            )
+            self.assertIn("not set up in WSL", catalog["secureStorage"]["message"])
+
+            with self.assertRaises(ConnectionStorageError) as raised:
+                store.save(
+                    {
+                        "type": "enterprise",
+                        "host": "sensor.example.test",
+                        "apiKey": "key",
+                    }
+                )
+            self.assertEqual(
+                raised.exception.public_status()["code"],
+                "wsl-secret-service-unavailable",
+            )
 
 if __name__ == "__main__":
     unittest.main()

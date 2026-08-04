@@ -10,7 +10,7 @@ Requires Python 3.10 or newer and internet access on the first launch.
 ./start.sh
 ```
 
-The launcher creates a private, versioned Python environment outside the repository, installs the locked dependencies, installs Chromium for PDF export when possible, selects a free loopback port, opens the browser, and keeps the server in the foreground. Never open `index.html` directly.
+The launcher creates a private, versioned Python environment outside the repository, installs the locked dependencies, installs Chromium for PDF export when possible, selects a free local port, opens the browser, and keeps the server in the foreground. Never open `index.html` directly.
 
 Useful options:
 
@@ -21,6 +21,13 @@ Useful options:
 ./start.sh --reset-runtime
 ./start.sh --skip-pdf-setup
 ```
+
+### Windows Subsystem for Linux (WSL 2)
+
+Run `./start.sh` inside WSL, keep that terminal open, and open the printed URL in
+the Windows browser. The launcher automatically listens on the WSL virtual
+network interface so Windows localhost forwarding and explicit port proxies can
+reach it; native Linux and macOS launches remain loopback-only.
 
 ## Developer start
 
@@ -34,11 +41,27 @@ python -m uvicorn main:app --host 127.0.0.1 --port 8000
 
 Open <http://127.0.0.1:8000>.
 
+## Local workspace and connected mode
+
+The local service creates a bounded workspace as soon as the app opens; connecting to ExtraHop is
+optional. Without a connection, **Datafeed Analysis** can analyze and export a local classic PCAP,
+and **System Health** can load a unified summary CSV and use the same charts, findings, detail
+table, CSV, PNG, PDF, and PowerPoint projections as a collected report. Packetstore retrieval,
+live System Health collection, detailed API-row export, and the administration tools require an
+authenticated RevealX Enterprise or RevealX 360 connection. Unsupported tools remain visible with
+an explanation instead of disappearing.
+
+`Offline` describes the app's current runtime context, not an ExtraHop deployment type and not
+evidence that a connected Enterprise deployment is air-gapped. The browser still uses the local
+FastAPI service for PCAP processing, product-catalog reads, PDF rendering, ownership, and limits;
+opening `index.html` directly is not supported.
+
 ## Saved ExtraHop connections
 
 After a manual connection authenticates successfully, its credentials are saved through the
 operating-system credential service: macOS Keychain or Linux Secret Service. The browser receives
-only the tenant or hostname, an opaque connection ID, and the active session cookie. If the
+only the tenant or hostname, an opaque connection ID, and the HTTP-only workspace cookie. The same
+workspace identifier remains in use when an ExtraHop client is attached or detached. If the
 operating-system credential service is unavailable, the active connection still works and the UI
 shows that it could not be saved.
 
@@ -72,6 +95,14 @@ cycle to keep each sensor at or below 10,000 buckets and the whole time-series r
 500,000 scalar points. A request that still exceeds the report-wide budget at the 24-hour cycle is
 rejected before it reaches ExtraHop.
 
+Unified summary CSV import is also bounded because imported files are untrusted input. The browser
+rejects files larger than 5 MiB before reading them, more than 1,000 sensor rows, columns outside
+the canonical schema, cells larger than 128 KiB, and oversized or deeply nested JSON-bearing
+cells. Duplicate identifiers, inconsistent schema versions, and inconsistent report windows are
+rejected without replacing the current report. Imported reports use the canonical System Health
+domain model, but do not synthesize raw API time series; **All API data** remains unavailable for
+an imported report.
+
 ## API response logging
 
 Use the API Logging control in the sidebar to write proxied ExtraHop API responses to `logs/api-responses.jsonl`, or to the launcher-managed state directory when using `start.sh`.
@@ -83,10 +114,29 @@ Use the API Logging control in the sidebar to write proxied ExtraHop API respons
 
 Full response logs can still contain sensitive operational data. Review them before sharing. Preview and entry sizes are bounded, oversized JSON is not parsed solely for logging, and the log rotates by bytes with a fixed backup count. API response logging defaults to `Errors`; the default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
 
+## Datafeed Analysis
+
+Datafeed Analysis accepts a local classic PCAP without ExtraHop credentials or retrieves bounded
+PCAP windows from a connected ExtraHop system. Connected collection uses the same authenticated
+server-side client for RevealX Enterprise and RevealX 360; packet bytes never pass through the
+browser-facing JSON proxy. Local uploads remain complete without device enrichment; when a client
+is attached, any enrichment is best effort and never changes analytical completeness.
+
+The results report directional TCP flows where the reverse direction was not observed, capture
+records that were truncated or sliced, and observed TCP sequence gaps. These are capture-level
+observations, not proof of network packet loss. Packetstore traffic can differ from the Packet
+Sensor feed, and deployments without a Packetstore return an explicit unavailable result.
+
+Uploads, collection bytes, intervals, packets, flows, findings, runtime, concurrent jobs, result
+pages, and retention are bounded. Captures use owner-only generated paths during a job and are
+deleted after completion, failure, or cancellation. Results expire after 30 minutes by default.
+Operators can use the `EH_PCAP_*` environment variables in `backend/pcap_analyzer/jobs.py` to lower
+or deliberately raise individual ceilings.
+
 ## Security defaults
 
-- The server binds to `127.0.0.1` only.
-- Browser sessions use HTTP-only, SameSite cookies and expire after 12 idle hours.
+- The launcher binds to `127.0.0.1` on native Linux and macOS. Under WSL it binds to the WSL virtual network interfaces so the Windows host can reach it; explicit Windows port proxies should listen on `127.0.0.1` to avoid exposing the app to the LAN.
+- Local workspaces use HTTP-only, SameSite cookies, are bounded in count, and expire after 12 idle hours.
 - RevealX 360 tenant names are restricted to one DNS label.
 - Enterprise TLS certificates are verified by default. The UI provides an explicit opt-in for a known self-signed lab certificate.
 - API credentials remain server-side, password fields are cleared, and successful manual
@@ -121,7 +171,8 @@ step and no utility-class framework.
 - `main.py` serves the static UI and exposes the local backend API.
 - `backend/extrahop_client.py` owns RevealX 360 OAuth, Enterprise API-key requests, token refresh, TLS policy, and request forwarding.
 - `backend/build_identity.py` derives source-checkout display versions from Git commit dates and validates packaged `VERSION` metadata.
-- `backend/session_store.py` keeps bounded, expiring server-side sessions keyed by an HTTP-only browser cookie.
+- `backend/session_store.py` keeps bounded, expiring workspace sessions with an optional authenticated client, keyed by an HTTP-only browser cookie.
+- `backend/pcap_analyzer/` owns bounded PCAP parsing, collection jobs, results, CSV, cancellation, and cleanup.
 - `js/api-client/extrahop-api.js` preserves the existing frontend API surface while calling the local backend.
 - `scripts/build_dist.py` creates the end-user ZIP from an explicit file allowlist.
 

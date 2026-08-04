@@ -186,6 +186,39 @@ class ApiResponseLogger:
             # Logging is diagnostic only; never break the proxied API workflow.
             return
 
+    def log_binary_response(
+        self,
+        *,
+        method: str,
+        endpoint: str,
+        response: httpx.Response,
+        started_at: float,
+        response_bytes: int,
+        context: str = "binary_download",
+    ) -> None:
+        """Log binary transfer metadata without reading or previewing its body."""
+        try:
+            if not self.should_log(response.status_code):
+                return
+
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "context": self._bounded_text(context),
+                "method": self._bounded_text(method.upper()),
+                "endpoint": self._bounded_text(endpoint),
+                "url": self._bounded_text(str(response.request.url)),
+                "status_code": response.status_code,
+                "reason": self._bounded_text(response.reason_phrase),
+                "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "content_type": self._bounded_text(response.headers.get("content-type", "")),
+                "response_bytes": max(0, int(response_bytes)),
+                "response_shape": {"type": "binary"},
+            }
+            self._enqueue(entry)
+        except Exception:
+            # Logging is diagnostic only; never break the binary transfer.
+            return
+
     def log_network_error(
         self,
         *,

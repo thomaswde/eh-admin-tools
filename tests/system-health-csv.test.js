@@ -400,6 +400,47 @@ test('load rejects sensor rows mixed from different report windows', () => {
     );
 });
 
+test('CSV import enforces byte, row, column, and cell limits before report rendering', () => {
+    assert.throws(
+        () => csvApi.parseSystemHealthCsv('x'.repeat((5 * 1024 * 1024) + 1)),
+        /byte limit/
+    );
+    assert.throws(
+        () => csvApi.parseSystemHealthCsv(`${Array.from({ length: 71 }, (_, index) => `c${index}`).join(',')}\n`),
+        /column limit/
+    );
+    assert.throws(
+        () => csvApi.parseSystemHealthCsv(`schema_version\n${'3\n'.repeat(1001)}`),
+        /sensor limit/
+    );
+    assert.throws(
+        () => csvApi.parseSystemHealthCsv(`schema_version\n${'x'.repeat((128 * 1024) + 1)}\n`),
+        /character limit/
+    );
+});
+
+test('CSV import rejects duplicate identifiers and deeply nested embedded JSON', () => {
+    const rows = csvApi.parseSystemHealthCsv(
+        csvApi.systemHealthUnifiedSummaryCsv(fixtureReport())
+    );
+    rows.push({ ...rows[0] });
+    assert.throws(
+        () => csvApi.buildSystemHealthReportFromUnifiedCsv(rows),
+        /duplicate appliance_id/
+    );
+
+    const nestedRows = csvApi.parseSystemHealthCsv(
+        csvApi.systemHealthUnifiedSummaryCsv(fixtureReport())
+    );
+    let nested = 'value';
+    for (let depth = 0; depth < 14; depth += 1) nested = [nested];
+    nestedRows[0].health_conditions_json = JSON.stringify(nested);
+    assert.throws(
+        () => csvApi.buildSystemHealthReportFromUnifiedCsv(nestedRows),
+        /maximum nesting depth/
+    );
+});
+
 test('sensor detail CSV contains exactly the visible table columns and rows', () => {
     const report = fixtureReport();
     const rows = csvApi.parseSystemHealthCsv(csvApi.systemHealthSensorDetailCsv(report));

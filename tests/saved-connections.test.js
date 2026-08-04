@@ -66,6 +66,96 @@ test('single-deployment saved connections are sorted without a group heading', (
     );
 });
 
+test('WSL secure-storage recovery renders a selectable manual setup command', () => {
+    const elements = {
+        secureStorageRecovery: { hidden: true },
+        secureStorageSetupCommand: { hidden: true, textContent: '', style: {} },
+        secureStorageRecoveryInstruction: { textContent: '' },
+        secureStorageRecoveryStatus: { textContent: '' }
+    };
+    const context = vm.createContext({
+        console,
+        document: {
+            getElementById(id) {
+                return elements[id] || null;
+            }
+        }
+    });
+    vm.runInContext(source('js/auth/auth-manager.js'), context);
+
+    vm.runInContext(`renderSecureStorageRecovery({
+        available: false,
+        code: 'wsl-secret-service-unavailable',
+        recovery: {
+            kind: 'wsl-secret-service',
+            command: 'sudo apt install gnome-keyring'
+        }
+    })`, context);
+
+    assert.equal(elements.secureStorageRecovery.hidden, false);
+    assert.equal(elements.secureStorageSetupCommand.hidden, false);
+    assert.equal(
+        elements.secureStorageSetupCommand.textContent,
+        'sudo apt install gnome-keyring'
+    );
+    assert.match(elements.secureStorageRecoveryInstruction.textContent, /Select and copy/);
+    assert.doesNotMatch(source('index.html'), /copySecureStorageSetupCommand/);
+
+    vm.runInContext('renderSecureStorageRecovery({ available: true })', context);
+    assert.equal(elements.secureStorageRecovery.hidden, true);
+});
+
+test('WSL recovery never shows an empty command control', () => {
+    const elements = {
+        secureStorageRecovery: { hidden: true },
+        secureStorageSetupCommand: { hidden: false, textContent: '', style: {} },
+        secureStorageRecoveryInstruction: { textContent: '' },
+        secureStorageRecoveryStatus: { textContent: '' }
+    };
+    const context = vm.createContext({
+        console,
+        document: {
+            getElementById(id) {
+                return elements[id] || null;
+            }
+        }
+    });
+    vm.runInContext(source('js/auth/auth-manager.js'), context);
+
+    vm.runInContext(`renderSecureStorageRecovery({
+        available: false,
+        recovery: { kind: 'wsl-secret-service', command: '' }
+    })`, context);
+
+    assert.equal(elements.secureStorageRecovery.hidden, false);
+    assert.equal(elements.secureStorageSetupCommand.hidden, true);
+    assert.equal(elements.secureStorageSetupCommand.style.display, 'none');
+    assert.match(elements.secureStorageRecoveryInstruction.textContent, /package manager/);
+});
+
+test('structured WSL recovery replaces only its duplicate status warning', () => {
+    const context = vm.createContext({ console });
+    vm.runInContext(source('js/auth/auth-manager.js'), context);
+
+    const warnings = vm.runInContext(`visibleSavedConnectionWarnings({
+        secureStorage: {
+            available: false,
+            message: 'Secure saved connections are not set up in WSL.',
+            recovery: { kind: 'wsl-secret-service' }
+        },
+        warnings: [
+            'Secure saved connections are not set up in WSL.',
+            'Skipped 1 example connection with placeholder values.',
+            'Skipped 1 example connection with placeholder values.'
+        ]
+    })`, context);
+
+    assert.deepEqual(
+        Array.from(warnings),
+        ['Skipped 1 example connection with placeholder values.']
+    );
+});
+
 test('active connection matching selects the loaded Enterprise connection, not the first option', () => {
     const context = vm.createContext({ console });
     vm.runInContext(source('js/auth/auth-manager.js'), context);
@@ -188,6 +278,34 @@ test('saved connection authentication sends only the opaque id', async () => {
     assert.equal(calls[0].url, '/backend/connections/360-saved%2Fid/session');
     assert.equal(calls[0].options.method, 'POST');
     assert.equal('body' in calls[0].options, false);
+});
+
+test('secure-storage recheck asks the backend to refresh keyring discovery', async () => {
+    const calls = [];
+    const context = vm.createContext({
+        console,
+        window: {},
+        fetch: async (url, options) => {
+            calls.push({ url, options });
+            return {
+                ok: true,
+                status: 200,
+                async text() {
+                    return JSON.stringify({
+                        connections: [],
+                        secureStorage: { available: true, connectionCount: 0 }
+                    });
+                }
+            };
+        }
+    });
+    vm.runInContext(source('js/api-client/extrahop-api.js'), context);
+
+    const result = await vm.runInContext('ExtraHopAPI.recheckSecureStorage()', context);
+
+    assert.equal(result.secureStorage.available, true);
+    assert.equal(calls[0].url, '/backend/connections/secure-storage/recheck');
+    assert.equal(calls[0].options.method, 'POST');
 });
 
 test('saved Enterprise authentication sends a transient proxy token without durable credentials', async () => {

@@ -96,6 +96,15 @@ test('Records Report loads the shared collector before its registered feature', 
     );
 });
 
+test('Datafeed Analysis loads the shared chart theme before its feature script', async () => {
+    const { loader, scripts } = createHarness();
+    assert.equal(await loader.loadModule('pcap-analyzer'), true);
+    assert.deepEqual(
+        scripts.map(script => script.src.replace(/\?v=\d+$/, '')),
+        ['js/modules/chart-theme.js', 'js/modules/pcap-analyzer.js']
+    );
+});
+
 test('switch order is initialize then visible DOM then awaited activate', async () => {
     const events = [];
     const harness = createHarness({

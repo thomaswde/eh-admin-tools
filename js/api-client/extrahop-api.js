@@ -53,6 +53,17 @@ class ExtraHopAPI {
         return ExtraHopAPI.parseStaticResponse(response);
     }
 
+    static async recheckSecureStorage() {
+        const response = await ExtraHopAPI.backendFetch(
+            '/backend/connections/secure-storage/recheck',
+            {
+                method: 'POST',
+                headers: { 'Accept': 'application/json' }
+            }
+        );
+        return ExtraHopAPI.parseStaticResponse(response);
+    }
+
     static async deleteSavedConnection(connectionId) {
         const response = await ExtraHopAPI.backendFetch(
             `/backend/connections/${encodeURIComponent(connectionId)}`,
@@ -70,12 +81,8 @@ class ExtraHopAPI {
             headers: { 'Accept': 'application/json' }
         });
 
-        if (response.status === 401) {
-            return null;
-        }
-
         const data = await ExtraHopAPI.parseStaticResponse(response);
-        return data?.connected && data.config ? data.config : null;
+        return data || { workspace: true, connected: false, config: null };
     }
 
     static async getApiLogging() {
@@ -235,35 +242,38 @@ class ExtraHopAPI {
         }
 
         if (!response.ok) {
-            if (response.status === 401) {
-                ExtraHopAPI.markSessionExpired();
-            }
             const detail = data.detail || {};
+            if (response.status === 401) {
+                const workspaceExpired = detail.code === 'workspace_expired';
+                if (workspaceExpired) {
+                    await ExtraHopAPI.currentSession().catch(() => null);
+                }
+                ExtraHopAPI.markSessionExpired({ workspaceExpired });
+            }
             const message = detail.message || data.message || data.error_message || data.error || response.statusText;
             const error = new Error(message);
             error.details = detail.details || data;
             error.status = response.status;
+            error.code = detail.code || '';
             throw error;
         }
 
         return data;
     }
 
-    static markSessionExpired() {
-        if (!window.state?.connected) return;
-
+    static markSessionExpired({ workspaceExpired = false } = {}) {
         state.connected = false;
         state.apiConfig = null;
-        state.currentModule = null;
+        state.runtimeContext = 'offline';
         window.apiClient = null;
         sessionStorage.removeItem('eh_config');
-        hideConnectedState();
-        document.getElementById('moduleSelection').style.display = 'none';
-        document.querySelectorAll('.module-content').forEach(module => {
-            module.style.display = 'none';
-        });
-        document.getElementById('welcomeScreen').style.display = 'block';
-        showStatus('The local session expired or the backend restarted. Reconnect to continue.', true);
+        showOfflineState({ preserveSupportedModule: true });
+        showStatus(
+            workspaceExpired
+                ? 'The local workspace expired and was re-established. Active local jobs may no longer be available.'
+                : 'The ExtraHop connection ended. Local Datafeed Analysis and System Health import remain available.',
+            workspaceExpired
+        );
     }
 
     async getDashboards() {

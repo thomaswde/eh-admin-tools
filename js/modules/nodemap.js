@@ -35,7 +35,7 @@ const nodemapState = {
 
 // Platform colors use the shared categorical chart palette.
 const platformColors = {
-    'command': genericChartPrimaryColor(),
+    'command': genericChartPaletteColor(3),
     'packet_sensor': genericChartPaletteColor(0),
     'discover': genericChartPaletteColor(0),
     'packetstore': genericChartPaletteColor(1),

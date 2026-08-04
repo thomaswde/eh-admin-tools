@@ -38,12 +38,21 @@ async function initializeApp() {
 
 async function restoreBackendSession() {
     try {
-        const config = await ExtraHopAPI.currentSession();
-        if (!config) return;
+        const session = await ExtraHopAPI.currentSession();
+        const config = session?.connected ? session.config : null;
+        if (!config) {
+            state.connected = false;
+            state.apiConfig = null;
+            state.runtimeContext = 'offline';
+            window.apiClient = null;
+            showOfflineState();
+            return;
+        }
 
         const api = new ExtraHopAPI(config);
         state.apiConfig = config;
         state.connected = true;
+        state.runtimeContext = config.type;
         sessionStorage.setItem('eh_config', JSON.stringify(config));
         window.apiClient = api;
 
@@ -56,7 +65,7 @@ async function restoreBackendSession() {
             showStatus(saveWarning, true);
         }
     } catch (error) {
-        console.warn('No existing backend session to restore:', error);
+        console.warn('Could not establish the local workspace:', error);
     }
 }
 
@@ -137,6 +146,10 @@ function setupGlobalEventListeners() {
     document.getElementById('cancelAddConnectionBtn').addEventListener('click', () => {
         showNewConnectionForm(false);
     });
+    document.getElementById('recheckSecureStorageBtn').addEventListener(
+        'click',
+        recheckSecureStorage
+    );
     document.getElementById('disconnectBtn').addEventListener('click', handleDisconnect);
 
     const apiLoggingVerbosity = document.getElementById('apiLoggingVerbosity');
@@ -148,8 +161,9 @@ function setupGlobalEventListeners() {
     document.querySelectorAll('.module-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             const moduleName = e.currentTarget.dataset.module;
-            if (!state.connected) {
-                showStatus('Connect to an ExtraHop deployment before opening tools.', true);
+            const runtimeContext = runtimeContextForState(state);
+            if (!deploymentSupportsModule(runtimeContext, moduleName)) {
+                showStatus(moduleCapabilityReason(runtimeContext, moduleName), true);
                 return;
             }
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import date
 import shutil
 import stat
 import subprocess
@@ -18,7 +19,6 @@ ROOT_FILES = {
     "start.sh": "start.sh",
     "START-HERE.command": "START-HERE.command",
     "README-DIST.md": "README.md",
-    "VERSION": "VERSION",
     "requirements.lock": "requirements.lock",
     "THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
 }
@@ -64,14 +64,31 @@ def copy_tree(source_dir: Path, destination_dir: Path, suffixes: set[str]) -> No
             copy_file(source, destination_dir / source.relative_to(source_dir))
 
 
-def git_commit() -> str:
-    return subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
+def git_build_identity() -> tuple[str, str]:
+    metadata = subprocess.run(
+        ["git", "show", "-s", "--format=%h%n%cs", "HEAD"],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    ).stdout.splitlines()
+    if len(metadata) != 2:
+        raise RuntimeError("Git returned incomplete build identity metadata")
+    commit, commit_date = metadata
+    version = date.fromisoformat(commit_date).strftime("%Y.%m.%d")
+    return commit, version
+
+
+def git_worktree_dirty() -> bool:
+    return bool(
+        subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
 
 
 def make_checksum_manifest(package_root: Path) -> None:
@@ -100,6 +117,8 @@ def validate_package(package_root: Path) -> None:
         "app/index.html",
         "app/backend/build_identity.py",
         "app/backend/extrahop_client.py",
+        "app/backend/pcap_analyzer/analyzer.py",
+        "app/backend/pcap_analyzer/jobs.py",
         "app/backend/system_health_pdf.py",
         "app/css/styles.css",
         "app/assets/eh-logo-black.svg",
@@ -113,6 +132,7 @@ def validate_package(package_root: Path) -> None:
         "app/js/utils/deployment-capabilities.js",
         "app/js/utils/feature-registry.js",
         "app/js/modules/chart-theme.js",
+        "app/js/modules/pcap-analyzer.js",
         "app/js/modules/system-health-collection.js",
         "app/js/modules/system-health-view-model.js",
         "app/js/vendor/chart.umd.min.js",
@@ -167,7 +187,9 @@ def write_zip(package_root: Path, zip_path: Path) -> None:
 
 
 def build() -> Path:
-    version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    commit, version = git_build_identity()
+    if git_worktree_dirty():
+        commit = f"{commit}-dirty"
     package_name = f"eh-admin-tools-{version}"
     DIST_DIR.mkdir(exist_ok=True)
     zip_path = DIST_DIR / f"{package_name}.zip"
@@ -179,7 +201,8 @@ def build() -> Path:
 
         for source_name, destination_name in ROOT_FILES.items():
             copy_file(REPO_ROOT / source_name, package_root / destination_name)
-        (package_root / "COMMIT").write_text(f"{git_commit()}\n", encoding="utf-8")
+        (package_root / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+        (package_root / "COMMIT").write_text(f"{commit}\n", encoding="utf-8")
 
         for source_name in APP_FILES:
             copy_file(REPO_ROOT / source_name, app_root / source_name)

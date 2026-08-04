@@ -310,8 +310,8 @@ function generateEventTypesChart() {
             datasets: [{
                 label: 'Number of Log Entries',
                 data: data,
-                backgroundColor: genericChartPrimaryColor(),
-                borderColor: genericChartPrimaryColor(),
+                backgroundColor: genericChartPaletteColor(0),
+                borderColor: genericChartPaletteColor(0),
                 borderWidth: 1
             }]
         },
@@ -365,8 +365,8 @@ function generateLoginPerDayChart() {
             datasets: [{
                 label: 'Login Events',
                 data: data,
-                backgroundColor: genericChartPrimaryColor(),
-                borderColor: genericChartPrimaryColor(),
+                backgroundColor: genericChartPaletteColor(0),
+                borderColor: genericChartPaletteColor(0),
                 borderWidth: 1
             }]
         },
@@ -421,8 +421,8 @@ function generateLoginByUserChart() {
             datasets: [{
                 label: 'Login Count',
                 data: data,
-                backgroundColor: genericChartPrimaryColor(),
-                borderColor: genericChartPrimaryColor(),
+                backgroundColor: genericChartPaletteColor(0),
+                borderColor: genericChartPaletteColor(0),
                 borderWidth: 1
             }]
         },

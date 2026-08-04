@@ -256,15 +256,18 @@ class PdfRouteAndLifespanTests(unittest.IsolatedAsyncioTestCase):
 
 class PdfRouteResponseTests(unittest.TestCase):
     def setUp(self):
+        self.original_sessions = main.sessions
+        main.sessions = main.SessionStore(ttl_seconds=60, max_sessions=2)
+        self.addCleanup(setattr, main, "sessions", self.original_sessions)
         self.client = TestClient(main.app, base_url="http://127.0.0.1")
+        self.addCleanup(self.client.close)
+        bootstrap = self.client.get("/backend/session")
+        self.assertEqual(bootstrap.status_code, 200)
 
     def test_busy_renderer_returns_retryable_503(self):
-        with (
-            patch("main.get_session_client", return_value=object()),
-            patch(
-                "backend.system_health_pdf.render_system_health_pdf_bounded",
-                new=AsyncMock(side_effect=pdf.PdfRenderBusyError("busy")),
-            ),
+        with patch(
+            "backend.system_health_pdf.render_system_health_pdf_bounded",
+            new=AsyncMock(side_effect=pdf.PdfRenderBusyError("busy")),
         ):
             response = self.client.post("/backend/system-health/pdf", json=minimal_pdf_payload())
 
@@ -275,10 +278,7 @@ class PdfRouteResponseTests(unittest.TestCase):
         payload = minimal_pdf_payload()
         payload["report"]["metrics"] = {"pkts": {"rows": [{"value": 1}]}}
         renderer = AsyncMock(return_value=b"%PDF-fake")
-        with (
-            patch("main.get_session_client", return_value=object()),
-            patch("backend.system_health_pdf.render_system_health_pdf_bounded", new=renderer),
-        ):
+        with patch("backend.system_health_pdf.render_system_health_pdf_bounded", new=renderer):
             response = self.client.post("/backend/system-health/pdf", json=payload)
 
         self.assertEqual(response.status_code, 422)
@@ -286,10 +286,7 @@ class PdfRouteResponseTests(unittest.TestCase):
 
     def test_valid_compact_projection_reaches_renderer_and_returns_pdf(self):
         renderer = AsyncMock(return_value=b"%PDF-canonical")
-        with (
-            patch("main.get_session_client", return_value=object()),
-            patch("backend.system_health_pdf.render_system_health_pdf_bounded", new=renderer),
-        ):
+        with patch("backend.system_health_pdf.render_system_health_pdf_bounded", new=renderer):
             response = self.client.post("/backend/system-health/pdf", json=minimal_pdf_payload())
 
         self.assertEqual(response.status_code, 200)

@@ -28,6 +28,8 @@ class ChartThemeApiTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.addCleanup(self.temp.cleanup)
         self.client = self.enterContext(TestClient(main.app, base_url="http://127.0.0.1"))
+        bootstrap = self.client.get("/backend/session")
+        self.assertEqual(bootstrap.status_code, 200)
 
     def save(self, theme_id, name="Corporate", colors=None):
         return self.client.put(
@@ -152,6 +154,9 @@ class PdfStyleColorTests(unittest.TestCase):
         colors = pdf.system_health_pdf_style_colors(None)
         for key, value in pdf.SYSTEM_HEALTH_PDF_FALLBACK_COLORS.items():
             self.assertEqual(colors[key], value)
+        self.assertEqual(colors["low"], "#00aaef")
+        self.assertEqual(colors["mid"], "#f59e0b")
+        self.assertEqual(colors["high"], "#ef4444")
 
 
 if __name__ == "__main__":

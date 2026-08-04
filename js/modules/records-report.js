@@ -511,7 +511,7 @@ function renderSensorBarChart(data) {
             datasets: [{
                 label: 'Utilization (GB)',
                 data: values,
-                backgroundColor: genericChartPrimaryColor()
+                backgroundColor: genericChartPaletteColor(0)
             }]
         },
         options: {

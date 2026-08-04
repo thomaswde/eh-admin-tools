@@ -8,7 +8,7 @@ import httpx
 
 import main
 from backend.connection_store import ConnectionStorageError
-from backend.extrahop_client import ExtraHopClient, SessionMetadata
+from backend.extrahop_client import ExtraHopApiError, ExtraHopClient, SessionMetadata
 from backend.session_store import SessionStore
 
 
@@ -23,12 +23,14 @@ class DummyExtraHopClient:
             verify_tls=config.get("verifyTls", True),
         )
         self.authenticate = AsyncMock()
+        self.aclose = AsyncMock()
 
 
 class DummyConnectionStore:
     def __init__(self):
         self.saved = []
         self.configs = {}
+        self.rechecks = 0
 
     def save(self, config):
         self.saved.append(config)
@@ -80,6 +82,9 @@ class DummyConnectionStore:
             "warnings": [],
         }
 
+    def recheck_secure_storage(self):
+        self.rechecks += 1
+        return self.list_connections()
 
 class ExtraHopClientValidationTests(unittest.TestCase):
     def test_rejects_tenant_that_can_change_oauth_destination(self):
@@ -117,6 +122,40 @@ class ExtraHopClientValidationTests(unittest.TestCase):
 
 
 class SessionStoreTests(unittest.TestCase):
+    def test_workspace_can_exist_without_an_extrahop_client(self):
+        store = SessionStore(ttl_seconds=60, max_sessions=2)
+
+        workspace_id = store.ensure()
+
+        self.assertTrue(store.has_workspace(workspace_id))
+        self.assertIsNone(store.get(workspace_id))
+
+    def test_attach_and_detach_keep_the_workspace_identifier(self):
+        store = SessionStore(ttl_seconds=60, max_sessions=2)
+        workspace_id = store.ensure()
+        client = object()
+
+        attached_id = store.attach(workspace_id, client)
+        detached = store.detach(workspace_id)
+
+        self.assertEqual(attached_id, workspace_id)
+        self.assertTrue(detached)
+        self.assertTrue(store.has_workspace(workspace_id))
+        self.assertIsNone(store.get(workspace_id))
+
+    def test_detach_if_preserves_a_replacement_client(self):
+        store = SessionStore(ttl_seconds=60, max_sessions=2)
+        workspace_id = store.ensure()
+        stale_client = object()
+        replacement_client = object()
+        store.attach(workspace_id, stale_client)
+        store.attach(workspace_id, replacement_client)
+
+        self.assertFalse(store.detach_if(workspace_id, stale_client))
+        self.assertIs(store.get(workspace_id), replacement_client)
+        self.assertTrue(store.detach_if(workspace_id, replacement_client))
+        self.assertIsNone(store.get(workspace_id))
+
     def test_replace_removes_old_session(self):
         store = SessionStore(ttl_seconds=60, max_sessions=4)
         first_client = object()
@@ -142,6 +181,50 @@ class SessionStoreTests(unittest.TestCase):
             session_id = store.create(object())
         with patch("backend.session_store.time.monotonic", return_value=161.0):
             self.assertIsNone(store.get(session_id))
+
+    def test_sync_remove_callback_is_supported(self):
+        removed_session_ids = []
+        store = SessionStore(
+            ttl_seconds=60,
+            max_sessions=2,
+            remove_callback=removed_session_ids.append,
+        )
+        session_id = store.create(object())
+
+        store.delete(session_id)
+
+        self.assertEqual(removed_session_ids, [session_id])
+
+
+class SessionStoreRemovalCallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_remove_callback_receives_replaced_evicted_deleted_and_closed_ids(self):
+        callback = AsyncMock()
+        store = SessionStore(ttl_seconds=60, max_sessions=1)
+        store.set_remove_callback(callback)
+
+        replaced_id = await store.acreate(object())
+        replacement_id = await store.acreate(object(), replace_session_id=replaced_id)
+        evicting_id = await store.acreate(object())
+        await store.adelete(evicting_id)
+        closed_id = await store.acreate(object())
+        await store.aclose()
+
+        self.assertEqual(
+            [call.args[0] for call in callback.await_args_list],
+            [replaced_id, replacement_id, evicting_id, closed_id],
+        )
+
+    async def test_ttl_prune_schedules_async_remove_callback_with_expired_id(self):
+        callback = AsyncMock()
+        store = SessionStore(ttl_seconds=60, max_sessions=2, remove_callback=callback)
+        with patch("backend.session_store.time.monotonic", return_value=100.0):
+            expired_id = await store.acreate(object())
+
+        with patch("backend.session_store.time.monotonic", return_value=161.0):
+            self.assertIsNone(store.get(expired_id))
+        await store.wait_for_pending_closes()
+
+        callback.assert_awaited_once_with(expired_id)
 
 
 class BackendRouteSecurityTests(unittest.TestCase):
@@ -193,6 +276,81 @@ class BackendRouteSecurityTests(unittest.TestCase):
     def test_catalog_requires_session(self):
         response = self.client.get("/backend/system-health/catalog")
         self.assertEqual(response.status_code, 401)
+
+    def test_fresh_bootstrap_creates_a_bounded_offline_workspace(self):
+        response = self.client.get("/backend/session")
+        workspace_id = self.client.cookies.get(main.SESSION_COOKIE)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"workspace": True, "connected": False, "config": None},
+        )
+        self.assertTrue(main.sessions.has_workspace(workspace_id))
+        self.assertIsNone(main.sessions.get(workspace_id))
+
+        second = self.client.get("/backend/session")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(self.client.cookies.get(main.SESSION_COOKIE), workspace_id)
+
+    def test_catalog_is_available_to_an_offline_workspace(self):
+        self.client.get("/backend/session")
+
+        response = self.client.get("/backend/system-health/catalog")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("loaded", response.json())
+
+    def test_upstream_proxy_rejects_an_offline_workspace(self):
+        self.client.get("/backend/session")
+
+        response = self.client.get("/backend/extrahop/api/v1/appliances")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["code"], "extrahop_not_connected")
+
+    def test_terminal_upstream_401_detaches_client_but_keeps_workspace(self):
+        workspace_id = main.sessions.ensure()
+        failing_client = unittest.mock.Mock()
+        failing_client.request = AsyncMock(
+            side_effect=ExtraHopApiError("authentication expired", status_code=401)
+        )
+        failing_client.aclose = AsyncMock()
+        main.sessions.attach(workspace_id, failing_client)
+        self.client.cookies.set(main.SESSION_COOKIE, workspace_id)
+
+        response = self.client.get("/backend/extrahop/api/v1/appliances")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "extrahop_session_expired",
+        )
+        self.assertTrue(main.sessions.has_workspace(workspace_id))
+        self.assertIsNone(main.sessions.get(workspace_id))
+        failing_client.aclose.assert_awaited_once_with()
+
+    def test_stale_upstream_401_does_not_detach_a_replacement_client(self):
+        workspace_id = main.sessions.ensure()
+        stale_client = unittest.mock.Mock()
+        replacement_client = unittest.mock.Mock()
+        stale_client.aclose = AsyncMock()
+        replacement_client.aclose = AsyncMock()
+
+        async def fail_after_replacement(*_args, **_kwargs):
+            main.sessions.attach(workspace_id, replacement_client)
+            raise ExtraHopApiError("authentication expired", status_code=401)
+
+        stale_client.request = AsyncMock(side_effect=fail_after_replacement)
+        main.sessions.attach(workspace_id, stale_client)
+        self.client.cookies.set(main.SESSION_COOKIE, workspace_id)
+
+        response = self.client.get("/backend/extrahop/api/v1/appliances")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"]["code"], "extrahop_connection_replaced")
+        self.assertIs(main.sessions.get(workspace_id), replacement_client)
+        replacement_client.aclose.assert_not_awaited()
 
     def test_proxy_preserves_int64_identifiers_as_strings_for_browser_json(self):
         unsafe_id = 9007199254740993
@@ -366,7 +524,14 @@ class BackendRouteSecurityTests(unittest.TestCase):
         self.assertEqual(response.headers["cache-control"], "no-store, max-age=0")
         self.assertEqual(response.headers["pragma"], "no-cache")
 
-    def test_reconnect_atomically_replaces_old_session(self):
+    def test_javascript_disables_browser_caching(self):
+        response = self.client.get("/js/auth/auth-manager.js")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store, max-age=0")
+        self.assertEqual(response.headers["pragma"], "no-cache")
+
+    def test_reconnect_replaces_the_client_without_changing_workspace_owner(self):
         config = {
             "type": "enterprise",
             "host": "sensor.example.test",
@@ -376,14 +541,36 @@ class BackendRouteSecurityTests(unittest.TestCase):
             first_response = self.client.post("/backend/session", json=config)
             self.assertEqual(first_response.status_code, 200)
             first_id = self.client.cookies.get(main.SESSION_COOKIE)
+            first_client = main.sessions.get(first_id)
 
             second_response = self.client.post("/backend/session", json=config)
             self.assertEqual(second_response.status_code, 200)
             second_id = self.client.cookies.get(main.SESSION_COOKIE)
 
-        self.assertNotEqual(first_id, second_id)
-        self.assertIsNone(main.sessions.get(first_id))
-        self.assertIsNotNone(main.sessions.get(second_id))
+        self.assertEqual(first_id, second_id)
+        self.assertTrue(main.sessions.has_workspace(first_id))
+        self.assertIsNot(main.sessions.get(second_id), first_client)
+        first_client.aclose.assert_awaited_once_with()
+
+    def test_disconnect_detaches_client_and_keeps_workspace(self):
+        config = {
+            "type": "enterprise",
+            "host": "sensor.example.test",
+            "apiKey": "key",
+        }
+        with patch("main.ExtraHopClient", DummyExtraHopClient):
+            connected = self.client.post("/backend/session", json=config)
+            self.assertEqual(connected.status_code, 200)
+            workspace_id = self.client.cookies.get(main.SESSION_COOKIE)
+            attached_client = main.sessions.get(workspace_id)
+
+            disconnected = self.client.delete("/backend/session")
+
+        self.assertEqual(disconnected.status_code, 200)
+        self.assertEqual(self.client.cookies.get(main.SESSION_COOKIE), workspace_id)
+        self.assertTrue(main.sessions.has_workspace(workspace_id))
+        self.assertIsNone(main.sessions.get(workspace_id))
+        attached_client.aclose.assert_awaited_once_with()
 
     def test_successful_manual_connection_is_saved_server_side(self):
         config = {
@@ -417,8 +604,13 @@ class BackendRouteSecurityTests(unittest.TestCase):
                 store,
                 "save",
                 side_effect=ConnectionStorageError(
-                    "The operating-system credential store is unavailable; "
-                    "the connection was not saved."
+                    "Secure saved connections are not set up in WSL; "
+                    "this connection was not saved.",
+                    code="wsl-secret-service-unavailable",
+                    recovery={
+                        "kind": "wsl-secret-service",
+                        "command": "sudo apt install gnome-keyring",
+                    },
                 ),
             ),
         ):
@@ -427,6 +619,10 @@ class BackendRouteSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["connected"])
         self.assertFalse(response.json()["savedConnection"])
+        self.assertEqual(
+            response.json()["connectionStorage"]["code"],
+            "wsl-secret-service-unavailable",
+        )
         self.assertIsNotNone(main.sessions.get(self.client.cookies.get(main.SESSION_COOKIE)))
 
     def test_saved_connection_endpoint_resolves_credentials_server_side(self):
@@ -538,6 +734,16 @@ class BackendRouteSecurityTests(unittest.TestCase):
         )
         self.assertNotIn("secret", response.text)
 
+    def test_secure_storage_recheck_refreshes_server_side_discovery(self):
+        store = DummyConnectionStore()
+        with patch("main.connection_store", store):
+            response = self.client.post(
+                "/backend/connections/secure-storage/recheck"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["secureStorage"]["available"])
+        self.assertEqual(store.rechecks, 1)
 
 if __name__ == "__main__":
     unittest.main()
