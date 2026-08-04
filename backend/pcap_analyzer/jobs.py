@@ -5,6 +5,9 @@ import csv
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from io import StringIO
+import ipaddress
+import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -32,6 +35,9 @@ FINDING_ALIASES = {
     "truncated": "capture_truncated",
     "sequence": "sequence_gap",
 }
+DASHBOARD_ROW_LIMIT = 25
+CSV_SCOPES = frozenset({"all_findings", "reverse_not_observed", "sequence_gap"})
+DEVICE_RESULT_FIELDS = ("id", "node_id", "display_name", "default_name", "ipaddr4", "ipaddr6")
 
 
 class PcapJobError(Exception):
@@ -58,6 +64,13 @@ class PcapJobSettings:
     max_jobs: int = 8
     max_concurrent_jobs: int = 1
     max_result_page: int = 500
+    max_enrichment_addresses: int = 2_000
+    enrichment_batch_size: int = 50
+    enrichment_page_size: int = 500
+    max_enrichment_pages: int = 100
+    max_enrichment_rows: int = 10_000
+    enrichment_deadline_seconds: int = 30
+    max_device_name_chars: int = 256
     analyzer_limits: AnalyzerLimits = field(
         default_factory=lambda: AnalyzerLimits(
             max_packets=2_000_000,
@@ -89,6 +102,13 @@ class PcapJobSettings:
             max_jobs=integer("EH_PCAP_MAX_JOBS", 8),
             max_concurrent_jobs=integer("EH_PCAP_MAX_CONCURRENT_JOBS", 1),
             max_result_page=integer("EH_PCAP_MAX_RESULT_PAGE", 500),
+            max_enrichment_addresses=integer("EH_PCAP_MAX_ENRICHMENT_ADDRESSES", 2_000),
+            enrichment_batch_size=integer("EH_PCAP_ENRICHMENT_BATCH_SIZE", 50),
+            enrichment_page_size=integer("EH_PCAP_ENRICHMENT_PAGE_SIZE", 500),
+            max_enrichment_pages=integer("EH_PCAP_MAX_ENRICHMENT_PAGES", 100),
+            max_enrichment_rows=integer("EH_PCAP_MAX_ENRICHMENT_ROWS", 10_000),
+            enrichment_deadline_seconds=integer("EH_PCAP_ENRICHMENT_DEADLINE_SECONDS", 30),
+            max_device_name_chars=integer("EH_PCAP_MAX_DEVICE_NAME_CHARS", 256),
             analyzer_limits=AnalyzerLimits(
                 max_packets=integer("EH_PCAP_MAX_PACKETS", 2_000_000),
                 max_flows=integer("EH_PCAP_MAX_FLOWS", 50_000),
@@ -108,6 +128,7 @@ class PcapJob:
     created_at: float
     expires_at: float
     temp_dir: Path
+    deadline: float
     state: str = "queued"
     completeness: str = "not_applicable"
     started_at: float | None = None
@@ -119,6 +140,8 @@ class PcapJob:
     error: dict[str, Any] | None = None
     result: AnalysisResult | None = None
     rows: list[dict[str, Any]] = field(default_factory=list)
+    enrichment: dict[str, Any] = field(default_factory=dict)
+    dashboard: dict[str, Any] | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
     task: asyncio.Task[None] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -195,6 +218,7 @@ class PcapJobManager:
     async def create_upload(
         self,
         owner_session: str,
+        client: ExtraHopClient,
         chunks: AsyncIterator[bytes],
         *,
         declared_length: int | None,
@@ -212,12 +236,16 @@ class PcapJobManager:
                 async for chunk in chunks:
                     if job.cancel_event.is_set():
                         raise AnalysisCancelled("Upload cancelled")
+                    if time.monotonic() >= job.deadline:
+                        raise PcapJobError(408, "The Datafeed Analysis operation deadline was reached during upload.")
                     total += len(chunk)
                     if total > self.settings.max_upload_bytes:
                         raise PcapJobError(413, self._upload_limit_message())
                     handle.write(chunk)
                     with job.lock:
                         job.progress["bytesReceived"] = total
+            if job.cancel_event.is_set():
+                raise AnalysisCancelled("Upload cancelled")
             if total == 0:
                 raise PcapJobError(400, "The uploaded PCAP is empty.")
         except BaseException:
@@ -225,7 +253,7 @@ class PcapJobManager:
             raise
 
         job.source = {"type": "upload", "bytes": total}
-        job.task = asyncio.create_task(self._run_upload(job, destination))
+        job.task = asyncio.create_task(self._run_upload(job, destination, client))
         return self.snapshot(job)
 
     async def create_collection(
@@ -276,6 +304,8 @@ class PcapJobManager:
         normalized_finding = FINDING_ALIASES.get(finding or "", finding)
         if normalized_finding:
             rows = [row for row in rows if normalized_finding in row.get("findingKinds", [])]
+        else:
+            rows = [row for row in rows if row.get("findingKinds")]
         safe_offset = max(0, offset)
         safe_limit = max(1, min(limit, self.settings.max_result_page))
         return {
@@ -285,16 +315,34 @@ class PcapJobManager:
             "limit": safe_limit,
         }
 
-    def csv_rows(self, owner_session: str, job_id: str) -> tuple[str, Iterable[str]]:
+    def csv_rows(
+        self,
+        owner_session: str,
+        job_id: str,
+        *,
+        scope: str = "all_findings",
+    ) -> tuple[str, Iterable[str]]:
         job = self._owned_job(owner_session, job_id)
         if job.state != "completed":
             raise PcapJobError(409, "CSV is available only after the analysis completes.")
+        if scope not in CSV_SCOPES:
+            raise PcapJobError(422, "The requested CSV scope is not supported.")
+        if scope == "all_findings":
+            selected_rows = (row for row in job.rows if row.get("findingKinds"))
+            filename_kind = "all-findings"
+        else:
+            selected_rows = (row for row in job.rows if scope in row.get("findingKinds", ()))
+            filename_kind = "reverse-direction" if scope == "reverse_not_observed" else "sequence-gaps"
         columns = (
             "ipVersion",
             "protocol",
             "sourceAddress",
+            "sourceDeviceName",
+            "sourceDeviceMatchStatus",
             "sourcePort",
             "destinationAddress",
+            "destinationDeviceName",
+            "destinationDeviceMatchStatus",
             "destinationPort",
             "packetCount",
             "capturedBytes",
@@ -328,13 +376,13 @@ class PcapJobManager:
             writer = csv.writer(buffer, lineterminator="\r\n")
             writer.writerow(columns)
             yield buffer.getvalue()
-            for row in job.rows:
+            for row in selected_rows:
                 buffer.seek(0)
                 buffer.truncate(0)
                 writer.writerow(
                     [
                         _neutralize_csv(
-                            ",".join(row.get("findingKinds", [])) if column == "findings" else row.get(column),
+                            self._csv_value(row, column),
                             numeric=column in numeric,
                         )
                         for column in columns
@@ -342,7 +390,19 @@ class PcapJobManager:
                 )
                 yield buffer.getvalue()
 
-        return f"datafeed-analysis-{job.id[:12]}.csv", lines()
+        return f"datafeed-analysis-{filename_kind}-{job.id[:12]}.csv", lines()
+
+    @staticmethod
+    def _csv_value(row: dict[str, Any], column: str) -> Any:
+        if column == "findings":
+            return ",".join(row.get("findingKinds", []))
+        if column.startswith("sourceDevice"):
+            device = row.get("sourceDevice") or {}
+            return device.get("displayName" if column.endswith("Name") else "matchStatus")
+        if column.startswith("destinationDevice"):
+            device = row.get("destinationDevice") or {}
+            return device.get("displayName" if column.endswith("Name") else "matchStatus")
+        return row.get(column)
 
     async def cancel(self, owner_session: str, job_id: str) -> dict[str, Any]:
         job = self._owned_job(owner_session, job_id)
@@ -361,9 +421,12 @@ class PcapJobManager:
             job.cancel_event.set()
             if job.task and not job.task.done() and job.state != "analyzing":
                 job.task.cancel()
-        tasks = [job.task for job in owned if job.task and job.state != "analyzing"]
+        tasks = [job.task for job in owned if job.task]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        for job in owned:
+            self._jobs.pop(job.id, None)
+            await self._cleanup_files(job)
 
     def snapshot(self, job: PcapJob) -> dict[str, Any]:
         with job.lock:
@@ -386,6 +449,8 @@ class PcapJobManager:
                 "error": dict(job.error) if job.error else None,
                 "summary": summary,
                 "resultCount": len(job.rows),
+                "enrichment": _json_value(job.enrichment),
+                "dashboard": _json_value(job.dashboard),
             }
 
     async def _new_job(self, owner_session: str, source_type: str) -> PcapJob:
@@ -416,21 +481,24 @@ class PcapJobManager:
             created_at=now,
             expires_at=now + self.settings.retention_seconds,
             temp_dir=temp_dir,
+            deadline=time.monotonic() + self.settings.operation_deadline_seconds,
         )
         self._jobs[job_id] = job
         return job
 
-    async def _run_upload(self, job: PcapJob, destination: Path) -> None:
+    async def _run_upload(self, job: PcapJob, destination: Path, client: ExtraHopClient) -> None:
         async with self._semaphore:
             job.started_at = time.time()
             try:
                 await self._analyze(job, [destination])
+                await self._enrich(job, client, self._upload_activity_window(job))
+                job.dashboard = self._build_dashboard(job)
                 job.completeness = "complete"
                 self._complete(job)
             except asyncio.CancelledError:
                 self._cancelled(job)
             except AnalysisCancelled:
-                self._cancelled(job)
+                self._cancelled(job) if job.cancel_event.is_set() else self._deadline_failed(job)
             except PcapAnalysisError as error:
                 self._failed(job, str(error), "analysis_error")
             except Exception as error:
@@ -447,14 +515,13 @@ class PcapJobManager:
         async with self._semaphore:
             job.started_at = time.time()
             job.state = "collecting"
-            deadline = time.monotonic() + self.settings.operation_deadline_seconds
             captures: list[Path] = []
             terminal_error: ExtraHopApiError | None = None
             try:
                 for index, (from_ms, until_ms) in enumerate(windows):
                     if job.cancel_event.is_set():
                         raise AnalysisCancelled("Collection cancelled")
-                    if time.monotonic() >= deadline:
+                    if time.monotonic() >= job.deadline:
                         job.collection["skippedWindows"] += len(windows) - index
                         job.warnings.append("The absolute collection deadline was reached before every window completed.")
                         break
@@ -488,7 +555,7 @@ class PcapJobManager:
                                 "output": "pcap",
                             },
                             max_bytes=min(self.settings.max_window_bytes, remaining_bytes),
-                            deadline=deadline,
+                            deadline=job.deadline,
                             accept="application/vnd.tcpdump.pcap, application/octet-stream",
                         )
                     except ExtraHopApiError as error:
@@ -532,13 +599,19 @@ class PcapJobManager:
                     await self._analyze(job, captures)
                 else:
                     await self._analyze(job, [])
+                await self._enrich(
+                    job,
+                    client,
+                    (int(job.source["fromMs"]), int(job.source["untilMs"])),
+                )
+                job.dashboard = self._build_dashboard(job)
                 incomplete = bool(job.collection["failedWindows"] or job.collection["skippedWindows"])
                 job.completeness = "partial" if incomplete else "indeterminate"
                 self._complete(job)
             except asyncio.CancelledError:
                 self._cancelled(job)
             except AnalysisCancelled:
-                self._cancelled(job)
+                self._cancelled(job) if job.cancel_event.is_set() else self._deadline_failed(job)
             except PcapJobError as error:
                 self._failed(job, error.message, "collection_error", error.details)
             except PcapAnalysisError as error:
@@ -566,7 +639,7 @@ class PcapJobManager:
             self.analyzer,
             captures,
             limits=self.settings.analyzer_limits,
-            cancelled=job.cancel_event.is_set,
+            cancelled=lambda: job.cancel_event.is_set() or time.monotonic() >= job.deadline,
             progress=progress,
         )
         job.result = result
@@ -578,6 +651,7 @@ class PcapJobManager:
         for flow in result.flows:
             row = _json_value(flow)
             row["protocol"] = "tcp"
+            row["flowKey"] = flow.flow_key
             kinds = []
             if not flow.reverse_observed:
                 kinds.append("reverse_not_observed")
@@ -588,6 +662,346 @@ class PcapJobManager:
             row["findingKinds"] = kinds
             rows.append(row)
         return rows
+
+    async def _enrich(
+        self,
+        job: PcapJob,
+        client: ExtraHopClient,
+        activity_window: tuple[int, int] | None,
+    ) -> None:
+        candidates, total_addresses = self._candidate_addresses(job.rows)
+        omitted = max(0, total_addresses - len(candidates))
+        job.enrichment = {
+            "status": "skipped",
+            "addressesConsidered": len(candidates),
+            "addressesMatched": 0,
+            "addressesAmbiguous": 0,
+            "addressesOmitted": omitted,
+            "timeConstrained": activity_window is not None,
+        }
+        job.state = "enriching"
+        job.progress = {
+            "stage": "enriching",
+            "addressesCompleted": 0,
+            "addressesTotal": len(candidates),
+        }
+        if not candidates:
+            job.enrichment["status"] = "complete"
+            return
+
+        stage_deadline = min(
+            job.deadline,
+            time.monotonic() + self.settings.enrichment_deadline_seconds,
+        )
+        if stage_deadline <= time.monotonic():
+            job.enrichment["status"] = "unavailable"
+            return
+
+        try:
+            matches, complete = await self._collect_device_matches(
+                job,
+                client,
+                candidates,
+                activity_window,
+                stage_deadline,
+            )
+        except AnalysisCancelled:
+            raise
+        except (TimeoutError, ExtraHopApiError, ValueError, TypeError, json.JSONDecodeError):
+            job.enrichment["status"] = "unavailable"
+            return
+        except Exception:
+            # Enrichment is deliberately best effort. Unexpected client or response
+            # failures remain isolated from the deterministic packet analysis.
+            job.enrichment["status"] = "unavailable"
+            return
+
+        matched = 0
+        ambiguous = 0
+        decorations: dict[str, dict[str, Any]] = {}
+        for address in candidates:
+            decoration = self._resolve_device_match(address, matches.get(address, []))
+            if decoration is None:
+                continue
+            decorations[address] = decoration
+            if decoration["matchStatus"] == "ambiguous":
+                ambiguous += 1
+            elif decoration.get("displayName"):
+                matched += 1
+
+        for row in job.rows:
+            source = decorations.get(row["sourceAddress"])
+            destination = decorations.get(row["destinationAddress"])
+            if source is not None:
+                row["sourceDevice"] = dict(source)
+            if destination is not None:
+                row["destinationDevice"] = dict(destination)
+
+        job.enrichment.update(
+            {
+                "status": "complete" if complete and omitted == 0 else "partial",
+                "addressesMatched": matched,
+                "addressesAmbiguous": ambiguous,
+            }
+        )
+
+    async def _collect_device_matches(
+        self,
+        job: PcapJob,
+        client: ExtraHopClient,
+        candidates: list[str],
+        activity_window: tuple[int, int] | None,
+        deadline: float,
+    ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
+        matches: dict[str, list[dict[str, Any]]] = {address: [] for address in candidates}
+        seen: dict[str, set[tuple[Any, ...]]] = {address: set() for address in candidates}
+        candidate_set = set(candidates)
+        rows_fetched = 0
+        pages_fetched = 0
+        complete = True
+
+        for batch_start in range(0, len(candidates), self.settings.enrichment_batch_size):
+            batch = candidates[batch_start : batch_start + self.settings.enrichment_batch_size]
+            offset = 0
+            while True:
+                if job.cancel_event.is_set():
+                    raise AnalysisCancelled("Device enrichment cancelled")
+                if pages_fetched >= self.settings.max_enrichment_pages:
+                    return matches, False
+                if rows_fetched >= self.settings.max_enrichment_rows:
+                    return matches, False
+                remaining_seconds = deadline - time.monotonic()
+                if remaining_seconds <= 0:
+                    raise TimeoutError("Device enrichment deadline reached")
+
+                payload: dict[str, Any] = {
+                    "filter": {
+                        "operator": "or",
+                        "rules": [
+                            {"field": "ipaddr", "operand": address, "operator": "="} for address in batch
+                        ],
+                    },
+                    "limit": self.settings.enrichment_page_size,
+                    "offset": offset,
+                    "result_fields": list(DEVICE_RESULT_FIELDS),
+                }
+                if activity_window is not None:
+                    payload["active_from"], payload["active_until"] = activity_window
+
+                try:
+                    response = await asyncio.wait_for(
+                        client.request(
+                            "POST",
+                            "/api/v1/devices/search",
+                            body=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+                            content_type="application/json",
+                        ),
+                        timeout=remaining_seconds,
+                    )
+                    devices = (
+                        response
+                        if isinstance(response, list)
+                        else response.get("devices")
+                        if isinstance(response, dict)
+                        else None
+                    )
+                    if not isinstance(devices, list) or not all(isinstance(device, dict) for device in devices):
+                        raise ValueError("Device search returned an invalid response shape")
+                except AnalysisCancelled:
+                    raise
+                except Exception:
+                    if pages_fetched:
+                        return matches, False
+                    raise
+                pages_fetched += 1
+
+                remaining_rows = self.settings.max_enrichment_rows - rows_fetched
+                accepted = devices[:remaining_rows]
+                rows_fetched += len(accepted)
+                if len(accepted) < len(devices):
+                    complete = False
+
+                for device in accepted:
+                    for address in self._device_addresses(device, candidate_set):
+                        identity = self._device_identity(device)
+                        if identity in seen[address]:
+                            continue
+                        seen[address].add(identity)
+                        matches[address].append(device)
+
+                completed = min(len(candidates), batch_start + len(batch))
+                job.progress.update(
+                    {
+                        "addressesCompleted": completed,
+                        "pagesFetched": pages_fetched,
+                        "rowsFetched": rows_fetched,
+                    }
+                )
+                if len(devices) < self.settings.enrichment_page_size:
+                    break
+                if not complete or rows_fetched >= self.settings.max_enrichment_rows:
+                    return matches, False
+                offset += self.settings.enrichment_page_size
+
+        return matches, complete
+
+    @staticmethod
+    def _device_addresses(device: dict[str, Any], candidates: set[str]) -> set[str]:
+        matched: set[str] = set()
+        for field_name in ("ipaddr4", "ipaddr6"):
+            raw_value = device.get(field_name)
+            values = raw_value if isinstance(raw_value, list) else [raw_value]
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                try:
+                    address = str(ipaddress.ip_address(value.strip()))
+                except ValueError:
+                    continue
+                if address in candidates:
+                    matched.add(address)
+        return matched
+
+    @staticmethod
+    def _device_identity(device: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            str(device.get("id")) if device.get("id") is not None else None,
+            str(device.get("node_id")) if device.get("node_id") is not None else None,
+            str(device.get("ipaddr4")),
+            str(device.get("ipaddr6")),
+            str(device.get("display_name")),
+            str(device.get("default_name")),
+        )
+
+    def _resolve_device_match(
+        self,
+        address: str,
+        devices: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        if not devices:
+            return None
+        named = [(device, self._meaningful_device_name(device, address)) for device in devices]
+        useful = [(device, name) for device, name in named if name is not None]
+        if len(devices) == 1 and useful:
+            device, name = useful[0]
+            decoration: dict[str, Any] = {
+                "displayName": name,
+                "matchStatus": "unique",
+                "matchCount": 1,
+            }
+            if device.get("id") is not None:
+                decoration["deviceId"] = str(device["id"])
+            if device.get("node_id") is not None:
+                decoration["nodeId"] = str(device["node_id"])
+            return decoration
+
+        normalized_names = {self._normalize_device_name(name) for _device, name in useful}
+        if len(useful) == len(devices) and len(normalized_names) == 1:
+            display_name = sorted((name for _device, name in useful), key=lambda item: (item.casefold(), item))[0]
+            return {
+                "displayName": display_name,
+                "matchStatus": "common",
+                "matchCount": len(devices),
+            }
+        if len(devices) > 1:
+            return {"matchStatus": "ambiguous", "matchCount": len(devices)}
+        return None
+
+    def _meaningful_device_name(self, device: dict[str, Any], address: str) -> str | None:
+        for field_name in ("display_name", "default_name"):
+            value = device.get(field_name)
+            if not isinstance(value, str):
+                continue
+            name = " ".join(value.split())
+            if not name or len(name) > self.settings.max_device_name_chars:
+                continue
+            try:
+                if str(ipaddress.ip_address(name)) == address:
+                    continue
+            except ValueError:
+                pass
+            return name
+        return None
+
+    @staticmethod
+    def _normalize_device_name(name: str) -> str:
+        return " ".join(name.split()).casefold()
+
+    def _candidate_addresses(self, rows: list[dict[str, Any]]) -> tuple[list[str], int]:
+        affected = [row for row in rows if row.get("findingKinds")]
+        priority_rows = [
+            *self._top_reverse(affected),
+            *self._top_sequence_gaps(affected),
+            *sorted(affected, key=lambda row: str(row.get("flowKey", ""))),
+        ]
+        addresses: list[str] = []
+        seen: set[str] = set()
+        for row in priority_rows:
+            for field_name in ("sourceAddress", "destinationAddress"):
+                try:
+                    address = str(ipaddress.ip_address(str(row.get(field_name, ""))))
+                except ValueError:
+                    continue
+                if address in seen:
+                    continue
+                seen.add(address)
+                if len(addresses) < self.settings.max_enrichment_addresses:
+                    addresses.append(address)
+        return addresses, len(seen)
+
+    @staticmethod
+    def _top_reverse(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(
+            (row for row in rows if "reverse_not_observed" in row.get("findingKinds", ())),
+            key=lambda row: (
+                -int(row.get("packetCount", 0)),
+                -int(row.get("capturedBytes", 0)),
+                str(row.get("flowKey", "")),
+            ),
+        )[:DASHBOARD_ROW_LIMIT]
+
+    @staticmethod
+    def _top_sequence_gaps(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(
+            (row for row in rows if "sequence_gap" in row.get("findingKinds", ())),
+            key=lambda row: (
+                -int(row.get("sequenceGapBytes", 0)),
+                -int(row.get("sequenceGapObservations", 0)),
+                -int(row.get("packetCount", 0)),
+                str(row.get("flowKey", "")),
+            ),
+        )[:DASHBOARD_ROW_LIMIT]
+
+    def _build_dashboard(self, job: PcapJob) -> dict[str, Any]:
+        if job.result is None:
+            raise RuntimeError("A dashboard requires a completed analysis result")
+        summary = job.result.summary
+        return {
+            "schemaVersion": 1,
+            "findingCounts": {
+                "affectedFlows": summary.affected_flow_count,
+                "reverseNotObservedFlows": summary.reverse_not_observed_flows,
+                "sequenceGapFlows": summary.sequence_gap_flow_count,
+                "sequenceGapObservations": summary.sequence_gap_observations,
+                "sequenceGapBytes": summary.sequence_gap_bytes,
+                "truncatedFlows": summary.truncated_flow_count,
+            },
+            "topReverse": [dict(row) for row in self._top_reverse(job.rows)],
+            "topSequenceGaps": [dict(row) for row in self._top_sequence_gaps(job.rows)],
+            "enrichment": dict(job.enrichment),
+        }
+
+    @staticmethod
+    def _upload_activity_window(job: PcapJob) -> tuple[int, int] | None:
+        if job.result is None:
+            return None
+        first = job.result.summary.capture_first_timestamp
+        last = job.result.summary.capture_last_timestamp
+        if first is None or last is None:
+            return None
+        active_from = math.floor(first * 1000)
+        active_until = max(active_from + 1, math.floor(last * 1000) + 1)
+        return active_from, active_until
 
     def _plan_windows(
         self,
@@ -651,6 +1065,13 @@ class PcapJobManager:
         job.completed_at = time.time()
         job.expires_at = job.completed_at + self.settings.retention_seconds
         job.progress = {"stage": "cancelled"}
+
+    def _deadline_failed(self, job: PcapJob) -> None:
+        self._failed(
+            job,
+            "The absolute Datafeed Analysis operation deadline was reached.",
+            "deadline_exceeded",
+        )
 
     def _failed(
         self,

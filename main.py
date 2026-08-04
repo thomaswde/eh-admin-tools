@@ -5,7 +5,7 @@ import json
 import os
 import re
 import subprocess
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Cookie, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -114,6 +114,7 @@ api_response_logger = ApiResponseLogger(
 )
 connection_store = ConnectionStore(APP_ROOT)
 pcap_jobs = PcapJobManager(APP_ROOT / ".runtime" / "pcap-analyzer")
+sessions.set_remove_callback(pcap_jobs.cancel_owner)
 
 app.mount("/css", StaticFiles(directory=APP_ROOT / "css"), name="css")
 app.mount("/js", StaticFiles(directory=APP_ROOT / "js"), name="js")
@@ -604,7 +605,7 @@ async def create_pcap_upload_job(
     request: Request,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
-    require_session_id(eh_admin_session)
+    client = get_session_client(eh_admin_session)
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if content_type not in {"application/vnd.tcpdump.pcap", "application/octet-stream"}:
         raise HTTPException(
@@ -614,7 +615,8 @@ async def create_pcap_upload_job(
     declared_length = parse_optional_content_length(request.headers.get("content-length"))
     try:
         return await pcap_jobs.create_upload(
-            eh_admin_session,
+            require_session_id(eh_admin_session),
+            client,
             request.stream(),
             declared_length=declared_length,
         )
@@ -676,11 +678,16 @@ async def read_pcap_job_results(
 @app.get("/backend/pcap-analyzer/jobs/{job_id}/csv")
 async def download_pcap_job_csv(
     job_id: str,
+    scope: Literal["all_findings", "reverse_not_observed", "sequence_gap"] = "all_findings",
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> StreamingResponse:
     get_session_client(eh_admin_session)
     try:
-        filename, rows = pcap_jobs.csv_rows(require_session_id(eh_admin_session), job_id)
+        filename, rows = pcap_jobs.csv_rows(
+            require_session_id(eh_admin_session),
+            job_id,
+            scope=scope,
+        )
     except PcapJobError as error:
         raise pcap_job_http_exception(error) from error
     return StreamingResponse(

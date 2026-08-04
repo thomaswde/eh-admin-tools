@@ -122,8 +122,14 @@ class AnalysisSummary:
     captured_bytes: int
     original_bytes: int
     flow_count: int
+    affected_flow_count: int
     reverse_not_observed_flows: int
+    truncated_flow_count: int
+    sequence_gap_flow_count: int
     sequence_gap_observations: int
+    sequence_gap_bytes: int
+    capture_first_timestamp: float | None
+    capture_last_timestamp: float | None
     findings_omitted: int
     uniform_slice_length: int | None
     warnings: tuple[str, ...]
@@ -213,6 +219,8 @@ class _Counters:
     truncated_records: int = 0
     captured_bytes: int = 0
     original_bytes: int = 0
+    capture_first_timestamp: float | None = None
+    capture_last_timestamp: float | None = None
 
 
 class _PacketParseError(Exception):
@@ -286,6 +294,12 @@ def analyze_pcaps(
                     counters.truncated_records += 1
                     truncated_lengths[captured_length] += 1
                 timestamp = timestamp_seconds + timestamp_fraction / timestamp_divisor
+                if counters.capture_first_timestamp is None:
+                    counters.capture_first_timestamp = timestamp
+                    counters.capture_last_timestamp = timestamp
+                else:
+                    counters.capture_first_timestamp = min(counters.capture_first_timestamp, timestamp)
+                    counters.capture_last_timestamp = max(counters.capture_last_timestamp or timestamp, timestamp)
 
                 try:
                     parsed = _parse_ethernet_tcp(packet)
@@ -398,6 +412,12 @@ def analyze_pcaps(
             findings_omitted += 1
 
     reverse_not_observed = sum(not flow.reverse_observed for flow in flow_results)
+    truncated_flow_count = sum(bool(flow.truncated_packets) for flow in flow_results)
+    sequence_gap_flow_count = sum(bool(flow.sequence_gap_observations) for flow in flow_results)
+    affected_flow_count = sum(
+        (not flow.reverse_observed) or bool(flow.truncated_packets) or bool(flow.sequence_gap_observations)
+        for flow in flow_results
+    )
     summary = AnalysisSummary(
         files_processed=counters.files_processed,
         records_seen=counters.records_seen,
@@ -409,8 +429,14 @@ def analyze_pcaps(
         captured_bytes=counters.captured_bytes,
         original_bytes=counters.original_bytes,
         flow_count=len(flow_results),
+        affected_flow_count=affected_flow_count,
         reverse_not_observed_flows=reverse_not_observed,
+        truncated_flow_count=truncated_flow_count,
+        sequence_gap_flow_count=sequence_gap_flow_count,
         sequence_gap_observations=sequence_gap_observations,
+        sequence_gap_bytes=sum(flow.sequence_gap_bytes for flow in flow_results),
+        capture_first_timestamp=counters.capture_first_timestamp,
+        capture_last_timestamp=counters.capture_last_timestamp,
         findings_omitted=findings_omitted,
         uniform_slice_length=uniform_slice_length,
         warnings=tuple(warnings),

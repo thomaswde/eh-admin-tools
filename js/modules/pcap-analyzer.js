@@ -3,17 +3,22 @@
     'use strict';
 
     const API_ROOT = '/backend/pcap-analyzer';
-    const RESULT_PAGE_LIMIT = 100;
+    const TOP_TABLE_LIMIT = 25;
     const POLL_INTERVAL_MS = 750;
     const TERMINAL_STATES = new Set(['completed', 'failed', 'cancelled']);
-    const FINDING_LABELS = Object.freeze({
-        reverse_not_observed: 'Reverse direction not observed',
-        reverse_direction_not_observed: 'Reverse direction not observed',
-        capture_truncated_sliced: 'Capture truncated/sliced',
-        capture_truncated: 'Capture truncated/sliced',
-        suspected_uniform_slicing: 'Capture truncated/sliced',
-        observed_tcp_sequence_gap: 'Observed TCP sequence gap',
-        sequence_gap: 'Observed TCP sequence gap'
+    const EXPORT_SCOPES = Object.freeze({
+        all_findings: {
+            buttonId: 'pcapDownloadAllFindingsCsv',
+            fallbackFilename: 'datafeed-analysis-all-findings.csv'
+        },
+        reverse_not_observed: {
+            buttonId: 'pcapDownloadReverseCsv',
+            fallbackFilename: 'datafeed-analysis-reverse-direction.csv'
+        },
+        sequence_gap: {
+            buttonId: 'pcapDownloadSequenceGapCsv',
+            fallbackFilename: 'datafeed-analysis-sequence-gaps.csv'
+        }
     });
 
     const pcapState = {
@@ -22,8 +27,13 @@
         mode: 'upload',
         jobId: null,
         jobState: null,
-        resultOffset: 0,
-        resultTotal: 0,
+        completedJob: null,
+        topConversationMode: 'reverse',
+        charts: {
+            findingCounts: null,
+            topConversations: null
+        },
+        resizeTimer: null,
         pollTimer: null,
         pollController: null,
         startController: null
@@ -218,65 +228,67 @@
 
     function renderSummary(job) {
         const summary = job.summary || {};
+        const counts = job.dashboard?.findingCounts || {};
         const container = element('pcapSummary');
         container.replaceChildren();
         appendSummaryStat(container, 'Packets examined', summaryValue(summary, ['packets', 'packetCount', 'packet_count', 'recordsSeen']));
         appendSummaryStat(container, 'Directional flows', summaryValue(summary, ['flows', 'flowCount', 'flow_count']));
-        const findingObservations = summaryValue(summary, ['findings', 'findingCount', 'finding_count'], null)
-            ?? (
-                Number(summary.reverseNotObservedFlows || 0)
-                + Number(summary.truncatedRecords || 0)
-                + Number(summary.sequenceGapObservations || 0)
-            );
-        appendSummaryStat(container, 'Finding observations', findingObservations);
+        appendSummaryStat(container, 'Affected flows', summaryValue(counts, ['affectedFlows'], 0));
         appendSummaryStat(
             container,
             'Completeness',
             stateLabel(job.completeness || 'indeterminate'),
-            'Execution status and analytical completeness are reported separately.'
+            job.completeness === 'complete'
+                ? 'The bounded capture was analyzed completely.'
+                : 'Counts describe the available capture and may be incomplete.'
         );
     }
 
-    function findingKey(item) {
-        return String(item.finding || item.findingType || item.finding_type || item.type || '');
+    function dashboardFromJob(job) {
+        const dashboard = job?.dashboard;
+        if (dashboard && Number(dashboard.schemaVersion) === 1) return dashboard;
+        return {
+            schemaVersion: 1,
+            findingCounts: {},
+            topReverse: [],
+            topSequenceGaps: [],
+            enrichment: { status: 'skipped' }
+        };
     }
 
-    function findingLabel(item) {
-        if (Array.isArray(item.findingKinds) && item.findingKinds.length) {
-            return item.findingKinds.map(kind => FINDING_LABELS[kind] || stateLabel(kind)).join('; ');
-        }
-        const key = findingKey(item);
-        return FINDING_LABELS[key] || stateLabel(key || 'finding');
+    function finiteNumber(value, fallback = 0) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : fallback;
     }
 
-    function endpointLabel(item, side) {
-        const direct = item[side];
-        if (typeof direct === 'string' || typeof direct === 'number') return String(direct);
-        if (direct && typeof direct === 'object') {
-            const host = direct.ip || direct.address || direct.host || direct.name || '';
-            const port = direct.port;
-            return port === undefined || port === null || port === '' ? String(host) : `${host}:${port}`;
-        }
-        const prefix = side === 'source' ? 'src' : 'dst';
-        const longPrefix = side === 'source' ? 'source' : 'destination';
-        const host = item[`${prefix}Ip`] ?? item[`${prefix}_ip`] ?? item[`${longPrefix}Address`] ?? '';
-        const port = item[`${prefix}Port`] ?? item[`${prefix}_port`] ?? item[`${longPrefix}Port`];
-        return port === undefined || port === null || port === '' ? String(host) : `${host}:${port}`;
+    function formatNumber(value) {
+        if (value === undefined || value === null || value === '') return '—';
+        const number = Number(value);
+        return Number.isFinite(number) ? number.toLocaleString() : String(value);
     }
 
-    function findingDetail(item) {
-        if (item.detail || item.description || item.message) {
-            return item.detail || item.description || item.message;
-        }
-        const details = [];
-        if (Number(item.truncatedPackets) > 0) {
-            details.push(`${item.truncatedPackets} captured packet${Number(item.truncatedPackets) === 1 ? '' : 's'} shorter than original length`);
-        }
-        if (Number(item.sequenceGapObservations) > 0) {
-            details.push(`${item.sequenceGapObservations} observed uncovered TCP sequence range${Number(item.sequenceGapObservations) === 1 ? '' : 's'}`);
-        }
-        if (item.reverseObserved === false) details.push('Reverse direction not present in this capture');
-        return details.join('; ');
+    function endpointDetails(item, side) {
+        const direct = item?.[side];
+        const addressKey = side === 'source' ? 'sourceAddress' : 'destinationAddress';
+        const portKey = side === 'source' ? 'sourcePort' : 'destinationPort';
+        const deviceKey = side === 'source' ? 'sourceDevice' : 'destinationDevice';
+        const address = direct && typeof direct === 'object'
+            ? direct.address ?? direct.ip ?? ''
+            : item?.[addressKey] ?? '';
+        const port = direct && typeof direct === 'object' ? direct.port : item?.[portKey];
+        const device = direct && typeof direct === 'object' && direct.device
+            ? direct.device
+            : item?.[deviceKey];
+        const addressText = String(address);
+        const formattedAddress = addressText.includes(':') && !addressText.startsWith('[')
+            ? `[${addressText}]`
+            : addressText;
+        return {
+            label: port === undefined || port === null || port === ''
+                ? addressText
+                : `${formattedAddress}:${port}`,
+            deviceName: device?.displayName ? String(device.displayName) : ''
+        };
     }
 
     function timeLabel(value) {
@@ -293,47 +305,282 @@
         cell.textContent = value === undefined || value === null || value === '' ? '—' : String(value);
         if (className) cell.className = className;
         row.appendChild(cell);
+        return cell;
     }
 
-    function renderResultRows(payload) {
-        const items = Array.isArray(payload.items) ? payload.items.slice(0, RESULT_PAGE_LIMIT) : [];
-        const body = element('pcapResultsBody');
+    function appendEndpointCell(row, item, side) {
+        const endpoint = endpointDetails(item, side);
+        const cell = document.createElement('td');
+        cell.className = 'pcap-endpoint';
+        const primary = document.createElement('span');
+        primary.className = 'pcap-endpoint-primary mono';
+        primary.textContent = endpoint.label || '—';
+        cell.appendChild(primary);
+        if (endpoint.deviceName) {
+            const secondary = document.createElement('span');
+            secondary.className = 'pcap-endpoint-device';
+            secondary.textContent = endpoint.deviceName;
+            cell.appendChild(secondary);
+        }
+        row.appendChild(cell);
+    }
+
+    function renderReverseRows(items) {
+        const rows = Array.isArray(items) ? items.slice(0, TOP_TABLE_LIMIT) : [];
+        const body = element('pcapReverseResultsBody');
         body.replaceChildren();
-        for (const item of items) {
+        for (const item of rows) {
             const row = document.createElement('tr');
-            appendCell(row, findingLabel(item), 'primary-cell');
-            appendCell(row, endpointLabel(item, 'source'), 'mono');
-            appendCell(row, endpointLabel(item, 'destination'), 'mono');
-            appendCell(row, item.protocol || item.transport || 'TCP');
-            appendCell(row, item.packets ?? item.packetCount ?? item.packet_count, 'num');
-            appendCell(row, timeLabel(item.firstObserved ?? item.first_observed ?? item.firstTimestamp ?? item.first_timestamp));
-            appendCell(row, timeLabel(item.lastObserved ?? item.last_observed ?? item.lastTimestamp ?? item.last_timestamp));
-            appendCell(row, findingDetail(item));
+            row.dataset.flowKey = String(item.flowKey || '');
+            appendEndpointCell(row, item, 'source');
+            appendEndpointCell(row, item, 'destination');
+            appendCell(row, formatNumber(item.packetCount), 'num');
+            appendCell(row, formatNumber(item.capturedBytes), 'num');
+            appendCell(row, timeLabel(item.firstTimestamp));
+            appendCell(row, timeLabel(item.lastTimestamp));
             body.appendChild(row);
         }
-
-        pcapState.resultTotal = Number(payload.total) || 0;
-        pcapState.resultOffset = Number(payload.offset) || 0;
-        element('pcapResultsEmpty').hidden = items.length > 0;
-        element('pcapResultsTable').hidden = items.length === 0;
-        element('pcapPager').hidden = pcapState.resultTotal <= RESULT_PAGE_LIMIT;
-        const first = pcapState.resultTotal === 0 ? 0 : pcapState.resultOffset + 1;
-        const last = Math.min(pcapState.resultOffset + items.length, pcapState.resultTotal);
-        element('pcapPagerInfo').textContent = `${first}–${last} of ${pcapState.resultTotal}`;
-        element('pcapPreviousPage').disabled = pcapState.resultOffset <= 0;
-        element('pcapNextPage').disabled = pcapState.resultOffset + items.length >= pcapState.resultTotal;
+        element('pcapReverseResultsEmpty').hidden = rows.length > 0;
+        element('pcapReverseResultsTable').hidden = rows.length === 0;
     }
 
-    async function loadPcapResults(offset = 0) {
-        if (!pcapState.jobId) return;
-        const filter = element('pcapFindingFilter').value;
-        const params = new URLSearchParams({
-            offset: String(Math.max(0, offset)),
-            limit: String(RESULT_PAGE_LIMIT)
+    function renderSequenceGapRows(items) {
+        const rows = Array.isArray(items) ? items.slice(0, TOP_TABLE_LIMIT) : [];
+        const body = element('pcapSequenceGapResultsBody');
+        body.replaceChildren();
+        for (const item of rows) {
+            const row = document.createElement('tr');
+            row.dataset.flowKey = String(item.flowKey || '');
+            appendEndpointCell(row, item, 'source');
+            appendEndpointCell(row, item, 'destination');
+            appendCell(row, formatNumber(item.sequenceGapObservations), 'num');
+            appendCell(row, formatNumber(item.sequenceGapBytes), 'num');
+            appendCell(row, formatNumber(item.packetCount), 'num');
+            appendCell(row, formatNumber(item.connectionEpochs), 'num');
+            appendCell(row, timeLabel(item.firstTimestamp));
+            appendCell(row, timeLabel(item.lastTimestamp));
+            body.appendChild(row);
+        }
+        element('pcapSequenceGapResultsEmpty').hidden = rows.length > 0;
+        element('pcapSequenceGapResultsTable').hidden = rows.length === 0;
+    }
+
+    function chartColors() {
+        if (typeof window.chartThemeResolvedColors !== 'function') {
+            throw new Error('Chart theme dependency did not expose its resolved palette.');
+        }
+        return window.chartThemeResolvedColors();
+    }
+
+    function destroyPcapChart(name) {
+        if (!pcapState.charts[name]) return;
+        pcapState.charts[name].destroy();
+        pcapState.charts[name] = null;
+    }
+
+    function destroyPcapCharts() {
+        destroyPcapChart('findingCounts');
+        destroyPcapChart('topConversations');
+    }
+
+    function completenessSentence(job) {
+        return job?.completeness === 'complete'
+            ? 'The result is complete for the bounded capture.'
+            : 'The result is incomplete; counts describe only the available capture.';
+    }
+
+    function renderFindingCountsChart(job, dashboard) {
+        destroyPcapChart('findingCounts');
+        const counts = dashboard.findingCounts || {};
+        const definitions = [
+            { key: 'reverseNotObservedFlows', label: 'Reverse direction not observed', color: 'low' },
+            { key: 'sequenceGapFlows', label: 'Observed TCP sequence gap', color: 'mid' },
+            { key: 'truncatedFlows', label: 'Capture truncated or sliced', color: 'high' }
+        ];
+        const values = definitions.map(item => finiteNumber(counts[item.key]));
+        const hasFindings = values.some(value => value > 0);
+        element('pcapFindingCountsEmpty').hidden = hasFindings;
+        element('pcapFindingCountsChartFrame').hidden = !hasFindings;
+        element('pcapFindingCountsDescription').textContent = `A directional flow can appear in more than one category, so these counts must not be added together. ${completenessSentence(job)}`;
+        if (!hasFindings) {
+            element('pcapFindingCountsEmpty').textContent = job.completeness === 'complete'
+                ? 'No analyzed flows had these findings.'
+                : 'No findings were observed in the available capture.';
+            return;
+        }
+        const colors = chartColors();
+        const totalFlows = finiteNumber(summaryValue(job.summary || {}, ['flows', 'flowCount', 'flow_count']));
+        pcapState.charts.findingCounts = new Chart(element('pcapFindingCountsChart'), {
+            type: 'bar',
+            data: {
+                labels: definitions.map(item => item.label),
+                datasets: [{
+                    label: 'Affected flows',
+                    data: values,
+                    backgroundColor: definitions.map(item => colors[item.color]),
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label(context) {
+                                const count = finiteNumber(context.raw);
+                                const percent = totalFlows > 0 ? (count / totalFlows) * 100 : 0;
+                                return `${formatNumber(count)} affected flows (${percent.toLocaleString(undefined, { maximumFractionDigits: 1 })}% of directional flows)`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        ticks: { precision: 0, color: colors.muted },
+                        grid: { color: colors.grid }
+                    },
+                    y: { ticks: { color: colors.text }, grid: { display: false } }
+                }
+            }
         });
-        if (filter) params.set('finding', filter);
-        const payload = await pcapRequest(`/jobs/${encodeURIComponent(pcapState.jobId)}/results?${params}`);
-        renderResultRows(payload);
+    }
+
+    function topChartLimit() {
+        return finiteNumber(window.innerWidth, 1200) < 900 ? 10 : 15;
+    }
+
+    function renderTopConversationsChart(job, dashboard) {
+        destroyPcapChart('topConversations');
+        const sequenceMode = pcapState.topConversationMode === 'sequence_gap';
+        const sourceRows = sequenceMode ? dashboard.topSequenceGaps : dashboard.topReverse;
+        const rows = (Array.isArray(sourceRows) ? sourceRows : []).slice(0, topChartLimit());
+        const title = sequenceMode ? 'Top conversations — Sequence gaps' : 'Top conversations — Reverse visibility';
+        const description = sequenceMode
+            ? `Ranked by observed TCP sequence-gap bytes. ${completenessSentence(job)}`
+            : `Ranked by packet count where no reverse flow was observed. ${completenessSentence(job)}`;
+        element('pcapTopConversationsHeading').textContent = title;
+        element('pcapTopConversationsDescription').textContent = description;
+        document.querySelectorAll('[data-pcap-chart-mode]').forEach(button => {
+            const selected = button.dataset.pcapChartMode === pcapState.topConversationMode;
+            button.classList.toggle('is-active', selected);
+            button.setAttribute('aria-pressed', String(selected));
+        });
+        element('pcapTopConversationsEmpty').hidden = rows.length > 0;
+        element('pcapTopConversationsChartFrame').hidden = rows.length === 0;
+        if (!rows.length) {
+            element('pcapTopConversationsEmpty').textContent = sequenceMode
+                ? 'No observed TCP sequence gaps were found.'
+                : 'No reverse-direction observations were found.';
+            return;
+        }
+        const colors = chartColors();
+        const valueKey = sequenceMode ? 'sequenceGapBytes' : 'packetCount';
+        const datasetLabel = sequenceMode ? 'Observed gap bytes' : 'Packets';
+        const frame = element('pcapTopConversationsChartFrame');
+        frame.style.height = `${Math.max(230, rows.length * 34 + 70)}px`;
+        pcapState.charts.topConversations = new Chart(element('pcapTopConversationsChart'), {
+            type: 'bar',
+            data: {
+                labels: rows.map(row => `${endpointDetails(row, 'source').label} → ${endpointDetails(row, 'destination').label}`),
+                datasets: [{
+                    label: datasetLabel,
+                    data: rows.map(row => finiteNumber(row[valueKey])),
+                    backgroundColor: sequenceMode ? colors.mid : colors.low,
+                    borderWidth: 0,
+                    rows
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title(contexts) {
+                                const row = rows[contexts[0]?.dataIndex];
+                                if (!row) return '';
+                                return `${endpointDetails(row, 'source').label} → ${endpointDetails(row, 'destination').label}`;
+                            },
+                            label(context) {
+                                const row = rows[context.dataIndex];
+                                if (!row) return '';
+                                return sequenceMode
+                                    ? `${formatNumber(row.sequenceGapBytes)} observed gap bytes · ${formatNumber(row.sequenceGapObservations)} gaps`
+                                    : `${formatNumber(row.packetCount)} packets · ${formatNumber(row.capturedBytes)} captured bytes`;
+                            },
+                            afterLabel(context) {
+                                const row = rows[context.dataIndex];
+                                if (!row) return '';
+                                const sourceName = endpointDetails(row, 'source').deviceName;
+                                const destinationName = endpointDetails(row, 'destination').deviceName;
+                                return [sourceName && `Source: ${sourceName}`, destinationName && `Destination: ${destinationName}`]
+                                    .filter(Boolean);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        title: { display: true, text: datasetLabel, color: colors.muted },
+                        ticks: { precision: 0, color: colors.muted },
+                        grid: { color: colors.grid }
+                    },
+                    y: { ticks: { color: colors.text }, grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    function renderEnrichmentStatus(dashboard) {
+        const status = dashboard.enrichment || {};
+        const container = element('pcapEnrichmentStatus');
+        const considered = finiteNumber(status.addressesConsidered);
+        const matched = finiteNumber(status.addressesMatched);
+        container.hidden = status.status === 'skipped' && considered === 0;
+        if (container.hidden) {
+            container.textContent = '';
+            return;
+        }
+        let text = `ExtraHop names: ${formatNumber(matched)} of ${formatNumber(considered)} addresses enriched.`;
+        if (finiteNumber(status.addressesAmbiguous) > 0) {
+            text += ` ${formatNumber(status.addressesAmbiguous)} ambiguous.`;
+        }
+        if (finiteNumber(status.addressesOmitted) > 0) {
+            text += ` ${formatNumber(status.addressesOmitted)} omitted by the enrichment limit.`;
+        }
+        if (!['complete', 'skipped'].includes(status.status)) text += ` Enrichment ${stateLabel(status.status)}.`;
+        container.textContent = text;
+    }
+
+    function updateExportButtons(dashboard, busyScope = '') {
+        const counts = dashboard.findingCounts || {};
+        const enabled = {
+            all_findings: finiteNumber(counts.affectedFlows) > 0,
+            reverse_not_observed: finiteNumber(counts.reverseNotObservedFlows) > 0,
+            sequence_gap: finiteNumber(counts.sequenceGapFlows) > 0
+        };
+        Object.entries(EXPORT_SCOPES).forEach(([scope, config]) => {
+            element(config.buttonId).disabled = !enabled[scope] || busyScope === scope;
+        });
+    }
+
+    function renderPcapDashboard(job) {
+        const dashboard = dashboardFromJob(job);
+        renderSummary(job);
+        renderEnrichmentStatus(dashboard);
+        renderReverseRows(dashboard.topReverse);
+        renderSequenceGapRows(dashboard.topSequenceGaps);
+        renderFindingCountsChart(job, dashboard);
+        renderTopConversationsChart(job, dashboard);
+        updateExportButtons(dashboard);
+        element('pcapResults').hidden = false;
     }
 
     function stopPcapPolling() {
@@ -348,6 +595,10 @@
         if (pcapState.startController) {
             pcapState.startController.abort();
             pcapState.startController = null;
+        }
+        if (pcapState.resizeTimer !== null) {
+            clearTimeout(pcapState.resizeTimer);
+            pcapState.resizeTimer = null;
         }
     }
 
@@ -378,10 +629,8 @@
         if (TERMINAL_STATES.has(job.state)) {
             setBusy(false);
             if (job.state === 'completed') {
-                renderSummary(job);
-                element('pcapResults').hidden = false;
-                element('pcapDownloadCsv').disabled = false;
-                await loadPcapResults(0);
+                pcapState.completedJob = job;
+                renderPcapDashboard(job);
             }
         } else {
             schedulePcapPoll(jobId);
@@ -402,13 +651,17 @@
         stopPcapPolling();
         pcapState.jobId = null;
         pcapState.jobState = null;
+        pcapState.completedJob = null;
+        pcapState.topConversationMode = 'reverse';
+        destroyPcapCharts();
         const startController = new AbortController();
         pcapState.startController = startController;
         element('pcapResults').hidden = true;
-        element('pcapDownloadCsv').disabled = true;
+        Object.values(EXPORT_SCOPES).forEach(config => {
+            element(config.buttonId).disabled = true;
+        });
+        element('pcapExportStatus').textContent = '';
         element('pcapWarnings').replaceChildren();
-        pcapState.resultOffset = 0;
-        pcapState.resultTotal = 0;
         setBusy(true);
         element('pcapStateBadge').textContent = 'Starting';
         element('pcapStateBadge').className = 'badge';
@@ -473,10 +726,33 @@
         }
     }
 
-    async function downloadPcapCsv() {
-        if (!pcapState.jobId) return;
+    function filenameFromDisposition(disposition, fallback) {
+        const encoded = /filename\*=UTF-8''([^;]+)/i.exec(String(disposition || ''));
+        const quoted = /filename="([^"]+)"/i.exec(String(disposition || ''));
+        const plain = /filename=([^;]+)/i.exec(String(disposition || ''));
+        let filename = fallback;
         try {
-            const response = await fetch(`${API_ROOT}/jobs/${encodeURIComponent(pcapState.jobId)}/csv`, {
+            if (encoded) filename = decodeURIComponent(encoded[1].trim());
+            else if (quoted) filename = quoted[1];
+            else if (plain) filename = plain[1].trim();
+        } catch {}
+        return String(filename || fallback).split(/[\\/]/).pop();
+    }
+
+    function setPcapExportStatus(message, isError = false) {
+        const status = element('pcapExportStatus');
+        status.textContent = message;
+        status.style.color = isError ? 'var(--danger-text)' : 'var(--gray)';
+    }
+
+    async function downloadPcapCsv(scope) {
+        const config = EXPORT_SCOPES[scope];
+        const jobId = pcapState.jobId;
+        if (!jobId || !config || !pcapState.completedJob) return;
+        updateExportButtons(dashboardFromJob(pcapState.completedJob), scope);
+        try {
+            const params = new URLSearchParams({ scope });
+            const response = await fetch(`${API_ROOT}/jobs/${encodeURIComponent(jobId)}/csv?${params}`, {
                 credentials: 'same-origin',
                 cache: 'no-store'
             });
@@ -485,14 +761,19 @@
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = 'datafeed-analysis.csv';
+            link.download = filenameFromDisposition(response.headers?.get('content-disposition'), config.fallbackFilename);
             link.rel = 'noopener';
             document.body.appendChild(link);
             link.click();
             link.remove();
             URL.revokeObjectURL(url);
+            setPcapExportStatus(`Exported ${link.download}.`);
         } catch (error) {
-            handlePcapError(error);
+            setPcapExportStatus(error?.message || 'CSV export failed.', true);
+        } finally {
+            if (jobId === pcapState.jobId && pcapState.completedJob) {
+                updateExportButtons(dashboardFromJob(pcapState.completedJob));
+            }
         }
     }
 
@@ -507,16 +788,35 @@
         element('pcapCancelButton').addEventListener('click', () => {
             cancelPcapAnalysis().catch(handlePcapError);
         });
-        element('pcapFindingFilter').addEventListener('change', () => {
-            loadPcapResults(0).catch(handlePcapError);
+        document.querySelectorAll('[data-pcap-chart-mode]').forEach(button => {
+            button.addEventListener('click', () => {
+                pcapState.topConversationMode = button.dataset.pcapChartMode === 'sequence_gap'
+                    ? 'sequence_gap'
+                    : 'reverse';
+                if (pcapState.completedJob) {
+                    renderTopConversationsChart(
+                        pcapState.completedJob,
+                        dashboardFromJob(pcapState.completedJob)
+                    );
+                }
+            });
         });
-        element('pcapPreviousPage').addEventListener('click', () => {
-            loadPcapResults(Math.max(0, pcapState.resultOffset - RESULT_PAGE_LIMIT)).catch(handlePcapError);
+        Object.entries(EXPORT_SCOPES).forEach(([scope, config]) => {
+            element(config.buttonId).addEventListener('click', () => downloadPcapCsv(scope));
         });
-        element('pcapNextPage').addEventListener('click', () => {
-            loadPcapResults(pcapState.resultOffset + RESULT_PAGE_LIMIT).catch(handlePcapError);
+        window.addEventListener?.('resize', () => {
+            if (!pcapState.active || !pcapState.completedJob) return;
+            if (pcapState.resizeTimer !== null) clearTimeout(pcapState.resizeTimer);
+            pcapState.resizeTimer = setTimeout(() => {
+                pcapState.resizeTimer = null;
+                if (pcapState.active && pcapState.completedJob) {
+                    renderTopConversationsChart(
+                        pcapState.completedJob,
+                        dashboardFromJob(pcapState.completedJob)
+                    );
+                }
+            }, 150);
         });
-        element('pcapDownloadCsv').addEventListener('click', downloadPcapCsv);
         setMode('upload');
         pcapState.initialized = true;
     }
@@ -534,6 +834,8 @@
             pcapState.active = true;
             if (pcapState.jobId && !TERMINAL_STATES.has(pcapState.jobState)) {
                 schedulePcapPoll(pcapState.jobId);
+            } else if (pcapState.completedJob) {
+                renderPcapDashboard(pcapState.completedJob);
             }
         },
         cancel() {
@@ -542,6 +844,7 @@
         deactivate() {
             pcapState.active = false;
             stopPcapPolling();
+            destroyPcapCharts();
         }
     });
 })();

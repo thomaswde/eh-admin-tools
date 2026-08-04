@@ -147,6 +147,9 @@ def test_record_truncation_is_first_class_and_declared_extent_avoids_false_gap()
     assert flow.captured_bytes == 64 + len(second)
     assert flow.original_bytes == len(full_first) + len(second)
     assert flow.sequence_gap_observations == 0
+    assert result.summary.affected_flow_count == 1
+    assert result.summary.truncated_flow_count == 1
+    assert result.summary.sequence_gap_flow_count == 0
 
 
 def test_uniform_small_record_slicing_is_warned_with_safe_minimum_sample():
@@ -189,6 +192,9 @@ def test_uncovered_sequence_range_is_labeled_as_observation_and_findings_are_bou
 
     assert result.flows[0].sequence_gap_observations == 2
     assert result.flows[0].sequence_gap_bytes == 20
+    assert result.summary.affected_flow_count == 1
+    assert result.summary.sequence_gap_flow_count == 1
+    assert result.summary.sequence_gap_bytes == 20
     assert len(result.findings) == 1
     assert result.summary.findings_omitted == 1
     assert "does not by itself prove network loss" in result.findings[0].message
@@ -236,6 +242,8 @@ def test_sequence_wraparound_is_merged_without_a_false_gap():
 def test_empty_capture_and_explicit_packet_counters():
     empty = analyze_pcaps([_pcap()])
     assert empty.summary.records_seen == 0
+    assert empty.summary.capture_first_timestamp is None
+    assert empty.summary.capture_last_timestamp is None
     assert empty.flows == ()
 
     arp = _ethernet(b"\x00" * 28, 0x0806)
@@ -245,6 +253,16 @@ def test_empty_capture_and_explicit_packet_counters():
     assert counted.summary.unsupported_packets == 1
     assert counted.summary.parse_errors == 1
     assert counted.summary.tcp_packets == 0
+
+
+def test_capture_bounds_use_every_record_across_input_files():
+    arp = _ethernet(b"\x00" * 28, 0x0806)
+    result = analyze_pcaps([_pcap([arp, _ipv4_tcp()]), _pcap([_ipv6_tcp()])])
+
+    assert result.summary.capture_first_timestamp == pytest.approx(1.0001)
+    assert result.summary.capture_last_timestamp == pytest.approx(2.0002)
+    assert result.summary.affected_flow_count == 2
+    assert result.summary.reverse_not_observed_flows == 2
 
 
 def test_pcapng_unsupported_link_type_and_corrupt_pcap_fail_clearly():

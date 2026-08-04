@@ -21,6 +21,7 @@ class ModuleLoader {
         this.moduleDependencies = {
             'nodemap': ['appliance-management.js'],
             'crs-usage': ['system-health-collection.js'],
+            'pcap-analyzer': ['chart-theme.js'],
             'system-health': [
                 'chart-theme.js',
                 'system-health-collection.js',

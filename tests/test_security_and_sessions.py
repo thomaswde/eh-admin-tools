@@ -148,6 +148,50 @@ class SessionStoreTests(unittest.TestCase):
         with patch("backend.session_store.time.monotonic", return_value=161.0):
             self.assertIsNone(store.get(session_id))
 
+    def test_sync_remove_callback_is_supported(self):
+        removed_session_ids = []
+        store = SessionStore(
+            ttl_seconds=60,
+            max_sessions=2,
+            remove_callback=removed_session_ids.append,
+        )
+        session_id = store.create(object())
+
+        store.delete(session_id)
+
+        self.assertEqual(removed_session_ids, [session_id])
+
+
+class SessionStoreRemovalCallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_remove_callback_receives_replaced_evicted_deleted_and_closed_ids(self):
+        callback = AsyncMock()
+        store = SessionStore(ttl_seconds=60, max_sessions=1)
+        store.set_remove_callback(callback)
+
+        replaced_id = await store.acreate(object())
+        replacement_id = await store.acreate(object(), replace_session_id=replaced_id)
+        evicting_id = await store.acreate(object())
+        await store.adelete(evicting_id)
+        closed_id = await store.acreate(object())
+        await store.aclose()
+
+        self.assertEqual(
+            [call.args[0] for call in callback.await_args_list],
+            [replaced_id, replacement_id, evicting_id, closed_id],
+        )
+
+    async def test_ttl_prune_schedules_async_remove_callback_with_expired_id(self):
+        callback = AsyncMock()
+        store = SessionStore(ttl_seconds=60, max_sessions=2, remove_callback=callback)
+        with patch("backend.session_store.time.monotonic", return_value=100.0):
+            expired_id = await store.acreate(object())
+
+        with patch("backend.session_store.time.monotonic", return_value=161.0):
+            self.assertIsNone(store.get(expired_id))
+        await store.wait_for_pending_closes()
+
+        callback.assert_awaited_once_with(expired_id)
+
 
 class BackendRouteSecurityTests(unittest.TestCase):
     def setUp(self):

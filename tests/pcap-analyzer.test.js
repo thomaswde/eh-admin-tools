@@ -61,8 +61,64 @@ function jsonResponse(body, status = 200) {
     return {
         ok: status >= 200 && status < 300,
         status,
+        headers: { get() { return null; } },
         async json() { return body; },
         async blob() { return body; }
+    };
+}
+
+function csvResponse(body, filename) {
+    return {
+        ok: true,
+        status: 200,
+        headers: {
+            get(name) {
+                return name.toLowerCase() === 'content-disposition'
+                    ? `attachment; filename="${filename}"`
+                    : null;
+            }
+        },
+        async blob() { return body; }
+    };
+}
+
+function resultRow(index = 1, overrides = {}) {
+    return {
+        flowKey: `10.0.0.${index}:1000 -> 10.0.1.${index}:443/tcp`,
+        sourceAddress: `10.0.0.${index}`,
+        sourcePort: 1000 + index,
+        destinationAddress: `10.0.1.${index}`,
+        destinationPort: 443,
+        packetCount: 100 - index,
+        capturedBytes: 1000 - index,
+        firstTimestamp: 1_722_000_000 + index,
+        lastTimestamp: 1_722_000_100 + index,
+        connectionEpochs: 1,
+        sequenceGapObservations: 2,
+        sequenceGapBytes: 200 - index,
+        findingKinds: ['reverse_not_observed'],
+        ...overrides
+    };
+}
+
+function dashboard(overrides = {}) {
+    return {
+        schemaVersion: 1,
+        findingCounts: {
+            affectedFlows: 2,
+            reverseNotObservedFlows: 1,
+            sequenceGapFlows: 1,
+            sequenceGapObservations: 2,
+            sequenceGapBytes: 199,
+            truncatedFlows: 0
+        },
+        topReverse: [resultRow(1)],
+        topSequenceGaps: [resultRow(1, { findingKinds: ['sequence_gap'] })],
+        enrichment: {
+            status: 'complete', addressesConsidered: 4, addressesMatched: 1,
+            addressesAmbiguous: 0, addressesOmitted: 0, timeConstrained: true
+        },
+        ...overrides
     };
 }
 
@@ -71,9 +127,14 @@ function createHarness(responses = []) {
         'pcapUploadFields', 'pcapCollectFields', 'pcapStartButton', 'pcapCancelButton',
         'pcapFileInput', 'pcapLookbackMinutes', 'pcapWindowSeconds', 'pcapStatusCard',
         'pcapProgressBar', 'pcapWarnings', 'pcapStateBadge', 'pcapStatusText',
-        'pcapResults', 'pcapDownloadCsv', 'pcapSummary', 'pcapFindingFilter',
-        'pcapResultsBody', 'pcapResultsEmpty', 'pcapResultsTable', 'pcapPager',
-        'pcapPagerInfo', 'pcapPreviousPage', 'pcapNextPage'
+        'pcapResults', 'pcapSummary', 'pcapEnrichmentStatus', 'pcapExportStatus',
+        'pcapDownloadAllFindingsCsv', 'pcapDownloadReverseCsv', 'pcapDownloadSequenceGapCsv',
+        'pcapFindingCountsHeading', 'pcapFindingCountsDescription', 'pcapFindingCountsEmpty',
+        'pcapFindingCountsChartFrame', 'pcapFindingCountsChart',
+        'pcapTopConversationsHeading', 'pcapTopConversationsDescription',
+        'pcapTopConversationsEmpty', 'pcapTopConversationsChartFrame', 'pcapTopConversationsChart',
+        'pcapReverseResultsBody', 'pcapReverseResultsEmpty', 'pcapReverseResultsTable',
+        'pcapSequenceGapResultsBody', 'pcapSequenceGapResultsEmpty', 'pcapSequenceGapResultsTable'
     ];
     const elements = Object.fromEntries(ids.map(id => [id, fakeElement(id)]));
     const progressTrack = fakeElement('progress');
@@ -86,8 +147,13 @@ function createHarness(responses = []) {
     const modeButtons = [fakeElement('local', 'button'), fakeElement('connected', 'button')];
     modeButtons[0].dataset.pcapMode = 'upload';
     modeButtons[1].dataset.pcapMode = 'collect';
+    const chartModeButtons = [fakeElement('reverse', 'button'), fakeElement('sequence', 'button')];
+    chartModeButtons[0].dataset.pcapChartMode = 'reverse';
+    chartModeButtons[1].dataset.pcapChartMode = 'sequence_gap';
 
     const calls = [];
+    const charts = [];
+    const anchors = [];
     const timers = new Map();
     let timerId = 0;
     let definition;
@@ -108,7 +174,25 @@ function createHarness(responses = []) {
         },
         AbortController,
         encodeURIComponent,
-        window: {},
+        window: {
+            innerWidth: 1200,
+            addEventListener() {},
+            chartThemeResolvedColors() {
+                return {
+                    bg: '#fff', text: '#111', muted: '#666', grid: '#ddd',
+                    low: '#00a', mid: '#fa0', high: '#e00'
+                };
+            }
+        },
+        Chart: class FakeChart {
+            constructor(target, config) {
+                this.target = target;
+                this.config = config;
+                this.destroyed = false;
+                charts.push(this);
+            }
+            destroy() { this.destroyed = true; }
+        },
         setTimeout(callback) {
             timerId += 1;
             timers.set(timerId, callback);
@@ -119,10 +203,18 @@ function createHarness(responses = []) {
             body: fakeElement('body', 'body'),
             getElementById(id) { return elements[id] || null; },
             querySelectorAll(selector) {
-                assert.equal(selector, '[data-pcap-mode]');
-                return modeButtons;
+                if (selector === '[data-pcap-mode]') return modeButtons;
+                if (selector === '[data-pcap-chart-mode]') return chartModeButtons;
+                assert.fail(`Unexpected selector: ${selector}`);
             },
-            createElement(tagName) { return fakeElement('', tagName); }
+            createElement(tagName) {
+                const node = fakeElement('', tagName);
+                if (String(tagName).toLowerCase() === 'a') {
+                    node.click = () => { node.clicked = true; };
+                    anchors.push(node);
+                }
+                return node;
+            }
         },
         async fetch(url, options = {}) {
             calls.push({ url, options });
@@ -138,12 +230,17 @@ function createHarness(responses = []) {
         }
     });
     vm.runInContext(source, context, { filename: 'pcap-analyzer.js' });
-    return { context, definition, elements, modeButtons, calls, timers, progressTrack };
+    return {
+        context, definition, elements, modeButtons, chartModeButtons, calls, charts,
+        anchors, timers, progressTrack
+    };
 }
 
 test('presents the feature as Datafeed Analysis', () => {
     assert.match(html, /data-module="pcap-analyzer"[\s\S]*?<span class="nav-title">Datafeed Analysis<\/span>/);
     assert.match(html, /id="pcap-analyzerModule"[\s\S]*?<h1 class="page-title">Datafeed Analysis<\/h1>/);
+    assert.doesNotMatch(html, /id="pcapFindingFilter"|id="pcapPager"/);
+    assert.match(html, /id="pcapFindingCountsDescription"[\s\S]*?more than one category/);
 });
 
 test('registers Datafeed Analysis and uploads the selected File as the raw request body', async () => {
@@ -155,20 +252,9 @@ test('registers Datafeed Analysis and uploads the selected File as the raw reque
             state: 'completed',
             completeness: 'complete',
             progress: 100,
-            summary: { packet_count: 12, flow_count: 2, finding_count: 1 },
+            summary: { packetCount: 12, flowCount: 2 },
+            dashboard: dashboard(),
             warnings: []
-        }),
-        jsonResponse({
-            items: [{
-                findingKinds: ['reverse_not_observed'],
-                source: { ip: '10.0.0.1', port: 12345 },
-                destination: { ip: '10.0.0.2', port: 443 },
-                packets: 12,
-                detail: 'Only one direction was present in the capture.'
-            }],
-            total: 1,
-            offset: 0,
-            limit: 100
         })
     ]);
     harness.elements.pcapFileInput.files = [file];
@@ -183,11 +269,161 @@ test('registers Datafeed Analysis and uploads the selected File as the raw reque
     assert.equal(harness.calls[0].options.headers['Content-Type'], 'application/vnd.tcpdump.pcap');
     assert.equal(harness.elements.pcapStateBadge.textContent, 'Completed');
     assert.equal(harness.elements.pcapResults.hidden, false);
-    assert.equal(harness.elements.pcapResultsBody.children.length, 1);
+    assert.equal(harness.calls.length, 2);
+    assert.equal(harness.elements.pcapReverseResultsBody.children.length, 1);
+    assert.equal(harness.elements.pcapSequenceGapResultsBody.children.length, 1);
     assert.equal(
-        harness.elements.pcapResultsBody.children[0].children[0].textContent,
-        'Reverse direction not observed'
+        harness.elements.pcapReverseResultsBody.children[0].children[0].children[0].textContent,
+        '10.0.0.1:1001'
     );
+    assert.deepEqual(Array.from(harness.charts[0].config.data.datasets[0].data), [1, 1, 0]);
+});
+
+test('renders at most 25 canonical rows with IP primary and useful device name secondary', async () => {
+    const reverseRows = Array.from({ length: 30 }, (_, index) => resultRow(index + 1));
+    reverseRows[0].sourceDevice = { displayName: 'web-prod-07', matchStatus: 'unique', matchCount: 1 };
+    reverseRows[0].destinationDevice = { matchStatus: 'ambiguous', matchCount: 2 };
+    const harness = createHarness([
+        jsonResponse({ id: 'job-top', state: 'queued' }, 202),
+        jsonResponse({
+            id: 'job-top', state: 'completed', completeness: 'complete', progress: 100,
+            summary: { packetCount: 500, flowCount: 30 },
+            dashboard: dashboard({
+                findingCounts: {
+                    affectedFlows: 30, reverseNotObservedFlows: 30, sequenceGapFlows: 1,
+                    sequenceGapObservations: 2, sequenceGapBytes: 199, truncatedFlows: 0
+                },
+                topReverse: reverseRows
+            })
+        })
+    ]);
+    harness.definition.initialize();
+    await harness.definition.activate();
+    harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
+
+    await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
+
+    assert.equal(harness.elements.pcapReverseResultsBody.children.length, 25);
+    const sourceCell = harness.elements.pcapReverseResultsBody.children[0].children[0];
+    const destinationCell = harness.elements.pcapReverseResultsBody.children[0].children[1];
+    assert.equal(sourceCell.children[0].textContent, '10.0.0.1:1001');
+    assert.equal(sourceCell.children[1].textContent, 'web-prod-07');
+    assert.equal(destinationCell.children[0].textContent, '10.0.1.1:443');
+    assert.equal(destinationCell.children.length, 1);
+    assert.equal(harness.charts[1].config.data.labels.length, 15);
+});
+
+test('top conversation control changes metric, copy, tooltip data, and chart rows together', async () => {
+    const harness = createHarness([
+        jsonResponse({ id: 'job-mode', state: 'queued' }, 202),
+        jsonResponse({
+            id: 'job-mode', state: 'completed', completeness: 'partial', progress: 100,
+            summary: { packetCount: 12, flowCount: 2 }, dashboard: dashboard()
+        })
+    ]);
+    harness.definition.initialize();
+    await harness.definition.activate();
+    harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
+    await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
+    const reverseChart = harness.charts[1];
+
+    harness.chartModeButtons[1].click();
+
+    const sequenceChart = harness.charts[2];
+    assert.equal(reverseChart.destroyed, true);
+    assert.match(harness.elements.pcapTopConversationsHeading.textContent, /Sequence gaps/);
+    assert.match(harness.elements.pcapTopConversationsDescription.textContent, /incomplete/i);
+    assert.equal(sequenceChart.config.data.datasets[0].label, 'Observed gap bytes');
+    assert.equal(sequenceChart.config.data.datasets[0].data[0], 199);
+    assert.match(
+        sequenceChart.config.options.plugins.tooltip.callbacks.label({ dataIndex: 0 }),
+        /199 observed gap bytes.*2 gaps/
+    );
+    assert.equal(harness.chartModeButtons[1].attributes['aria-pressed'], 'true');
+});
+
+test('empty states and export availability are independent by finding category', async () => {
+    const harness = createHarness([
+        jsonResponse({ id: 'job-empty', state: 'queued' }, 202),
+        jsonResponse({
+            id: 'job-empty', state: 'completed', completeness: 'complete', progress: 100,
+            summary: { packetCount: 12, flowCount: 1 },
+            dashboard: dashboard({
+                findingCounts: {
+                    affectedFlows: 1, reverseNotObservedFlows: 0, sequenceGapFlows: 1,
+                    sequenceGapObservations: 2, sequenceGapBytes: 199, truncatedFlows: 0
+                },
+                topReverse: []
+            })
+        })
+    ]);
+    harness.definition.initialize();
+    await harness.definition.activate();
+    harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
+    await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
+
+    assert.equal(harness.elements.pcapReverseResultsEmpty.hidden, false);
+    assert.equal(harness.elements.pcapSequenceGapResultsEmpty.hidden, true);
+    assert.equal(harness.elements.pcapDownloadAllFindingsCsv.disabled, false);
+    assert.equal(harness.elements.pcapDownloadReverseCsv.disabled, true);
+    assert.equal(harness.elements.pcapDownloadSequenceGapCsv.disabled, false);
+    assert.equal(harness.elements.pcapTopConversationsEmpty.hidden, false);
+
+    harness.chartModeButtons[1].click();
+    assert.equal(harness.elements.pcapTopConversationsEmpty.hidden, true);
+});
+
+test('scoped CSV controls use server filenames and never export visible top rows locally', async () => {
+    const harness = createHarness([
+        jsonResponse({ id: 'job-export', state: 'queued' }, 202),
+        jsonResponse({
+            id: 'job-export', state: 'completed', completeness: 'complete', progress: 100,
+            summary: { packetCount: 12, flowCount: 2 }, dashboard: dashboard()
+        }),
+        csvResponse('all', 'datafeed-analysis-all-findings-job-export.csv'),
+        csvResponse('reverse', 'datafeed-analysis-reverse-direction-job-export.csv'),
+        csvResponse('sequence', 'datafeed-analysis-sequence-gaps-job-export.csv')
+    ]);
+    harness.definition.initialize();
+    await harness.definition.activate();
+    harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
+    await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
+
+    await harness.elements.pcapDownloadAllFindingsCsv.dispatch('click');
+    await harness.elements.pcapDownloadReverseCsv.dispatch('click');
+    await harness.elements.pcapDownloadSequenceGapCsv.dispatch('click');
+
+    assert.deepEqual(harness.calls.slice(2).map(call => call.url), [
+        '/backend/pcap-analyzer/jobs/job-export/csv?scope=all_findings',
+        '/backend/pcap-analyzer/jobs/job-export/csv?scope=reverse_not_observed',
+        '/backend/pcap-analyzer/jobs/job-export/csv?scope=sequence_gap'
+    ]);
+    assert.deepEqual(harness.anchors.map(anchor => anchor.download), [
+        'datafeed-analysis-all-findings-job-export.csv',
+        'datafeed-analysis-reverse-direction-job-export.csv',
+        'datafeed-analysis-sequence-gaps-job-export.csv'
+    ]);
+    assert.match(harness.elements.pcapExportStatus.textContent, /sequence-gaps-job-export\.csv/);
+});
+
+test('chart instances are destroyed on deactivation and recreated on activation', async () => {
+    const harness = createHarness([
+        jsonResponse({ id: 'job-life', state: 'queued' }, 202),
+        jsonResponse({
+            id: 'job-life', state: 'completed', completeness: 'complete', progress: 100,
+            summary: { packetCount: 12, flowCount: 2 }, dashboard: dashboard()
+        })
+    ]);
+    harness.definition.initialize();
+    await harness.definition.activate();
+    harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
+    await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
+    const initialCharts = harness.charts.slice();
+
+    await harness.definition.deactivate();
+    assert.equal(initialCharts.every(chart => chart.destroyed), true);
+    await harness.definition.activate();
+    assert.equal(harness.charts.length, initialCharts.length + 2);
 });
 
 test('connected collection computes one absolute window and sends the same bounds together', async () => {
@@ -231,6 +467,9 @@ test('renders an explicit warning when uniform packet slicing is suspected', asy
     assert.equal(harness.elements.pcapWarnings.children.length, 1);
     assert.match(harness.elements.pcapWarnings.children[0].textContent, /suspiciously uniform captured length/i);
     assert.match(harness.elements.pcapStatusText.textContent, /Indeterminate result/);
+    assert.equal(harness.elements.pcapFindingCountsEmpty.hidden, false);
+    assert.match(harness.elements.pcapFindingCountsEmpty.textContent, /available capture/i);
+    assert.equal(harness.elements.pcapDownloadAllFindingsCsv.disabled, true);
 });
 
 test('cancel stops polling and asks the backend to cancel a nonterminal job', async () => {
