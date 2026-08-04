@@ -122,7 +122,7 @@ function dashboard(overrides = {}) {
     };
 }
 
-function createHarness(responses = []) {
+function createHarness(responses = [], options = {}) {
     const ids = [
         'pcapUploadFields', 'pcapCollectFields', 'pcapStartButton', 'pcapCancelButton',
         'pcapFileInput', 'pcapLookbackMinutes', 'pcapWindowSeconds', 'pcapStatusCard',
@@ -160,6 +160,16 @@ function createHarness(responses = []) {
     class FixedDate extends Date {
         static now() { return Date.parse('2026-08-03T15:00:00.000Z'); }
     }
+    const window = {
+        innerWidth: 1200,
+        addEventListener() {}
+    };
+    if (options.withChartTheme !== false) {
+        window.chartThemeResolvedColors = () => ({
+            bg: '#fff', text: '#111', muted: '#666', grid: '#ddd',
+            low: '#00a', mid: '#fa0', high: '#e00'
+        });
+    }
     const context = vm.createContext({
         console: { log() {}, warn() {}, error() {} },
         Date: FixedDate,
@@ -174,15 +184,15 @@ function createHarness(responses = []) {
         },
         AbortController,
         encodeURIComponent,
-        window: {
-            innerWidth: 1200,
-            addEventListener() {},
-            chartThemeResolvedColors() {
-                return {
-                    bg: '#fff', text: '#111', muted: '#666', grid: '#ddd',
-                    low: '#00a', mid: '#fa0', high: '#e00'
-                };
-            }
+        window,
+        getComputedStyle() {
+            const colors = {
+                '--raised': '#1e1d27',
+                '--ink': '#ececf2',
+                '--gray': '#9b9ba6',
+                '--hairline': '#2e2d3a'
+            };
+            return { getPropertyValue(property) { return colors[property] || ''; } };
         },
         Chart: class FakeChart {
             constructor(target, config) {
@@ -201,6 +211,7 @@ function createHarness(responses = []) {
         clearTimeout(id) { timers.delete(id); },
         document: {
             body: fakeElement('body', 'body'),
+            documentElement: fakeElement('html', 'html'),
             getElementById(id) { return elements[id] || null; },
             querySelectorAll(selector) {
                 if (selector === '[data-pcap-mode]') return modeButtons;
@@ -277,6 +288,27 @@ test('registers Datafeed Analysis and uploads the selected File as the raw reque
         '10.0.0.1:1001'
     );
     assert.deepEqual(Array.from(harness.charts[0].config.data.datasets[0].data), [1, 1, 0]);
+});
+
+test('renders completed analysis with app CSS colors when the chart theme export is unavailable', async () => {
+    const harness = createHarness([
+        jsonResponse({ id: 'job-theme-fallback', state: 'queued' }, 202),
+        jsonResponse({
+            id: 'job-theme-fallback', state: 'completed', completeness: 'complete', progress: 100,
+            summary: { packetCount: 12, flowCount: 2 }, dashboard: dashboard()
+        })
+    ], { withChartTheme: false });
+    harness.definition.initialize();
+    await harness.definition.activate();
+    harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
+
+    await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
+
+    assert.equal(harness.elements.pcapStateBadge.textContent, 'Completed');
+    assert.equal(harness.charts.length, 2);
+    assert.equal(harness.charts[0].config.options.scales.y.ticks.color, '#ececf2');
+    assert.equal(harness.charts[0].config.options.scales.x.grid.color, '#2e2d3a');
+    assert.equal(harness.charts[1].config.data.datasets[0].backgroundColor, '#00aaef');
 });
 
 test('renders at most 25 canonical rows with IP primary and useful device name secondary', async () => {

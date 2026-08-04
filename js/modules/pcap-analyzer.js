@@ -366,10 +366,30 @@
     }
 
     function chartColors() {
-        if (typeof window.chartThemeResolvedColors !== 'function') {
-            throw new Error('Chart theme dependency did not expose its resolved palette.');
+        if (typeof window.chartThemeResolvedColors === 'function') {
+            return window.chartThemeResolvedColors();
         }
-        return window.chartThemeResolvedColors();
+
+        // The theme module is loaded independently from this feature. If its
+        // browser export is unavailable, keep the completed analysis usable
+        // and resolve the app's active light/dark colors from CSS instead.
+        const styles = typeof getComputedStyle === 'function'
+            ? getComputedStyle(document.documentElement)
+            : null;
+        const cssColor = (property, fallback) => {
+            const value = styles?.getPropertyValue(property)?.trim();
+            return value || fallback;
+        };
+        return {
+            bg: cssColor('--raised', '#ffffff'),
+            text: cssColor('--ink', '#16151f'),
+            muted: cssColor('--gray', '#6a6970'),
+            grid: cssColor('--hairline', '#dadadb'),
+            low: '#00aaef',
+            mid: '#f59e0b',
+            high: '#ef4444',
+            transparent: false
+        };
     }
 
     function destroyPcapChart(name) {
