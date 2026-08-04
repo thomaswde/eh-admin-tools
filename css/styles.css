@@ -536,6 +536,21 @@ a { color: var(--cyan); }
     background-color: transparent;
 }
 
+.module-btn:disabled {
+    opacity: 1;
+    color: var(--gray);
+}
+
+.module-btn:disabled .nav-icon,
+.module-btn:disabled .nav-title {
+    opacity: .55;
+}
+
+.module-btn:disabled .module-capability-reason {
+    max-width: 180px;
+    color: var(--text-muted);
+}
+
 .nav-icon {
     flex: 0 0 auto;
     margin-top: 2px;

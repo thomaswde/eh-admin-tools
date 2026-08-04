@@ -1,8 +1,16 @@
 # Offline Capabilities Implementation Plan
 
-Status: proposed implementation plan
+Status: implemented
 
 Scope: make Datafeed Analysis and the import-driven parts of System Health available without an authenticated ExtraHop connection while keeping upstream API operations explicitly disabled.
+
+Implementation decisions: app bootstrap always ensures a bounded workspace; connecting and
+disconnecting attach or detach the optional client without changing the workspace identifier;
+supported local modules and completed reports remain visible across disconnect; terminal upstream
+authentication failures detach only the client; System Health imports are limited to 5 MiB, 1,000
+sensor rows, canonical schema columns, 128 KiB cells, and bounded embedded JSON. Automated fixture
+coverage verifies these contracts; live ExtraHop topology checks remain subject to the integration
+limits documented in `docs/architecture.md`.
 
 ## 1. Desired outcome
 

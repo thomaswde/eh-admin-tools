@@ -132,9 +132,11 @@ class ModuleLoader {
     }
 
     async switchToModule(moduleName) {
-        const deploymentType = window.state?.apiConfig?.type;
-        if (!deploymentSupportsModule(deploymentType, moduleName)) {
-            console.warn(`Module '${moduleName}' is unavailable for deployment type '${deploymentType || 'unknown'}'`);
+        const runtimeContext = typeof runtimeContextForState === 'function'
+            ? runtimeContextForState(window.state)
+            : window.state?.apiConfig?.type || 'offline';
+        if (!deploymentSupportsModule(runtimeContext, moduleName)) {
+            console.warn(`Module '${moduleName}' is unavailable in runtime context '${runtimeContext}'`);
             return false;
         }
 

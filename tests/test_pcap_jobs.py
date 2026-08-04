@@ -501,6 +501,31 @@ async def _test_cancel_owner_discards_completed_job_metadata(tmp_path):
         await manager.shutdown()
 
 
+def test_disconnect_cancels_only_connection_bound_jobs(tmp_path):
+    asyncio.run(_test_disconnect_cancels_only_connection_bound_jobs(tmp_path))
+
+
+async def _test_disconnect_cancels_only_connection_bound_jobs(tmp_path):
+    manager = PcapJobManager(tmp_path / ".runtime" / "pcap", settings=settings())
+    await manager.startup()
+    try:
+        local_job = await manager._new_job("owner", "upload")
+        connected_job = await manager._new_job("owner", "extrahop")
+        local_job.task = asyncio.create_task(asyncio.sleep(60))
+        connected_job.task = asyncio.create_task(asyncio.sleep(60))
+
+        await manager.cancel_owner_collections("owner")
+
+        assert not local_job.cancel_event.is_set()
+        assert local_job.task is not None and not local_job.task.done()
+        assert connected_job.cancel_event.is_set()
+        assert connected_job.task is not None and connected_job.task.cancelled()
+        assert local_job.id in manager._jobs
+        assert connected_job.id in manager._jobs
+    finally:
+        await manager.shutdown()
+
+
 def test_session_removal_callback_discards_owned_job_metadata(tmp_path):
     asyncio.run(_test_session_removal_callback_discards_owned_job_metadata(tmp_path))
 
@@ -634,7 +659,7 @@ def test_csv_route_rejects_unknown_scope():
     main.sessions = SessionStore(ttl_seconds=60, max_sessions=2)
     try:
         with TestClient(main.app, base_url="http://127.0.0.1") as client:
-            session_id = main.sessions.create(object())
+            session_id = main.sessions.ensure()
             client.cookies.set(main.SESSION_COOKIE, session_id)
             response = client.get("/backend/pcap-analyzer/jobs/not-used/csv?scope=everything")
         assert response.status_code == 422
@@ -669,8 +694,10 @@ def test_upload_route_runs_job_and_exposes_bounded_results_and_csv():
     main.sessions = SessionStore(ttl_seconds=60, max_sessions=2)
     try:
         with TestClient(main.app, base_url="http://127.0.0.1") as client:
-            session_id = main.sessions.create(object())
-            client.cookies.set(main.SESSION_COOKIE, session_id)
+            bootstrap = client.get("/backend/session")
+            assert bootstrap.status_code == 200
+            assert bootstrap.json()["connected"] is False
+            session_id = client.cookies.get(main.SESSION_COOKIE)
             response = client.post(
                 "/backend/pcap-analyzer/upload",
                 content=pcap_bytes([tcp_packet()]),
@@ -694,5 +721,39 @@ def test_upload_route_runs_job_and_exposes_bounded_results_and_csv():
             assert exported.status_code == 200
             assert exported.headers["content-type"].startswith("text/csv")
             assert "192.0.2.1" in exported.text
+
+            disconnected = client.delete("/backend/session")
+            assert disconnected.status_code == 200
+            assert client.cookies.get(main.SESSION_COOKIE) == session_id
+            preserved = client.get(f"/backend/pcap-analyzer/jobs/{job_id}/results?limit=1")
+            assert preserved.status_code == 200
+
+            with TestClient(main.app, base_url="http://127.0.0.1") as other_client:
+                other_client.get("/backend/session")
+                cross_workspace = other_client.get(
+                    f"/backend/pcap-analyzer/jobs/{job_id}"
+                )
+            assert cross_workspace.status_code == 404
+    finally:
+        main.sessions = original_sessions
+
+
+def test_offline_collection_route_rejects_before_upstream_transport():
+    original_sessions = main.sessions
+    main.sessions = SessionStore(ttl_seconds=60, max_sessions=2)
+    try:
+        with TestClient(main.app, base_url="http://127.0.0.1") as client:
+            client.get("/backend/session")
+            response = client.post(
+                "/backend/pcap-analyzer/collect",
+                json={
+                    "fromMs": 1_785_000_000_000,
+                    "untilMs": 1_785_000_060_000,
+                    "windowSeconds": 60,
+                },
+            )
+
+        assert response.status_code == 401
+        assert response.json()["detail"]["code"] == "extrahop_not_connected"
     finally:
         main.sessions = original_sessions

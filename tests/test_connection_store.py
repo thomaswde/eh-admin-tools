@@ -365,6 +365,11 @@ class ConnectionStoreTests(unittest.TestCase):
         ), patch(
             "backend.connection_store.platform.freedesktop_os_release",
             return_value={"ID": "ubuntu", "ID_LIKE": "debian"},
+        ), patch(
+            "backend.connection_store.shutil.which",
+            side_effect=lambda executable: (
+                "/usr/bin/apt" if executable == "apt" else None
+            ),
         ):
             store = ConnectionStore(
                 Path(directory),
@@ -399,7 +404,6 @@ class ConnectionStoreTests(unittest.TestCase):
                 raised.exception.public_status()["code"],
                 "wsl-secret-service-unavailable",
             )
-
 
 if __name__ == "__main__":
     unittest.main()

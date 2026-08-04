@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import threading
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
@@ -67,6 +68,16 @@ def _is_wsl() -> bool:
 
 
 def _wsl_secret_service_setup_command() -> str:
+    package_manager_commands = (
+        ("apt", "sudo apt install gnome-keyring"),
+        ("dnf", "sudo dnf install gnome-keyring"),
+        ("pacman", "sudo pacman -S gnome-keyring"),
+        ("zypper", "sudo zypper install gnome-keyring"),
+    )
+    for executable, command in package_manager_commands:
+        if shutil.which(executable):
+            return command
+
     try:
         os_release = platform.freedesktop_os_release()
     except OSError:

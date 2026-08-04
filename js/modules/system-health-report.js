@@ -12,6 +12,13 @@ const SYSTEM_HEALTH_OFFLINE_LINE_HEIGHT = 15;
 const SYSTEM_HEALTH_OFFLINE_BOTTOM_PAD = 14;
 
 const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '3';
+const SYSTEM_HEALTH_MAX_CSV_BYTES = 5 * 1024 * 1024;
+const SYSTEM_HEALTH_MAX_CSV_ROWS = 1000;
+const SYSTEM_HEALTH_MAX_CSV_CELL_CHARACTERS = 128 * 1024;
+const SYSTEM_HEALTH_MAX_JSON_CHARACTERS = 64 * 1024;
+const SYSTEM_HEALTH_MAX_JSON_DEPTH = 12;
+const SYSTEM_HEALTH_MAX_JSON_NODES = 10000;
+const SYSTEM_HEALTH_MAX_JSON_STRING_CHARACTERS = 4096;
 const SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS = [
     'schema_version', 'generated_at', 'report_lookback_days', 'report_from_ms', 'report_until_ms',
     'requested_cycle', 'query_cycle', 'capacity_catalog_loaded', 'report_errors_json',
@@ -46,6 +53,7 @@ const systemHealthState = {
     catalogPath: '',
     catalogError: '',
     catalogPromise: null,
+    collecting: false,
     charts: {},
     currentReport: null,
     abortController: null,
@@ -61,6 +69,18 @@ const systemHealthState = {
         packetstoreRow: 0
     }
 };
+
+function systemHealthRuntimeContext() {
+    return typeof runtimeContextForState === 'function'
+        ? runtimeContextForState(window.state)
+        : window.state?.apiConfig?.type || 'offline';
+}
+
+function systemHealthSupportsAction(actionName) {
+    return typeof runtimeSupportsAction === 'function'
+        ? runtimeSupportsAction(systemHealthRuntimeContext(), actionName)
+        : true;
+}
 
 function initSystemHealthModule() {
     if (systemHealthState.initialized) return;
@@ -78,6 +98,10 @@ function initSystemHealthModule() {
 }
 
 async function activateSystemHealthModule() {
+    if (!systemHealthSupportsAction('systemHealth.collect')) {
+        cancelSystemHealthModule();
+    }
+    syncSystemHealthCapabilities();
     await loadSystemHealthCatalog();
 }
 
@@ -123,6 +147,35 @@ function cancelSystemHealthModule() {
     systemHealthState.abortController?.abort(new DOMException('System Health collection cancelled.', 'AbortError'));
 }
 
+function syncSystemHealthCapabilities() {
+    const canCollect = systemHealthSupportsAction('systemHealth.collect');
+    const canImport = systemHealthSupportsAction('systemHealth.import');
+    const runButton = document.getElementById('runSystemHealthReport');
+    const loadButton = document.getElementById('systemHealthLoadCsvButton');
+    const hint = document.getElementById('systemHealthCollectCapabilityHint');
+    if (runButton) {
+        runButton.disabled = systemHealthState.collecting || !canCollect;
+        runButton.title = canCollect ? '' : 'Connect to an ExtraHop deployment to run a live report.';
+        runButton.setAttribute('aria-disabled', String(!canCollect));
+    }
+    if (loadButton) loadButton.disabled = !canImport;
+    if (hint) {
+        hint.hidden = canCollect;
+        hint.textContent = canCollect
+            ? ''
+            : 'Connect to an ExtraHop deployment to poll appliances, devices, and metrics.';
+    }
+    if (
+        !canCollect
+        && systemHealthState.currentReport?.source_type === 'api'
+    ) {
+        setSystemHealthCsvStatus(
+            'The displayed API-collected report is a historical snapshot. Connect to refresh it.'
+        );
+    }
+    updateSystemHealthCsvButtons();
+}
+
 function buildSystemHealthCatalog(models) {
     const catalog = {};
     models.forEach(model => {
@@ -163,6 +216,10 @@ function updateSystemHealthCatalogStatus() {
 }
 
 async function generateSystemHealthReport() {
+    if (!systemHealthSupportsAction('systemHealth.collect')) {
+        setSystemHealthCsvStatus('Connect to an ExtraHop deployment before running a live report.', true);
+        return;
+    }
     if (!window.SystemHealthCollection) {
         throw new Error('System Health collection module did not load.');
     }
@@ -174,6 +231,7 @@ async function generateSystemHealthReport() {
     const loadingText = document.getElementById('systemHealthLoadingText');
     const button = document.getElementById('runSystemHealthReport');
 
+    systemHealthState.collecting = true;
     loading.style.display = 'block';
     results.style.display = 'none';
     button.disabled = true;
@@ -276,8 +334,9 @@ async function generateSystemHealthReport() {
     } finally {
         if (systemHealthState.abortController === abortController) {
             systemHealthState.abortController = null;
+            systemHealthState.collecting = false;
             loading.style.display = 'none';
-            button.disabled = false;
+            syncSystemHealthCapabilities();
         }
     }
 }
@@ -2347,17 +2406,21 @@ function updateSystemHealthCsvButtons() {
     const apiExportButton = document.getElementById('systemHealthExportApiCsvButton');
     const pdfButton = document.getElementById('systemHealthExportPdfButton');
     const pptxButton = document.getElementById('systemHealthExportPptxButton');
-    if (exportButton) exportButton.disabled = !systemHealthState.currentReport;
-    if (tableExportButton) tableExportButton.disabled = !systemHealthState.currentReport;
+    const canExportLocal = systemHealthSupportsAction('systemHealth.exportLocal');
+    const canExportApiRows = systemHealthSupportsAction('systemHealth.exportApiRows');
+    if (exportButton) exportButton.disabled = !systemHealthState.currentReport || !canExportLocal;
+    if (tableExportButton) tableExportButton.disabled = !systemHealthState.currentReport || !canExportLocal;
     if (apiExportButton) {
         const report = systemHealthState.currentReport;
-        apiExportButton.disabled = !report || report.source_type !== 'api';
+        apiExportButton.disabled = !report || report.source_type !== 'api' || !canExportApiRows;
         apiExportButton.title = report && report.source_type !== 'api'
             ? 'Detailed API response rows are not present in a unified summary CSV.'
-            : '';
+            : !canExportApiRows
+                ? 'Connect to an ExtraHop deployment to export detailed API rows.'
+                : '';
     }
-    if (pdfButton) pdfButton.disabled = !systemHealthState.currentReport;
-    if (pptxButton) pptxButton.disabled = !systemHealthState.currentReport;
+    if (pdfButton) pdfButton.disabled = !systemHealthState.currentReport || !canExportLocal;
+    if (pptxButton) pptxButton.disabled = !systemHealthState.currentReport || !canExportLocal;
 }
 
 async function loadSystemHealthCsvFiles(event) {
@@ -2367,7 +2430,11 @@ async function loadSystemHealthCsvFiles(event) {
 
     try {
         if (files.length !== 1) throw new Error('Select one system health summary CSV.');
-        const rows = parseSystemHealthCsv(await files[0].text());
+        if (Number(files[0].size) > SYSTEM_HEALTH_MAX_CSV_BYTES) {
+            throw new Error(`The selected CSV exceeds the ${SYSTEM_HEALTH_MAX_CSV_BYTES.toLocaleString()}-byte limit.`);
+        }
+        const text = await files[0].text();
+        const rows = parseSystemHealthCsv(text);
         const report = buildSystemHealthReportFromUnifiedCsv(rows);
         systemHealthState.currentReport = report;
         resetSystemHealthPages();
@@ -2382,6 +2449,9 @@ async function loadSystemHealthCsvFiles(event) {
 function buildSystemHealthReportFromUnifiedCsv(rows) {
     if (!Array.isArray(rows) || !rows.length) {
         throw new Error('The unified system health CSV does not contain any sensor rows.');
+    }
+    if (rows.length > SYSTEM_HEALTH_MAX_CSV_ROWS) {
+        throw new Error(`The unified system health CSV exceeds the ${SYSTEM_HEALTH_MAX_CSV_ROWS.toLocaleString()}-sensor limit.`);
     }
     const missingColumns = SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS.filter(column => !(column in rows[0]));
     if (missingColumns.length) {
@@ -2398,9 +2468,19 @@ function buildSystemHealthReportFromUnifiedCsv(rows) {
         'requested_cycle', 'query_cycle', 'capacity_catalog_loaded'
     ];
     rows.slice(1).forEach((row, index) => {
-        const changed = reportColumns.find(column => String(row[column] || '') !== String(first[column] || ''));
+        const changed = reportColumns.find(column => String(row[column] ?? '') !== String(first[column] ?? ''));
         if (changed) throw new Error(`Row ${index + 3} has inconsistent ${changed} report metadata.`);
     });
+    const reportFromMs = systemHealthNumber(first.report_from_ms);
+    const reportUntilMs = systemHealthNumber(first.report_until_ms);
+    if (
+        reportFromMs === null
+        || reportUntilMs === null
+        || reportFromMs < 0
+        || reportUntilMs <= reportFromMs
+    ) {
+        throw new Error('The unified system health CSV has an invalid report window.');
+    }
     const appliances = [];
     const deviceAnalysis = {};
     const metrics = {
@@ -2590,13 +2670,15 @@ function systemHealthEmptyImportedMetric(aggregationMode) {
 
 function systemHealthJsonObject(value, column, rowIndex) {
     if (!value) return {};
+    let parsed;
     try {
-        const parsed = JSON.parse(value);
+        parsed = JSON.parse(value);
         if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('not an object');
-        return parsed;
     } catch {
         throw new Error(`Invalid ${column} JSON in row ${rowIndex + 2}.`);
     }
+    validateSystemHealthImportedJson(parsed, column, rowIndex);
+    return parsed;
 }
 
 function systemHealthImportPeak(summary, id, rawValue, rawDuration, rawTimestamp, actualCycle) {
@@ -2621,13 +2703,56 @@ function systemHealthImportTotal(summary, id, rawValue, rawDuration) {
 
 function systemHealthJsonArray(value, column, rowIndex) {
     if (!value) return [];
+    let parsed;
     try {
-        const parsed = JSON.parse(value);
+        parsed = JSON.parse(value);
         if (!Array.isArray(parsed)) throw new Error('not an array');
-        return parsed;
     } catch {
         throw new Error(`Invalid ${column} JSON in row ${rowIndex + 2}.`);
     }
+    validateSystemHealthImportedJson(parsed, column, rowIndex);
+    return parsed;
+}
+
+function validateSystemHealthImportedJson(value, column, rowIndex) {
+    const decoded = JSON.stringify(value);
+    if (decoded.length > SYSTEM_HEALTH_MAX_JSON_CHARACTERS) {
+        throw new Error(
+            `${column} JSON in row ${rowIndex + 2} exceeds the ${SYSTEM_HEALTH_MAX_JSON_CHARACTERS.toLocaleString()}-character decoded limit.`
+        );
+    }
+    let nodes = 0;
+    function visit(item, depth) {
+        nodes += 1;
+        if (nodes > SYSTEM_HEALTH_MAX_JSON_NODES) {
+            throw new Error(`${column} JSON in row ${rowIndex + 2} contains too many values.`);
+        }
+        if (depth > SYSTEM_HEALTH_MAX_JSON_DEPTH) {
+            throw new Error(`${column} JSON in row ${rowIndex + 2} exceeds the maximum nesting depth.`);
+        }
+        if (typeof item === 'string') {
+            if (item.length > SYSTEM_HEALTH_MAX_JSON_STRING_CHARACTERS) {
+                throw new Error(`${column} JSON in row ${rowIndex + 2} contains an oversized string.`);
+            }
+            return;
+        }
+        if (typeof item === 'number' && !Number.isFinite(item)) {
+            throw new Error(`${column} JSON in row ${rowIndex + 2} contains an invalid number.`);
+        }
+        if (Array.isArray(item)) {
+            item.forEach(child => visit(child, depth + 1));
+            return;
+        }
+        if (item && typeof item === 'object') {
+            Object.entries(item).forEach(([key, child]) => {
+                if (key.length > 128) {
+                    throw new Error(`${column} JSON in row ${rowIndex + 2} contains an oversized field name.`);
+                }
+                visit(child, depth + 1);
+            });
+        }
+    }
+    visit(value, 0);
 }
 
 function exportSystemHealthSummaryCsv() {
@@ -3043,7 +3168,50 @@ function systemHealthDeviceAnalysisCsv(report, appliancesById) {
 }
 
 function parseSystemHealthCsv(text) {
-    return CsvUtils.parseObjects(text, { skipEmptyRows: true });
+    const byteLength = systemHealthUtf8ByteLength(text);
+    if (byteLength > SYSTEM_HEALTH_MAX_CSV_BYTES) {
+        throw new Error(`The selected CSV exceeds the ${SYSTEM_HEALTH_MAX_CSV_BYTES.toLocaleString()}-byte limit.`);
+    }
+    const parsedRows = CsvUtils.parseRows(text, { skipEmptyRows: true });
+    if (!parsedRows.length) return [];
+    const headers = parsedRows.shift();
+    if (headers.length > SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS.length) {
+        throw new Error(`The CSV exceeds the ${SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS.length}-column limit.`);
+    }
+    const duplicateHeaders = headers.filter((header, index) => headers.indexOf(header) !== index);
+    if (duplicateHeaders.length) {
+        throw new Error(`The CSV contains duplicate column ${duplicateHeaders[0] || '(blank)'}.`);
+    }
+    if (parsedRows.length > SYSTEM_HEALTH_MAX_CSV_ROWS) {
+        throw new Error(`The CSV exceeds the ${SYSTEM_HEALTH_MAX_CSV_ROWS.toLocaleString()}-sensor limit.`);
+    }
+    parsedRows.forEach((row, rowIndex) => {
+        if (row.length > headers.length) {
+            throw new Error(`Row ${rowIndex + 2} contains more columns than the header.`);
+        }
+        row.forEach((cell, columnIndex) => {
+            if (cell.length > SYSTEM_HEALTH_MAX_CSV_CELL_CHARACTERS) {
+                throw new Error(
+                    `Cell ${headers[columnIndex] || columnIndex + 1} in row ${rowIndex + 2} exceeds the ${SYSTEM_HEALTH_MAX_CSV_CELL_CHARACTERS.toLocaleString()}-character limit.`
+                );
+            }
+        });
+    });
+    return parsedRows.map(row => Object.fromEntries(
+        headers.map((header, index) => [header, row[index] === undefined ? '' : row[index]])
+    ));
+}
+
+function systemHealthUtf8ByteLength(value) {
+    let length = 0;
+    for (const character of String(value ?? '')) {
+        const codePoint = character.codePointAt(0);
+        if (codePoint <= 0x7f) length += 1;
+        else if (codePoint <= 0x7ff) length += 2;
+        else if (codePoint <= 0xffff) length += 3;
+        else length += 4;
+    }
+    return length;
 }
 
 function systemHealthRowsToCsv(columns, rows) {

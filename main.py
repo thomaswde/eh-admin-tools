@@ -116,8 +116,20 @@ connection_store = ConnectionStore(APP_ROOT)
 pcap_jobs = PcapJobManager(APP_ROOT / ".runtime" / "pcap-analyzer")
 sessions.set_remove_callback(pcap_jobs.cancel_owner)
 
-app.mount("/css", StaticFiles(directory=APP_ROOT / "css"), name="css")
-app.mount("/js", StaticFiles(directory=APP_ROOT / "js"), name="js")
+
+class NoCacheStaticFiles(StaticFiles):
+    """Prevent an upgraded backend from running with stale browser code."""
+
+    async def get_response(self, path: str, scope: dict[str, Any]) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
+app.mount("/css", NoCacheStaticFiles(directory=APP_ROOT / "css"), name="css")
+app.mount("/js", NoCacheStaticFiles(directory=APP_ROOT / "js"), name="js")
 app.mount("/assets", StaticFiles(directory=APP_ROOT / "assets"), name="assets")
 
 
@@ -283,17 +295,9 @@ async def establish_session(
             },
         ) from error
 
-    await pcap_jobs.cancel_owner(replace_session_id)
-    session_id = await sessions.acreate(client, replace_session_id=replace_session_id)
-    response.set_cookie(
-        SESSION_COOKIE,
-        session_id,
-        httponly=True,
-        samesite="strict",
-        secure=False,
-        max_age=SESSION_TTL_SECONDS,
-        path="/",
-    )
+    await pcap_jobs.cancel_owner_collections(replace_session_id)
+    session_id = await sessions.aattach(replace_session_id, client)
+    set_workspace_cookie(response, session_id)
     result: dict[str, Any] = {
         "connected": True,
         "config": client.metadata.public_dict(),
@@ -467,7 +471,10 @@ async def update_api_logging(config: ApiLoggingConfig) -> dict[str, Any]:
 
 
 @app.get("/backend/chart-themes")
-async def list_chart_themes() -> dict[str, Any]:
+async def list_chart_themes(
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    require_workspace_session(eh_admin_session)
     directory = resolve_chart_themes_dir()
     themes = []
     if directory.is_dir():
@@ -483,7 +490,12 @@ async def list_chart_themes() -> dict[str, Any]:
 
 
 @app.put("/backend/chart-themes/{theme_id}")
-async def save_chart_theme(theme_id: str, theme: ChartTheme) -> dict[str, Any]:
+async def save_chart_theme(
+    theme_id: str,
+    theme: ChartTheme,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    require_workspace_session(eh_admin_session)
     path = chart_theme_path(theme_id)
     payload = {"id": theme_id, "name": theme.name, "colors": theme.colors.model_dump()}
     try:
@@ -498,7 +510,11 @@ async def save_chart_theme(theme_id: str, theme: ChartTheme) -> dict[str, Any]:
 
 
 @app.delete("/backend/chart-themes/{theme_id}")
-async def delete_chart_theme(theme_id: str) -> dict[str, bool]:
+async def delete_chart_theme(
+    theme_id: str,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, bool]:
+    require_workspace_session(eh_admin_session)
     path = chart_theme_path(theme_id)
     if not path.is_file():
         raise HTTPException(status_code=404, detail={"message": "Theme not found"})
@@ -514,19 +530,26 @@ async def delete_chart_theme(theme_id: str) -> dict[str, bool]:
 
 @app.get("/backend/session")
 async def read_session(
+    response: Response,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
-    client = sessions.get(eh_admin_session)
+    workspace_id = sessions.ensure(eh_admin_session)
+    set_workspace_cookie(response, workspace_id)
+    client = sessions.get(workspace_id)
     if not client:
-        raise HTTPException(status_code=401, detail={"message": "Not connected to an ExtraHop instance"})
-    return {"connected": True, "config": client.metadata.public_dict()}
+        return {"workspace": True, "connected": False, "config": None}
+    return {
+        "workspace": True,
+        "connected": True,
+        "config": client.metadata.public_dict(),
+    }
 
 
 @app.get("/backend/system-health/catalog")
 async def system_health_catalog(
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
-    get_session_client(eh_admin_session)
+    require_workspace_session(eh_admin_session)
     catalog_path = resolve_catalog_path()
     if not catalog_path.exists():
         return {"loaded": False, "path": str(catalog_path), "models": [], "lookup": {}}
@@ -556,7 +579,7 @@ async def system_health_pdf(
     request: Request,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> StreamingResponse:
-    get_session_client(eh_admin_session)
+    require_workspace_session(eh_admin_session)
     payload = await system_health_pdf_backend.parse_system_health_pdf_request(request)
     report = payload.report.model_dump(mode="python")
     html_text = system_health_pdf_backend.render_system_health_pdf_html(report, payload.style)
@@ -594,10 +617,11 @@ async def delete_session(
     response: Response,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, bool]:
-    await pcap_jobs.cancel_owner(eh_admin_session)
-    await sessions.adelete(eh_admin_session)
-    response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
-    return {"connected": False}
+    await pcap_jobs.cancel_owner_collections(eh_admin_session)
+    workspace_id = await sessions.aensure(eh_admin_session)
+    await sessions.adetach(workspace_id)
+    set_workspace_cookie(response, workspace_id)
+    return {"workspace": True, "connected": False}
 
 
 @app.post("/backend/pcap-analyzer/upload", status_code=202)
@@ -605,7 +629,8 @@ async def create_pcap_upload_job(
     request: Request,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
-    client = get_session_client(eh_admin_session)
+    owner_session = require_workspace_session(eh_admin_session)
+    client = sessions.get(owner_session)
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if content_type not in {"application/vnd.tcpdump.pcap", "application/octet-stream"}:
         raise HTTPException(
@@ -615,7 +640,7 @@ async def create_pcap_upload_job(
     declared_length = parse_optional_content_length(request.headers.get("content-length"))
     try:
         return await pcap_jobs.create_upload(
-            require_session_id(eh_admin_session),
+            owner_session,
             client,
             request.stream(),
             declared_length=declared_length,
@@ -629,10 +654,11 @@ async def create_pcap_collection_job(
     payload: PcapCollectionRequest,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
-    client = get_session_client(eh_admin_session)
+    owner_session = require_workspace_session(eh_admin_session)
+    client = get_session_client(owner_session)
     try:
         return await pcap_jobs.create_collection(
-            require_session_id(eh_admin_session),
+            owner_session,
             client,
             from_ms=payload.fromMs,
             until_ms=payload.untilMs,
@@ -647,9 +673,9 @@ async def read_pcap_job(
     job_id: str,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
-    get_session_client(eh_admin_session)
+    owner_session = require_workspace_session(eh_admin_session)
     try:
-        return pcap_jobs.get(require_session_id(eh_admin_session), job_id)
+        return pcap_jobs.get(owner_session, job_id)
     except PcapJobError as error:
         raise pcap_job_http_exception(error) from error
 
@@ -662,10 +688,10 @@ async def read_pcap_job_results(
     finding: str | None = None,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
-    get_session_client(eh_admin_session)
+    owner_session = require_workspace_session(eh_admin_session)
     try:
         return pcap_jobs.results(
-            require_session_id(eh_admin_session),
+            owner_session,
             job_id,
             offset=offset,
             limit=limit,
@@ -681,10 +707,10 @@ async def download_pcap_job_csv(
     scope: Literal["all_findings", "reverse_not_observed", "sequence_gap"] = "all_findings",
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> StreamingResponse:
-    get_session_client(eh_admin_session)
+    owner_session = require_workspace_session(eh_admin_session)
     try:
         filename, rows = pcap_jobs.csv_rows(
-            require_session_id(eh_admin_session),
+            owner_session,
             job_id,
             scope=scope,
         )
@@ -702,9 +728,9 @@ async def cancel_pcap_job(
     job_id: str,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, Any]:
-    get_session_client(eh_admin_session)
+    owner_session = require_workspace_session(eh_admin_session)
     try:
-        return await pcap_jobs.cancel(require_session_id(eh_admin_session), job_id)
+        return await pcap_jobs.cancel(owner_session, job_id)
     except PcapJobError as error:
         raise pcap_job_http_exception(error) from error
 
@@ -750,7 +776,12 @@ async def proxy_extrahop_request(
             return Response(status_code=204, headers=headers)
         return JSONResponse(content=result.data, status_code=result.status_code, headers=headers)
     except ExtraHopApiError as error:
-        raise http_exception(error) from error
+        exception = http_exception(error)
+        if error.status_code == 401:
+            await pcap_jobs.cancel_owner_collections(eh_admin_session)
+            await sessions.adetach(eh_admin_session)
+            exception.detail["code"] = "extrahop_session_expired"
+        raise exception from error
     finally:
         for task in (upstream_task, disconnect_task):
             if not task.done():
@@ -825,9 +856,27 @@ def parse_optional_content_length(value: str | None) -> int | None:
     return length
 
 
-def require_session_id(session_id: str | None) -> str:
-    if not session_id:
-        raise HTTPException(status_code=401, detail={"message": "Not connected to an ExtraHop instance"})
+def set_workspace_cookie(response: Response, session_id: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        session_id,
+        httponly=True,
+        samesite="strict",
+        secure=False,
+        max_age=SESSION_TTL_SECONDS,
+        path="/",
+    )
+
+
+def require_workspace_session(session_id: str | None) -> str:
+    if not session_id or not sessions.has_workspace(session_id):
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "message": "The local workspace expired. Reload the app to continue.",
+                "code": "workspace_expired",
+            },
+        )
     return session_id
 
 
@@ -839,9 +888,16 @@ def pcap_job_http_exception(error: PcapJobError) -> HTTPException:
 
 
 def get_session_client(session_id: str | None) -> ExtraHopClient:
-    client = sessions.get(session_id)
+    workspace_id = require_workspace_session(session_id)
+    client = sessions.get(workspace_id)
     if not client:
-        raise HTTPException(status_code=401, detail={"message": "Not connected to an ExtraHop instance"})
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "message": "Connect to an ExtraHop deployment to use this operation.",
+                "code": "extrahop_not_connected",
+            },
+        )
     return client
 
 

@@ -218,7 +218,7 @@ class PcapJobManager:
     async def create_upload(
         self,
         owner_session: str,
-        client: ExtraHopClient,
+        client: ExtraHopClient | None,
         chunks: AsyncIterator[bytes],
         *,
         declared_length: int | None,
@@ -428,6 +428,24 @@ class PcapJobManager:
             self._jobs.pop(job.id, None)
             await self._cleanup_files(job)
 
+    async def cancel_owner_collections(self, owner_session: str | None) -> None:
+        if not owner_session:
+            return
+        owned = [
+            job
+            for job in self._jobs.values()
+            if job.source_type == "extrahop"
+            and job.state not in TERMINAL_STATES
+            and secrets.compare_digest(job.owner_session, owner_session)
+        ]
+        for job in owned:
+            job.cancel_event.set()
+            if job.task and not job.task.done() and job.state != "analyzing":
+                job.task.cancel()
+        tasks = [job.task for job in owned if job.task]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def snapshot(self, job: PcapJob) -> dict[str, Any]:
         with job.lock:
             summary = _json_value(job.result.summary) if job.result else None
@@ -486,12 +504,18 @@ class PcapJobManager:
         self._jobs[job_id] = job
         return job
 
-    async def _run_upload(self, job: PcapJob, destination: Path, client: ExtraHopClient) -> None:
+    async def _run_upload(
+        self,
+        job: PcapJob,
+        destination: Path,
+        client: ExtraHopClient | None,
+    ) -> None:
         async with self._semaphore:
             job.started_at = time.time()
             try:
                 await self._analyze(job, [destination])
-                await self._enrich(job, client, self._upload_activity_window(job))
+                if client is not None:
+                    await self._enrich(job, client, self._upload_activity_window(job))
                 job.dashboard = self._build_dashboard(job)
                 job.completeness = "complete"
                 self._complete(job)

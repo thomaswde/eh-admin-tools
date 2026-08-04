@@ -6,7 +6,7 @@
     <title>ExtraHop Admin Tools</title>
     <link rel="icon" href="favicon.png" type="image/png">
     <script src="js/theme-init.js?v=20260724-ui"></script>
-    <link rel="stylesheet" href="css/styles.css?v=20260726-color-system">
+    <link rel="stylesheet" href="css/styles.css?v=20260804-wsl-manual-storage">
     <script src="js/vendor/chart.umd.min.js?v=4.4.0"></script>
     <script src="js/vendor/d3.min.js?v=7.9.0"></script>
 </head>
@@ -66,10 +66,9 @@
                         <div class="secure-storage-recovery-content">
                             <strong>Set up secure saved connections in WSL</strong>
                             <p>This WSL distribution does not currently provide the Linux Secret Service used to protect saved credentials. Active connections still work, but new connections cannot be saved securely yet.</p>
-                            <p id="secureStorageRecoveryInstruction">Copy and run this command in your WSL terminal, then return here and check again. If prompted, create or unlock the keyring.</p>
-                            <code id="secureStorageSetupCommand" class="secure-storage-command"></code>
+                            <p id="secureStorageRecoveryInstruction">Select and copy this command, run it in your WSL terminal, then return here and check again. If prompted, create or unlock the keyring.</p>
+                            <code id="secureStorageSetupCommand" class="secure-storage-command" hidden></code>
                             <div class="secure-storage-recovery-actions">
-                                <button type="button" id="copySecureStorageSetupCommand" class="btn btn-sm">Copy setup command</button>
                                 <button type="button" id="recheckSecureStorageBtn" class="btn btn-sm">Check again</button>
                             </div>
                             <span id="secureStorageRecoveryStatus" class="field-hint" aria-live="polite"></span>
@@ -195,6 +194,7 @@
                     </svg>
                     <span class="nav-text">
                         <span class="nav-title">Audit Logs</span>
+                        <span class="nav-desc module-capability-reason" hidden></span>
                     </span>
                 </button>
 
@@ -205,6 +205,7 @@
                     </svg>
                     <span class="nav-text">
                         <span class="nav-title">Connected Appliances</span>
+                        <span class="nav-desc module-capability-reason" hidden></span>
                     </span>
                 </button>
 
@@ -215,6 +216,7 @@
                     </svg>
                     <span class="nav-text">
                         <span class="nav-title">Dashboard Manager</span>
+                        <span class="nav-desc module-capability-reason" hidden></span>
                     </span>
                 </button>
 
@@ -224,6 +226,7 @@
                     </svg>
                     <span class="nav-text">
                         <span class="nav-title">Devices Report</span>
+                        <span class="nav-desc module-capability-reason" hidden></span>
                     </span>
                 </button>
 
@@ -233,6 +236,7 @@
                     </svg>
                     <span class="nav-text">
                         <span class="nav-title">Network Localities</span>
+                        <span class="nav-desc module-capability-reason" hidden></span>
                     </span>
                 </button>
 
@@ -242,6 +246,7 @@
                     </svg>
                     <span class="nav-text">
                         <span class="nav-title">Records Report</span>
+                        <span class="nav-desc module-capability-reason" hidden></span>
                     </span>
                 </button>
 
@@ -251,6 +256,7 @@
                     </svg>
                     <span class="nav-text">
                         <span class="nav-title">System Health</span>
+                        <span class="nav-desc module-capability-reason" hidden></span>
                     </span>
                 </button>
 
@@ -260,6 +266,7 @@
                     </svg>
                     <span class="nav-text">
                         <span class="nav-title">Datafeed Analysis</span>
+                        <span class="nav-desc module-capability-reason" hidden></span>
                     </span>
                 </button>
 
@@ -270,6 +277,7 @@
                     </svg>
                     <span class="nav-text">
                         <span class="nav-title">User Manager</span>
+                        <span class="nav-desc module-capability-reason" hidden></span>
                     </span>
                 </button>
             </div>
@@ -351,8 +359,10 @@
             <div class="empty">
                 <img class="empty-mark" src="assets/eh-monogram-primary.svg" alt="">
                 <h1>ExtraHop Admin Tools</h1>
-                <p>Connect to a RevealX deployment to open the tools.</p>
-                <button type="button" class="btn-primary" id="welcomeConnectBtn" style="margin-top: 14px;">Set up connection</button>
+                <p>Use Datafeed Analysis or System Health in the Tools navigation for local work. Connect to RevealX Enterprise or RevealX 360 for administration and live collection.</p>
+                <div class="row-tight" style="margin-top: 14px; justify-content: center;">
+                    <button type="button" class="btn-primary" id="welcomeConnectBtn">Set up connection</button>
+                </div>
             </div>
         </div>
 
@@ -774,6 +784,7 @@
                         <button type="button" id="pcapLocalMode" class="seg-btn active" data-pcap-mode="upload" aria-pressed="true">Local PCAP</button>
                         <button type="button" id="pcapConnectedMode" class="seg-btn" data-pcap-mode="collect" aria-pressed="false">Connected ExtraHop</button>
                     </div>
+                    <span id="pcapConnectedCapabilityHint" class="field-hint" hidden></span>
 
                     <div id="pcapUploadFields" class="pcap-source-fields">
                         <div class="field">
@@ -957,6 +968,7 @@
                             </div>
                         </div>
                         <button type="button" id="runSystemHealthReport" class="btn-primary system-health-run-button">Run report</button>
+                        <span id="systemHealthCollectCapabilityHint" class="field-hint" hidden></span>
                     </div>
 
                     <div class="card">
@@ -1877,14 +1889,14 @@
 <!-- Load JavaScript modules -->
 <script src="js/theme.js?v=20260726-color-system"></script>
 <script src="js/ui/custom-select.js?v=20260726-auth-actions"></script>
-<script src="js/utils/deployment-capabilities.js?v=20260726-capabilities"></script>
-<script src="js/utils/app-state.js?v=20260725-environment-cache"></script>
-<script src="js/api-client/extrahop-api.js?v=20260726-auth-actions"></script>
-<script src="js/utils/common.js?v=20260726-color-system"></script>
+<script src="js/utils/deployment-capabilities.js?v=20260804-offline-workspace"></script>
+<script src="js/utils/app-state.js?v=20260804-offline-workspace"></script>
+<script src="js/api-client/extrahop-api.js?v=20260804-offline-workspace"></script>
+<script src="js/utils/common.js?v=20260804-offline-workspace"></script>
 <script src="js/utils/csv.js?v=20260726-csv"></script>
 <script src="js/utils/feature-registry.js?v=20260726-feature-registry"></script>
-<script src="js/auth/auth-manager.js?v=20260726-auth-actions"></script>
-<script src="js/utils/module-loader.js?v=20260724-ui"></script>
-<script src="js/app.js?v=20260726-color-system"></script>
+<script src="js/auth/auth-manager.js?v=20260804-offline-workspace"></script>
+<script src="js/utils/module-loader.js?v=20260804-offline-workspace"></script>
+<script src="js/app.js?v=20260804-offline-workspace"></script>
 </body>
 </html>

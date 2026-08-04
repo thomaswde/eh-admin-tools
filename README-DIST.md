@@ -39,6 +39,23 @@ The launcher prints and opens a URL such as `http://127.0.0.1:8000`. Use that UR
 
 Press **Ctrl+C** in the launcher window to stop the application.
 
+## Work locally or connect
+
+The app is useful before you connect to ExtraHop. In the local workspace you can:
+
+- open **Datafeed Analysis** to upload, analyze, review, and export a classic PCAP;
+- open **System Health** to load a unified summary CSV and use its charts, findings, detail table,
+  CSV, PNG, PDF, and PowerPoint outputs.
+
+Packetstore retrieval, live System Health collection, detailed API-data export, and administration
+tools require a RevealX Enterprise or RevealX 360 connection. Those tools remain visible and
+explain why they are disabled. Disconnecting returns the app to the local workspace rather than
+making the local tools unavailable.
+
+`Offline` describes the app's current connection state. It is not an ExtraHop deployment type and
+does not imply that a connected Enterprise deployment is air-gapped. The launcher and local Python
+service must stay running for local PCAP analysis, CSV import, and PDF export.
+
 ## Connect to ExtraHop
 
 Open the connection menu and either select a saved connection or choose **Add new connection**.
@@ -109,8 +126,9 @@ The launcher prints the writable log directory during startup and diagnostics.
 
 ## Datafeed Analysis
 
-After connecting to RevealX Enterprise or RevealX 360, open **Datafeed Analysis** to upload a
-classic PCAP or collect a bounded recent interval from the connected system. Connected collection
+Open **Datafeed Analysis** to upload a classic PCAP without ExtraHop credentials. After connecting
+to RevealX Enterprise or RevealX 360, you can also collect a bounded recent interval from the
+connected system. Connected collection
 requires packets to be available from Packetstore; many deployments do not include one. A
 Packetstore can also receive a different feed from the Packet Sensor, so findings describe the
 retrieved capture rather than proving Packet Sensor behavior.
@@ -119,6 +137,17 @@ The tool reports capture-level observations using cautious labels. Uniform short
 can indicate packet slicing or restricted packet access. Uploaded and downloaded captures are
 temporary and are removed automatically after the job; bounded results expire after 30 minutes by
 default. Packet bodies are not included in API response logs.
+
+## System Health CSV import
+
+Open **System Health** and choose **Load CSV** to work from a unified summary export without an
+ExtraHop connection. Imported reports use the same summary, chart, finding, detail, and local export
+rules as live reports, but they do not contain the raw API time-series rows needed by **All API
+data**.
+
+For safety and predictable rendering, imports are limited to 5 MiB, 1,000 sensor rows, the
+canonical schema columns, 128 KiB per cell, and bounded embedded JSON. An invalid or oversized file
+is rejected without replacing the report already on screen.
 
 ## Launcher options
 

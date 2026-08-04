@@ -66,27 +66,18 @@ test('single-deployment saved connections are sorted without a group heading', (
     );
 });
 
-test('WSL secure-storage recovery renders an actionable copy workflow', async () => {
+test('WSL secure-storage recovery renders a selectable manual setup command', () => {
     const elements = {
         secureStorageRecovery: { hidden: true },
-        secureStorageSetupCommand: { hidden: true, textContent: '' },
-        copySecureStorageSetupCommand: { hidden: true, textContent: '' },
+        secureStorageSetupCommand: { hidden: true, textContent: '', style: {} },
         secureStorageRecoveryInstruction: { textContent: '' },
         secureStorageRecoveryStatus: { textContent: '' }
     };
-    const copied = [];
     const context = vm.createContext({
         console,
         document: {
             getElementById(id) {
                 return elements[id] || null;
-            }
-        },
-        navigator: {
-            clipboard: {
-                async writeText(value) {
-                    copied.push(value);
-                }
             }
         }
     });
@@ -107,16 +98,39 @@ test('WSL secure-storage recovery renders an actionable copy workflow', async ()
         elements.secureStorageSetupCommand.textContent,
         'sudo apt install gnome-keyring'
     );
-    assert.match(elements.secureStorageRecoveryInstruction.textContent, /WSL terminal/);
-
-    await vm.runInContext('copySecureStorageSetupCommand()', context);
-
-    assert.deepEqual(copied, ['sudo apt install gnome-keyring']);
-    assert.equal(elements.copySecureStorageSetupCommand.textContent, 'Copied');
-    assert.match(elements.secureStorageRecoveryStatus.textContent, /check again/i);
+    assert.match(elements.secureStorageRecoveryInstruction.textContent, /Select and copy/);
+    assert.doesNotMatch(source('index.html'), /copySecureStorageSetupCommand/);
 
     vm.runInContext('renderSecureStorageRecovery({ available: true })', context);
     assert.equal(elements.secureStorageRecovery.hidden, true);
+});
+
+test('WSL recovery never shows an empty command control', () => {
+    const elements = {
+        secureStorageRecovery: { hidden: true },
+        secureStorageSetupCommand: { hidden: false, textContent: '', style: {} },
+        secureStorageRecoveryInstruction: { textContent: '' },
+        secureStorageRecoveryStatus: { textContent: '' }
+    };
+    const context = vm.createContext({
+        console,
+        document: {
+            getElementById(id) {
+                return elements[id] || null;
+            }
+        }
+    });
+    vm.runInContext(source('js/auth/auth-manager.js'), context);
+
+    vm.runInContext(`renderSecureStorageRecovery({
+        available: false,
+        recovery: { kind: 'wsl-secret-service', command: '' }
+    })`, context);
+
+    assert.equal(elements.secureStorageRecovery.hidden, false);
+    assert.equal(elements.secureStorageSetupCommand.hidden, true);
+    assert.equal(elements.secureStorageSetupCommand.style.display, 'none');
+    assert.match(elements.secureStorageRecoveryInstruction.textContent, /package manager/);
 });
 
 test('structured WSL recovery replaces only its duplicate status warning', () => {

@@ -24,6 +24,7 @@
     const pcapState = {
         initialized: false,
         active: false,
+        busy: false,
         mode: 'upload',
         jobId: null,
         jobState: null,
@@ -41,6 +42,18 @@
 
     function element(id) {
         return document.getElementById(id);
+    }
+
+    function pcapRuntimeContext() {
+        return typeof runtimeContextForState === 'function'
+            ? runtimeContextForState(window.state)
+            : window.state?.apiConfig?.type || 'offline';
+    }
+
+    function pcapSupportsAction(actionName) {
+        return typeof runtimeSupportsAction === 'function'
+            ? runtimeSupportsAction(pcapRuntimeContext(), actionName)
+            : true;
     }
 
     function buildPcapCollectionWindow(lookbackMinutes, windowSeconds, nowMs = Date.now()) {
@@ -85,7 +98,15 @@
     }
 
     function setMode(mode) {
-        pcapState.mode = mode === 'collect' ? 'collect' : 'upload';
+        const requestedMode = mode === 'collect' ? 'collect' : 'upload';
+        if (
+            requestedMode === 'collect'
+            && !pcapSupportsAction('datafeed.collect')
+        ) {
+            pcapState.mode = 'upload';
+        } else {
+            pcapState.mode = requestedMode;
+        }
         document.querySelectorAll('[data-pcap-mode]').forEach(button => {
             const selected = button.dataset.pcapMode === pcapState.mode;
             button.classList.toggle('active', selected);
@@ -96,9 +117,12 @@
         element('pcapStartButton').textContent = pcapState.mode === 'upload'
             ? 'Analyze capture'
             : 'Retrieve and analyze';
+        syncPcapCapabilities();
+        return requestedMode === pcapState.mode;
     }
 
     function setBusy(busy) {
+        pcapState.busy = busy;
         element('pcapStartButton').disabled = busy;
         element('pcapCancelButton').disabled = !busy;
         element('pcapFileInput').disabled = busy;
@@ -107,6 +131,40 @@
         document.querySelectorAll('[data-pcap-mode]').forEach(button => {
             button.disabled = busy;
         });
+        syncPcapCapabilities();
+    }
+
+    function syncPcapCapabilities() {
+        const canUpload = pcapSupportsAction('datafeed.upload');
+        const canCollect = pcapSupportsAction('datafeed.collect');
+        const uploadButton = element('pcapLocalMode');
+        const collectButton = element('pcapConnectedMode');
+        const hint = element('pcapConnectedCapabilityHint');
+        if (uploadButton) uploadButton.disabled = pcapState.busy || !canUpload;
+        if (collectButton) {
+            collectButton.disabled = pcapState.busy || !canCollect;
+            collectButton.title = canCollect
+                ? ''
+                : 'Connect to an ExtraHop deployment to retrieve packets.';
+            collectButton.setAttribute('aria-disabled', String(!canCollect));
+        }
+        if (hint) {
+            hint.hidden = canCollect;
+            hint.textContent = canCollect
+                ? ''
+                : 'Connect to an ExtraHop deployment to retrieve packets from Packetstore.';
+        }
+        if (!canCollect && pcapState.mode === 'collect') {
+            pcapState.mode = 'upload';
+            document.querySelectorAll('[data-pcap-mode]').forEach(button => {
+                const selected = button.dataset.pcapMode === 'upload';
+                button.classList.toggle('active', selected);
+                button.setAttribute('aria-pressed', String(selected));
+            });
+            element('pcapUploadFields').hidden = false;
+            element('pcapCollectFields').hidden = true;
+            element('pcapStartButton').textContent = 'Analyze capture';
+        }
     }
 
     function stateLabel(state) {
@@ -668,6 +726,16 @@
     }
 
     async function startPcapAnalysis() {
+        const action = pcapState.mode === 'upload' ? 'datafeed.upload' : 'datafeed.collect';
+        if (!pcapSupportsAction(action)) {
+            const error = new Error(
+                pcapState.mode === 'collect'
+                    ? 'Connect to an ExtraHop deployment before retrieving packets.'
+                    : 'Local PCAP upload is unavailable in the current runtime context.'
+            );
+            handlePcapError(error);
+            throw error;
+        }
         stopPcapPolling();
         pcapState.jobId = null;
         pcapState.jobState = null;
@@ -843,6 +911,7 @@
 
     window.PcapAnalyzer = Object.freeze({
         buildCollectionWindow: buildPcapCollectionWindow,
+        setMode,
         start: startPcapAnalysis,
         cancel: cancelPcapAnalysis,
         poll: pollPcapJob
@@ -852,6 +921,7 @@
         initialize: initializePcapAnalyzer,
         activate() {
             pcapState.active = true;
+            syncPcapCapabilities();
             if (pcapState.jobId && !TERMINAL_STATES.has(pcapState.jobState)) {
                 schedulePcapPoll(pcapState.jobId);
             } else if (pcapState.completedJob) {

@@ -291,7 +291,7 @@ collect/upload -> analyze -> build finding rows -> enrich finding IPs -> build d
 
 Add an `enriching` progress stage. Enrichment failure does not change analytical completeness or turn the job into `failed`.
 
-Both upload and connected collection routes already require an active Admin Tools session. Pass the active `ExtraHopClient` into the upload job as well as the collection job, or introduce an equivalent feature-owned callback. Do not route enrichment from the browser through a series of generic proxy calls: server ownership is needed so full CSVs and top projections receive the same metadata and bounds.
+Both upload and connected collection routes require an owning local workspace, but only connected collection requires an attached `ExtraHopClient`. Pass the optional workspace client into upload jobs so connected uploads may be enriched and offline uploads skip enrichment. Do not route enrichment from the browser through a series of generic proxy calls: server ownership is needed so full CSVs and top projections receive the same metadata and bounds.
 
 ### 6.3 Candidate addresses and time window
 
@@ -423,7 +423,7 @@ Likely files:
 
 - `backend/pcap_analyzer/analyzer.py`: add capture bounds and missing distinct-flow summary values if the canonical result should own them;
 - `backend/pcap_analyzer/jobs.py`: add enrichment state, bounded device lookup, row decoration, dashboard projection, deterministic rankings, and scoped CSV selection;
-- `main.py`: pass the active client to upload jobs and validate CSV scope/finding query parameters;
+- `main.py`: pass the workspace's optional attached client to upload jobs and validate CSV scope/finding query parameters; offline uploads skip enrichment;
 - `backend/extrahop_client.py`: only if a verified device response introduces an identifier field not already covered by the normalization contract;
 - `tests/test_pcap_analyzer.py`, `tests/test_pcap_jobs.py`, and route/session tests.
 
@@ -440,8 +440,8 @@ Consider introducing small immutable projection types for endpoint decoration, e
 - A normal no-match is data, not an error.
 - An address omitted by the enrichment cap is distinct from no match.
 - Chart counts and exports remain available when enrichment is incomplete.
-- CSV endpoints remain session-bound and job-owner-bound.
-- Expiration and session deletion continue to remove all retained result metadata.
+- CSV endpoints remain workspace-bound and job-owner-bound.
+- Workspace expiration or removal continues to remove all retained result metadata; detaching the ExtraHop client does not remove completed local-upload results.
 
 ## 11. Test plan
 
@@ -461,7 +461,7 @@ Consider introducing small immutable projection types for endpoint decoration, e
 - candidate IPs are normalized and deduplicated;
 - batch, page, row, address, deadline, and cancellation limits are enforced;
 - the capture interval is reused in device search where supported;
-- upload jobs receive only the active session's client;
+- upload jobs receive only the optional client attached to the owning workspace; offline uploads receive no client and skip enrichment;
 - a unique useful name decorates but never replaces the IP;
 - no match leaves the decoration absent;
 - identical multiple names are handled deterministically;
@@ -480,7 +480,7 @@ Consider introducing small immutable projection types for endpoint decoration, e
 - formula-like device names and addresses are neutralized;
 - numeric measurements remain numeric;
 - filenames identify the selected export;
-- session ownership, expiry, and nonterminal-job errors remain enforced.
+- workspace ownership, expiry, and nonterminal-job errors remain enforced.
 
 ### 11.4 Browser tests
 
@@ -535,7 +535,7 @@ The work is complete when:
 - ambiguous or failed enrichment never guesses, replaces an IP, or fails analysis;
 - enrichment and export work is explicitly bounded and cancellable;
 - Enterprise and RevealX 360 use the same documented device-search family;
-- identifier normalization, session ownership, temporary-file cleanup, and distribution allowlisting remain intact;
+- identifier normalization, workspace ownership, temporary-file cleanup, and distribution allowlisting remain intact;
 - all standard checks pass.
 
 ## 13. Deferred or explicitly out of scope

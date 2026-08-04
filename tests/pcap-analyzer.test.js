@@ -125,6 +125,7 @@ function dashboard(overrides = {}) {
 function createHarness(responses = [], options = {}) {
     const ids = [
         'pcapUploadFields', 'pcapCollectFields', 'pcapStartButton', 'pcapCancelButton',
+        'pcapConnectedCapabilityHint',
         'pcapFileInput', 'pcapLookbackMinutes', 'pcapWindowSeconds', 'pcapStatusCard',
         'pcapProgressBar', 'pcapWarnings', 'pcapStateBadge', 'pcapStatusText',
         'pcapResults', 'pcapSummary', 'pcapEnrichmentStatus', 'pcapExportStatus',
@@ -147,6 +148,8 @@ function createHarness(responses = [], options = {}) {
     const modeButtons = [fakeElement('local', 'button'), fakeElement('connected', 'button')];
     modeButtons[0].dataset.pcapMode = 'upload';
     modeButtons[1].dataset.pcapMode = 'collect';
+    elements.pcapLocalMode = modeButtons[0];
+    elements.pcapConnectedMode = modeButtons[1];
     const chartModeButtons = [fakeElement('reverse', 'button'), fakeElement('sequence', 'button')];
     chartModeButtons[0].dataset.pcapChartMode = 'reverse';
     chartModeButtons[1].dataset.pcapChartMode = 'sequence_gap';
@@ -162,7 +165,8 @@ function createHarness(responses = [], options = {}) {
     }
     const window = {
         innerWidth: 1200,
-        addEventListener() {}
+        addEventListener() {},
+        state: options.appState || { connected: true, apiConfig: { type: 'enterprise' } }
     };
     if (options.withChartTheme !== false) {
         window.chartThemeResolvedColors = () => ({
@@ -185,6 +189,14 @@ function createHarness(responses = [], options = {}) {
         AbortController,
         encodeURIComponent,
         window,
+        runtimeContextForState() {
+            return options.runtimeContext || 'enterprise';
+        },
+        runtimeSupportsAction(runtimeContext, actionName) {
+            return typeof options.actionSupport === 'function'
+                ? options.actionSupport(runtimeContext, actionName)
+                : true;
+        },
         getComputedStyle() {
             const colors = {
                 '--raised': '#1e1d27',
@@ -477,6 +489,24 @@ test('connected collection computes one absolute window and sends the same bound
     });
     assert.equal(harness.progressTrack.attributes['aria-valuenow'], '33');
     assert.equal(harness.timers.size, 1);
+});
+
+test('offline mode disables Packetstore retrieval and rejects programmatic collection before fetch', async () => {
+    const harness = createHarness([], {
+        runtimeContext: 'offline',
+        actionSupport(runtimeContext, actionName) {
+            assert.equal(runtimeContext, 'offline');
+            return actionName !== 'datafeed.collect';
+        }
+    });
+    harness.definition.initialize();
+    await harness.definition.activate();
+
+    assert.equal(harness.elements.pcapConnectedMode.disabled, true);
+    assert.equal(harness.elements.pcapConnectedCapabilityHint.hidden, false);
+    const selected = vm.runInContext("window.PcapAnalyzer.setMode('collect')", harness.context);
+    assert.equal(selected, false);
+    assert.equal(harness.calls.length, 0);
 });
 
 test('renders an explicit warning when uniform packet slicing is suspected', async () => {

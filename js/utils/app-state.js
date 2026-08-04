@@ -2,8 +2,9 @@
 
 const state = {
     connected: false,
+    runtimeContext: 'offline',
     apiConfig: null,
-    currentModule: 'dashboards',
+    currentModule: null,
     dashboards: [],
     filteredDashboards: [],
     users: [],

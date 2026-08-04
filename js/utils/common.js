@@ -1,4 +1,4 @@
-/* exported showStatus, toggleApiConfig, showConnectedState, hideConnectedState, showErrorModal,
+/* exported showStatus, toggleApiConfig, showConnectedState, showOfflineState, hideConnectedState, showErrorModal,
 switchModule, openConnectedAppliances, hideModal, detailItem, escapeAttribute,
 genericChartPrimaryColor, genericChartPaletteColor, stateIndicatorColor */
 // Shared utility functions
@@ -31,7 +31,8 @@ function showConnectedState() {
     const chip = document.getElementById('apiConfigToggle');
     const is360 = state.apiConfig.type === '360';
 
-    syncDeploymentCapabilityNavigation(state.apiConfig.type);
+    state.runtimeContext = state.apiConfig.type;
+    syncDeploymentCapabilityNavigation(state.runtimeContext);
 
     document.getElementById('connectedState').classList.remove('hidden');
     document.getElementById('configForm').style.display = 'none';
@@ -48,18 +49,36 @@ function showConnectedState() {
     setConnectionPanelOpen(false);
 }
 
-function hideConnectedState() {
+function showOfflineState({ preserveSupportedModule = false, openConnectionPanel = false } = {}) {
     const chip = document.getElementById('apiConfigToggle');
 
+    state.runtimeContext = 'offline';
+    syncDeploymentCapabilityNavigation('offline');
     document.getElementById('connectedState').classList.add('hidden');
     document.getElementById('configForm').style.display = 'none';
-    document.getElementById('moduleSelection').style.display = 'none';
+    document.getElementById('moduleSelection').style.display = 'block';
 
     chip.classList.remove('is-connected');
-    document.getElementById('connChipLabel').textContent = 'Not connected';
-    document.getElementById('connChipMeta').textContent = '';
+    document.getElementById('connChipLabel').textContent = 'Local workspace';
+    document.getElementById('connChipMeta').textContent = 'Offline';
 
-    setConnectionPanelOpen(true);
+    const currentModuleSupported = preserveSupportedModule
+        && state.currentModule
+        && deploymentSupportsModule('offline', state.currentModule);
+    if (!currentModuleSupported) {
+        state.currentModule = null;
+        document.querySelectorAll('.module-btn').forEach(button => button.classList.remove('active'));
+        document.querySelectorAll('.module-content').forEach(module => {
+            module.style.display = 'none';
+        });
+        document.getElementById('welcomeScreen').style.display = 'block';
+    }
+
+    setConnectionPanelOpen(openConnectionPanel);
+}
+
+function hideConnectedState() {
+    showOfflineState({ preserveSupportedModule: false, openConnectionPanel: true });
 }
 
 function showErrorModal(message, details) {

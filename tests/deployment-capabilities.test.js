@@ -21,15 +21,20 @@ function loadCapabilities(buttons = []) {
 
 function navButton(moduleName) {
     const attributes = {};
+    const reason = { hidden: true, textContent: '' };
     return {
         dataset: { module: moduleName },
         hidden: false,
         disabled: false,
         attributes,
         classList: { remove() {} },
+        querySelector(selector) {
+            return selector === '.module-capability-reason' ? reason : null;
+        },
         setAttribute(name, value) {
             attributes[name] = value;
-        }
+        },
+        reason
     };
 }
 
@@ -43,6 +48,13 @@ test('capability matrix marks User Manager self-managed-only', () => {
     assert.equal(vm.runInContext("deploymentSupportsModule('360', 'system-health')", context), true);
     assert.equal(vm.runInContext("deploymentSupportsModule('enterprise', 'pcap-analyzer')", context), true);
     assert.equal(vm.runInContext("deploymentSupportsModule('360', 'pcap-analyzer')", context), true);
+    assert.equal(vm.runInContext("deploymentSupportsModule('offline', 'pcap-analyzer')", context), true);
+    assert.equal(vm.runInContext("deploymentSupportsModule('offline', 'system-health')", context), true);
+    assert.equal(vm.runInContext("deploymentSupportsModule('offline', 'dashboards')", context), false);
+    assert.equal(vm.runInContext("runtimeSupportsAction('offline', 'datafeed.upload')", context), true);
+    assert.equal(vm.runInContext("runtimeSupportsAction('offline', 'datafeed.collect')", context), false);
+    assert.equal(vm.runInContext("runtimeSupportsAction('offline', 'systemHealth.import')", context), true);
+    assert.equal(vm.runInContext("runtimeSupportsAction('offline', 'systemHealth.collect')", context), false);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('enterprise', 'applianceFirmware')", context), true);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('360', 'applianceFirmware')", context), true);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('enterprise', 'localApplianceFirmware')", context), true);
@@ -53,16 +65,18 @@ test('capability matrix marks User Manager self-managed-only', () => {
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('360', 'applianceProductKeys')", context), false);
 });
 
-test('RevealX 360 navigation hides and disables only unsupported modules', () => {
+test('navigation keeps unsupported modules visible with a concise reason', () => {
     const users = navButton('users');
     const systemHealth = navButton('system-health');
     const context = loadCapabilities([users, systemHealth]);
 
     vm.runInContext("syncDeploymentCapabilityNavigation('360')", context);
 
-    assert.equal(users.hidden, true);
+    assert.equal(users.hidden, false);
     assert.equal(users.disabled, true);
     assert.equal(users.attributes['aria-disabled'], 'true');
+    assert.equal(users.reason.hidden, false);
+    assert.match(users.reason.textContent, /Enterprise/);
     assert.equal(systemHealth.hidden, false);
     assert.equal(systemHealth.disabled, false);
     assert.equal(systemHealth.attributes['aria-disabled'], 'false');
@@ -70,6 +84,45 @@ test('RevealX 360 navigation hides and disables only unsupported modules', () =>
     vm.runInContext("syncDeploymentCapabilityNavigation('enterprise')", context);
     assert.equal(users.hidden, false);
     assert.equal(users.disabled, false);
+    assert.equal(users.reason.hidden, true);
+});
+
+test('offline navigation enables only local Datafeed Analysis and System Health', () => {
+    const dashboards = navButton('dashboards');
+    const datafeed = navButton('pcap-analyzer');
+    const systemHealth = navButton('system-health');
+    const context = loadCapabilities([dashboards, datafeed, systemHealth]);
+
+    vm.runInContext("syncDeploymentCapabilityNavigation('offline')", context);
+
+    assert.equal(dashboards.hidden, false);
+    assert.equal(dashboards.disabled, true);
+    assert.match(dashboards.reason.textContent, /Connect to an ExtraHop deployment/);
+    assert.equal(datafeed.disabled, false);
+    assert.equal(systemHealth.disabled, false);
+});
+
+test('offline startup scripts share one cache version and local work uses the tool navigation', () => {
+    const index = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+    const startupScripts = [
+        'js/utils/deployment-capabilities.js',
+        'js/utils/app-state.js',
+        'js/api-client/extrahop-api.js',
+        'js/utils/common.js',
+        'js/auth/auth-manager.js',
+        'js/utils/module-loader.js',
+        'js/app.js'
+    ];
+    const sources = [...index.matchAll(/<script src="([^"]+)"/g)].map(match => match[1]);
+    const versions = startupScripts.map(script => {
+        const source = sources.find(value => value.startsWith(`${script}?v=`));
+        assert.ok(source, `missing versioned startup script ${script}`);
+        return new URL(source, 'http://localhost/').searchParams.get('v');
+    });
+
+    assert.equal(new Set(versions).size, 1, 'interdependent startup scripts must share one cache version');
+    assert.doesNotMatch(index, /welcomeDatafeedBtn|welcomeSystemHealthBtn/);
+    assert.match(index, /Use Datafeed Analysis or System Health in the Tools navigation/);
 });
 
 test('RevealX 360 user API calls are rejected before network transport', async () => {

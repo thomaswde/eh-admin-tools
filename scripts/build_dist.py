@@ -79,6 +79,18 @@ def git_build_identity() -> tuple[str, str]:
     return commit, version
 
 
+def git_worktree_dirty() -> bool:
+    return bool(
+        subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+
 def make_checksum_manifest(package_root: Path) -> None:
     files = [
         path
@@ -176,6 +188,8 @@ def write_zip(package_root: Path, zip_path: Path) -> None:
 
 def build() -> Path:
     commit, version = git_build_identity()
+    if git_worktree_dirty():
+        commit = f"{commit}-dirty"
     package_name = f"eh-admin-tools-{version}"
     DIST_DIR.mkdir(exist_ok=True)
     zip_path = DIST_DIR / f"{package_name}.zip"

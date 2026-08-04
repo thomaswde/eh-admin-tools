@@ -1,4 +1,4 @@
-/* exported copySecureStorageSetupCommand, deleteSavedConnection, editSavedConnection, handleConnect, handleDisconnect, handleSavedConnect, recheckSecureStorage */
+/* exported deleteSavedConnection, editSavedConnection, handleConnect, handleDisconnect, handleSavedConnect, recheckSecureStorage */
 function groupSavedConnections(connections) {
     const sorted = [...(connections || [])].sort((left, right) => {
         const labelOrder = String(left.label || '').localeCompare(
@@ -98,10 +98,9 @@ function syncSavedConnectionSelection(connections = savedConnectionCatalog) {
 function renderSecureStorageRecovery(secureStorage) {
     const panel = document.getElementById('secureStorageRecovery');
     const command = document.getElementById('secureStorageSetupCommand');
-    const copyButton = document.getElementById('copySecureStorageSetupCommand');
     const instruction = document.getElementById('secureStorageRecoveryInstruction');
     const recoveryStatus = document.getElementById('secureStorageRecoveryStatus');
-    if (!panel || !command || !copyButton || !instruction || !recoveryStatus) return;
+    if (!panel || !command || !instruction || !recoveryStatus) return;
 
     const recovery = secureStorage?.recovery;
     const show = secureStorage?.available === false
@@ -114,40 +113,11 @@ function renderSecureStorageRecovery(secureStorage) {
         : '';
     command.textContent = setupCommand;
     command.hidden = !setupCommand;
-    copyButton.hidden = !setupCommand;
+    command.style.display = setupCommand ? '' : 'none';
     instruction.textContent = setupCommand
-        ? 'Copy and run this command in your WSL terminal, then return here and check again. If prompted, create or unlock the keyring.'
+        ? 'Select and copy this command, run it in your WSL terminal, then return here and check again. If prompted, create or unlock the keyring.'
         : 'Install GNOME Keyring with this WSL distribution\'s package manager, then return here and check again. If prompted, create or unlock the keyring.';
     recoveryStatus.textContent = '';
-    copyButton.textContent = 'Copy setup command';
-}
-
-async function copySecureStorageSetupCommand() {
-    const command = document.getElementById('secureStorageSetupCommand')?.textContent?.trim();
-    const button = document.getElementById('copySecureStorageSetupCommand');
-    const status = document.getElementById('secureStorageRecoveryStatus');
-    if (!command || !button || !status) return;
-
-    try {
-        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(command);
-        } else {
-            const textarea = document.createElement('textarea');
-            textarea.value = command;
-            textarea.setAttribute('readonly', '');
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
-            textarea.select();
-            const copied = document.execCommand('copy');
-            textarea.remove();
-            if (!copied) throw new Error('Copy command was rejected');
-        }
-        button.textContent = 'Copied';
-        status.textContent = 'Run the command in your WSL terminal, then check again.';
-    } catch {
-        status.textContent = 'Automatic copy was unavailable. Select and copy the command above.';
-    }
 }
 
 function visibleSavedConnectionWarnings(catalog) {
@@ -469,17 +439,19 @@ async function handleDisconnect() {
     } finally {
         state.apiConfig = null;
         state.connected = false;
-        state.currentModule = null;
+        state.runtimeContext = 'offline';
         window.apiClient = null;
         sessionStorage.removeItem('eh_config');
         clearCredentialInputs();
-        hideConnectedState();
-        document.getElementById('moduleSelection').style.display = 'none';
-        document.querySelectorAll('.module-content').forEach(module => {
-            module.style.display = 'none';
-        });
-        document.getElementById('welcomeScreen').style.display = 'block';
-        showStatus('Disconnected from ExtraHop', false);
+        showOfflineState({ preserveSupportedModule: true });
+        if (
+            state.currentModule
+            && deploymentSupportsModule('offline', state.currentModule)
+            && featureRegistry.has(state.currentModule)
+        ) {
+            await featureRegistry.activate(state.currentModule, { runtimeContext: 'offline' });
+        }
+        showStatus('Disconnected from ExtraHop. Local tools remain available.', false);
         disconnectBtn.disabled = false;
         disconnectBtn.textContent = 'Disconnect';
     }
