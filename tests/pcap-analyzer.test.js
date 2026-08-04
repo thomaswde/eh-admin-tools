@@ -128,10 +128,8 @@ function createHarness(responses = [], options = {}) {
         'pcapConnectedCapabilityHint',
         'pcapFileInput', 'pcapLookbackMinutes', 'pcapWindowSeconds', 'pcapStatusCard',
         'pcapProgressBar', 'pcapWarnings', 'pcapStateBadge', 'pcapStatusText',
-        'pcapResults', 'pcapSummary', 'pcapEnrichmentStatus', 'pcapExportStatus',
+        'pcapResults', 'pcapSummary', 'pcapFindingHeroes', 'pcapEnrichmentStatus', 'pcapExportStatus',
         'pcapDownloadAllFindingsCsv', 'pcapDownloadReverseCsv', 'pcapDownloadSequenceGapCsv',
-        'pcapFindingCountsHeading', 'pcapFindingCountsDescription', 'pcapFindingCountsEmpty',
-        'pcapFindingCountsChartFrame', 'pcapFindingCountsChart',
         'pcapTopConversationsHeading', 'pcapTopConversationsDescription',
         'pcapTopConversationsEmpty', 'pcapTopConversationsChartFrame', 'pcapTopConversationsChart',
         'pcapReverseResultsBody', 'pcapReverseResultsEmpty', 'pcapReverseResultsTable',
@@ -263,7 +261,9 @@ test('presents the feature as Datafeed Analysis', () => {
     assert.match(html, /data-module="pcap-analyzer"[\s\S]*?<span class="nav-title">Datafeed Analysis<\/span>/);
     assert.match(html, /id="pcap-analyzerModule"[\s\S]*?<h1 class="page-title">Datafeed Analysis<\/h1>/);
     assert.doesNotMatch(html, /id="pcapFindingFilter"|id="pcapPager"/);
-    assert.match(html, /id="pcapFindingCountsDescription"[\s\S]*?more than one category/);
+    assert.match(html, /id="pcapFindingHeroes"/);
+    assert.doesNotMatch(html, /Reverse visibility|Affected flows by finding|Counts describe the entire bounded analysis result/);
+    assert.match(html, /A packetstore does not necessarily receive the exact same datafeed as a Packet Sensor/);
 });
 
 test('registers Datafeed Analysis and uploads the selected File as the raw request body', async () => {
@@ -299,7 +299,12 @@ test('registers Datafeed Analysis and uploads the selected File as the raw reque
         harness.elements.pcapReverseResultsBody.children[0].children[0].children[0].textContent,
         '10.0.0.1:1001'
     );
-    assert.deepEqual(Array.from(harness.charts[0].config.data.datasets[0].data), [1, 1, 0]);
+    assert.equal(harness.elements.pcapSummary.children.length, 4);
+    assert.equal(harness.elements.pcapSummary.children[3].children[0].textContent, 'Captured bytes');
+    assert.equal(harness.elements.pcapFindingHeroes.children.length, 3);
+    assert.equal(harness.elements.pcapFindingHeroes.children[0].children[0].textContent, 'Unidirectional flows');
+    assert.equal(harness.elements.pcapFindingHeroes.children[0].children[1].textContent, '50%');
+    assert.equal(harness.elements.pcapFindingHeroes.children[0].children[2].textContent, '1 of 2 directional flows');
 });
 
 test('renders completed analysis with app CSS colors when the chart theme export is unavailable', async () => {
@@ -317,10 +322,10 @@ test('renders completed analysis with app CSS colors when the chart theme export
     await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
 
     assert.equal(harness.elements.pcapStateBadge.textContent, 'Completed');
-    assert.equal(harness.charts.length, 2);
+    assert.equal(harness.charts.length, 1);
     assert.equal(harness.charts[0].config.options.scales.y.ticks.color, '#ececf2');
     assert.equal(harness.charts[0].config.options.scales.x.grid.color, '#2e2d3a');
-    assert.equal(harness.charts[1].config.data.datasets[0].backgroundColor, '#00aaef');
+    assert.equal(harness.charts[0].config.data.datasets[0].backgroundColor, '#00aaef');
 });
 
 test('renders at most 25 canonical rows with IP primary and useful device name secondary', async () => {
@@ -354,7 +359,7 @@ test('renders at most 25 canonical rows with IP primary and useful device name s
     assert.equal(sourceCell.children[1].textContent, 'web-prod-07');
     assert.equal(destinationCell.children[0].textContent, '10.0.1.1:443');
     assert.equal(destinationCell.children.length, 1);
-    assert.equal(harness.charts[1].config.data.labels.length, 15);
+    assert.equal(harness.charts[0].config.data.labels.length, 15);
 });
 
 test('top conversation control changes metric, copy, tooltip data, and chart rows together', async () => {
@@ -369,14 +374,14 @@ test('top conversation control changes metric, copy, tooltip data, and chart row
     await harness.definition.activate();
     harness.elements.pcapFileInput.files = [{ name: 'capture.pcap' }];
     await vm.runInContext('window.PcapAnalyzer.start()', harness.context);
-    const reverseChart = harness.charts[1];
+    const reverseChart = harness.charts[0];
 
     harness.chartModeButtons[1].click();
 
-    const sequenceChart = harness.charts[2];
+    const sequenceChart = harness.charts[1];
     assert.equal(reverseChart.destroyed, true);
     assert.match(harness.elements.pcapTopConversationsHeading.textContent, /Sequence gaps/);
-    assert.match(harness.elements.pcapTopConversationsDescription.textContent, /incomplete/i);
+    assert.equal(harness.elements.pcapTopConversationsDescription.textContent, 'Flows with uncovered TCP sequence ranges, ranked by gap bytes.');
     assert.equal(sequenceChart.config.data.datasets[0].label, 'Observed gap bytes');
     assert.equal(sequenceChart.config.data.datasets[0].data[0], 199);
     assert.match(
@@ -425,7 +430,7 @@ test('scoped CSV controls use server filenames and never export visible top rows
             summary: { packetCount: 12, flowCount: 2 }, dashboard: dashboard()
         }),
         csvResponse('all', 'datafeed-analysis-all-findings-job-export.csv'),
-        csvResponse('reverse', 'datafeed-analysis-reverse-direction-job-export.csv'),
+        csvResponse('reverse', 'datafeed-analysis-unidirectional-flows-job-export.csv'),
         csvResponse('sequence', 'datafeed-analysis-sequence-gaps-job-export.csv')
     ]);
     harness.definition.initialize();
@@ -444,7 +449,7 @@ test('scoped CSV controls use server filenames and never export visible top rows
     ]);
     assert.deepEqual(harness.anchors.map(anchor => anchor.download), [
         'datafeed-analysis-all-findings-job-export.csv',
-        'datafeed-analysis-reverse-direction-job-export.csv',
+        'datafeed-analysis-unidirectional-flows-job-export.csv',
         'datafeed-analysis-sequence-gaps-job-export.csv'
     ]);
     assert.match(harness.elements.pcapExportStatus.textContent, /sequence-gaps-job-export\.csv/);
@@ -467,7 +472,7 @@ test('chart instances are destroyed on deactivation and recreated on activation'
     await harness.definition.deactivate();
     assert.equal(initialCharts.every(chart => chart.destroyed), true);
     await harness.definition.activate();
-    assert.equal(harness.charts.length, initialCharts.length + 2);
+    assert.equal(harness.charts.length, initialCharts.length + 1);
 });
 
 test('connected collection computes one absolute window and sends the same bounds together', async () => {
@@ -529,8 +534,8 @@ test('renders an explicit warning when uniform packet slicing is suspected', asy
     assert.equal(harness.elements.pcapWarnings.children.length, 1);
     assert.match(harness.elements.pcapWarnings.children[0].textContent, /suspiciously uniform captured length/i);
     assert.match(harness.elements.pcapStatusText.textContent, /Indeterminate result/);
-    assert.equal(harness.elements.pcapFindingCountsEmpty.hidden, false);
-    assert.match(harness.elements.pcapFindingCountsEmpty.textContent, /available capture/i);
+    assert.equal(harness.elements.pcapFindingHeroes.children.length, 3);
+    assert.equal(harness.elements.pcapFindingHeroes.children[0].children[1].textContent, '0%');
     assert.equal(harness.elements.pcapDownloadAllFindingsCsv.disabled, true);
 });
 

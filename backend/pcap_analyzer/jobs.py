@@ -332,7 +332,7 @@ class PcapJobManager:
             filename_kind = "all-findings"
         else:
             selected_rows = (row for row in job.rows if scope in row.get("findingKinds", ()))
-            filename_kind = "reverse-direction" if scope == "reverse_not_observed" else "sequence-gaps"
+            filename_kind = "unidirectional-flows" if scope == "reverse_not_observed" else "sequence-gaps"
         columns = (
             "ipVersion",
             "protocol",

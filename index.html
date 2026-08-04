@@ -765,13 +765,12 @@
         <div id="pcap-analyzerModule" class="module-content page" style="display: none;">
             <div class="page-head">
                 <h1 class="page-title">Datafeed Analysis</h1>
-                <p class="page-desc">Inspect directional conversations, capture slicing, reverse-direction visibility, and observed TCP sequence gaps in a bounded packet capture.</p>
+                <p class="page-desc">Inspect directional conversations, capture slicing, unidirectional flows, and observed TCP sequence gaps in a bounded packet capture.</p>
             </div>
 
             <div class="stack">
-                <div class="notice notice-warn pcap-feed-notice">
-                    <strong>Capture perspective matters.</strong>
-                    <span>A Packetstore commonly receives its own feed, which can differ from a Packet Sensor feed, and many deployments have no Packetstore. Findings describe only the packets in this capture.</span>
+                <div class="notice pcap-feed-notice">
+                    <span>A packetstore does not necessarily receive the exact same datafeed as a Packet Sensor. Findings here are limited to the data available in the retrieved packets.</span>
                 </div>
 
                 <section class="card" aria-labelledby="pcapSourceHeading">
@@ -833,7 +832,6 @@
                         <div class="card-head row row-top">
                             <div>
                                 <h2 class="card-title" id="pcapSummaryHeading">Summary statistics</h2>
-                                <p class="card-desc">Counts describe the entire bounded analysis result, not a browser page.</p>
                             </div>
                             <div class="spacer"></div>
                             <button type="button" id="pcapDownloadAllFindingsCsv" class="pcap-action-tile" disabled>
@@ -842,51 +840,39 @@
                             </button>
                         </div>
                         <div id="pcapSummary" class="stats" aria-label="Capture summary"></div>
+                        <div id="pcapFindingHeroes" class="pcap-finding-heroes" aria-label="Flow finding percentages"></div>
                         <p id="pcapEnrichmentStatus" class="field-hint pcap-enrichment-status" hidden></p>
                         <p id="pcapExportStatus" class="field-hint pcap-export-status" role="status" aria-live="polite"></p>
                     </section>
 
-                    <div class="pcap-dashboard-grid">
-                        <section class="card" aria-labelledby="pcapFindingCountsHeading">
-                            <div class="card-head">
-                                <h2 class="card-title" id="pcapFindingCountsHeading">Affected flows by finding</h2>
-                                <p class="card-desc" id="pcapFindingCountsDescription">A directional flow can appear in more than one category, so these counts must not be added together.</p>
+                    <section class="card" aria-labelledby="pcapTopConversationsHeading">
+                        <div class="card-head row row-top">
+                            <div>
+                                <h2 class="card-title" id="pcapTopConversationsHeading">Top conversations</h2>
+                                <p class="card-desc" id="pcapTopConversationsDescription">Unidirectional flows ranked by packet count.</p>
                             </div>
-                            <div id="pcapFindingCountsEmpty" class="empty-inline" hidden>No findings were observed in this capture.</div>
-                            <div id="pcapFindingCountsChartFrame" class="pcap-chart-frame">
-                                <canvas id="pcapFindingCountsChart" role="img" aria-label="Affected directional flows by finding category" aria-describedby="pcapFindingCountsDescription"></canvas>
+                            <div class="spacer"></div>
+                            <div class="segmented pcap-chart-mode" role="group" aria-label="Top conversation metric">
+                                <button type="button" class="is-active" data-pcap-chart-mode="reverse" aria-pressed="true">Unidirectional flows</button>
+                                <button type="button" data-pcap-chart-mode="sequence_gap" aria-pressed="false">Sequence gaps</button>
                             </div>
-                        </section>
-
-                        <section class="card" aria-labelledby="pcapTopConversationsHeading">
-                            <div class="card-head row row-top">
-                                <div>
-                                    <h2 class="card-title" id="pcapTopConversationsHeading">Top conversations</h2>
-                                    <p class="card-desc" id="pcapTopConversationsDescription">Reverse-direction observations ranked by packet count.</p>
-                                </div>
-                                <div class="spacer"></div>
-                                <div class="segmented pcap-chart-mode" role="group" aria-label="Top conversation metric">
-                                    <button type="button" class="is-active" data-pcap-chart-mode="reverse" aria-pressed="true">Reverse visibility</button>
-                                    <button type="button" data-pcap-chart-mode="sequence_gap" aria-pressed="false">Sequence gaps</button>
-                                </div>
-                            </div>
-                            <div id="pcapTopConversationsEmpty" class="empty-inline" hidden>No matching conversations were observed.</div>
-                            <div id="pcapTopConversationsChartFrame" class="pcap-chart-frame">
-                                <canvas id="pcapTopConversationsChart" role="img" aria-label="Top conversations" aria-describedby="pcapTopConversationsDescription"></canvas>
-                            </div>
-                        </section>
-                    </div>
+                        </div>
+                        <div id="pcapTopConversationsEmpty" class="empty-inline" hidden>No matching conversations were observed.</div>
+                        <div id="pcapTopConversationsChartFrame" class="pcap-chart-frame">
+                            <canvas id="pcapTopConversationsChart" role="img" aria-label="Top conversations" aria-describedby="pcapTopConversationsDescription"></canvas>
+                        </div>
+                    </section>
 
                     <section class="card" aria-labelledby="pcapReverseHeading">
                         <div class="card-head row row-top">
                             <div>
-                                <h2 class="card-title" id="pcapReverseHeading">Top reverse-direction observations</h2>
-                                <p class="card-desc">Directional flows with no reverse flow observed in this capture, ranked by packet count.</p>
+                                <h2 class="card-title" id="pcapReverseHeading">Top unidirectional flows</h2>
+                                <p class="card-desc">Traffic observed in only one direction, ranked by packet count.</p>
                             </div>
                             <div class="spacer"></div>
                             <button type="button" id="pcapDownloadReverseCsv" class="btn btn-sm" disabled>Export full CSV</button>
                         </div>
-                        <div id="pcapReverseResultsEmpty" class="empty-inline" hidden>No reverse-direction observations were found.</div>
+                        <div id="pcapReverseResultsEmpty" class="empty-inline" hidden>No unidirectional flows were found.</div>
                         <div id="pcapReverseResultsTable" class="table-container table-scroll pcap-top-table" hidden>
                             <table>
                                 <thead>

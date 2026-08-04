@@ -628,7 +628,7 @@ def test_scoped_csv_excludes_healthy_rows_and_preserves_multi_finding_rows(tmp_p
 
     reverse_filename, reverse_lines = manager.csv_rows("owner", "job-id", scope="reverse_not_observed")
     reverse_csv = "".join(reverse_lines)
-    assert reverse_filename == "datafeed-analysis-reverse-direction-job-id.csv"
+    assert reverse_filename == "datafeed-analysis-unidirectional-flows-job-id.csv"
     assert "192.0.2.1" in reverse_csv and "192.0.2.3" in reverse_csv
     assert "192.0.2.2" not in reverse_csv
 

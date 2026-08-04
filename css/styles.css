@@ -2644,8 +2644,6 @@ td.actions .btn-danger { margin-left: 6px; }
 }
 
 /* --------------------------- Datafeed Analysis --------------------------- */
-.pcap-feed-notice strong { flex: 0 0 auto; }
-
 .pcap-mode-selector { margin-bottom: 16px; }
 
 .pcap-source-fields {
@@ -2655,7 +2653,6 @@ td.actions .btn-danger { margin-left: 6px; }
 
 .pcap-source-fields[hidden],
 #pcapResults[hidden],
-#pcapFindingCountsChartFrame[hidden],
 #pcapTopConversationsChartFrame[hidden],
 #pcapReverseResultsTable[hidden],
 #pcapSequenceGapResultsTable[hidden],
@@ -2723,10 +2720,41 @@ td.actions .btn-danger { margin-left: 6px; }
 .pcap-enrichment-status,
 .pcap-export-status { margin-top: 10px; }
 
-.pcap-dashboard-grid {
+.pcap-finding-heroes {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.pcap-finding-hero {
+    padding: 16px;
+    background-color: var(--raised);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+}
+
+.pcap-finding-percent {
+    margin-top: 8px;
+    color: var(--ink);
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -.025em;
+    font-variant-numeric: tabular-nums;
+}
+
+.pcap-finding-count {
+    margin-top: 2px;
+    color: var(--text-2);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.pcap-finding-description {
+    margin-top: 8px;
+    color: var(--gray);
+    font-size: 11.5px;
+    line-height: 1.4;
 }
 
 .pcap-chart-frame {
@@ -2767,12 +2795,10 @@ td.actions .btn-danger { margin-left: 6px; }
 }
 
 @media (max-width: 980px) {
-    .pcap-dashboard-grid { grid-template-columns: 1fr; }
+    .pcap-finding-heroes { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
-    .pcap-feed-notice { display: block; }
-    .pcap-feed-notice strong { display: block; margin-bottom: 4px; }
     .pcap-action-tile { width: 100%; }
     .pcap-chart-mode { width: 100%; }
     .pcap-chart-mode button { flex: 1; }

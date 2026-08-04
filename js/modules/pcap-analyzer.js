@@ -13,7 +13,7 @@
         },
         reverse_not_observed: {
             buttonId: 'pcapDownloadReverseCsv',
-            fallbackFilename: 'datafeed-analysis-reverse-direction.csv'
+            fallbackFilename: 'datafeed-analysis-unidirectional-flows.csv'
         },
         sequence_gap: {
             buttonId: 'pcapDownloadSequenceGapCsv',
@@ -31,7 +31,6 @@
         completedJob: null,
         topConversationMode: 'reverse',
         charts: {
-            findingCounts: null,
             topConversations: null
         },
         resizeTimer: null,
@@ -289,17 +288,54 @@
         const counts = job.dashboard?.findingCounts || {};
         const container = element('pcapSummary');
         container.replaceChildren();
-        appendSummaryStat(container, 'Packets examined', summaryValue(summary, ['packets', 'packetCount', 'packet_count', 'recordsSeen']));
-        appendSummaryStat(container, 'Directional flows', summaryValue(summary, ['flows', 'flowCount', 'flow_count']));
-        appendSummaryStat(container, 'Affected flows', summaryValue(counts, ['affectedFlows'], 0));
-        appendSummaryStat(
-            container,
-            'Completeness',
-            stateLabel(job.completeness || 'indeterminate'),
-            job.completeness === 'complete'
-                ? 'The bounded capture was analyzed completely.'
-                : 'Counts describe the available capture and may be incomplete.'
-        );
+        appendSummaryStat(container, 'Packets examined', formatNumber(summaryValue(summary, ['packets', 'packetCount', 'packet_count', 'recordsSeen'])));
+        appendSummaryStat(container, 'Directional flows', formatNumber(summaryValue(summary, ['flows', 'flowCount', 'flow_count'])));
+        appendSummaryStat(container, 'Affected flows', formatNumber(summaryValue(counts, ['affectedFlows'], 0)));
+        appendSummaryStat(container, 'Captured bytes', formatNumber(summaryValue(summary, ['capturedBytes', 'captured_bytes'], 0)));
+        renderFindingHeroes(job, counts);
+    }
+
+    function renderFindingHeroes(job, counts) {
+        const container = element('pcapFindingHeroes');
+        const totalFlows = finiteNumber(summaryValue(job.summary || {}, ['flows', 'flowCount', 'flow_count']));
+        const definitions = [
+            {
+                key: 'reverseNotObservedFlows',
+                label: 'Unidirectional flows',
+                description: 'Traffic observed in only one direction.'
+            },
+            {
+                key: 'sequenceGapFlows',
+                label: 'TCP sequence gaps',
+                description: 'Flows with an uncovered TCP sequence range.'
+            },
+            {
+                key: 'truncatedFlows',
+                label: 'Truncated',
+                description: 'Flows containing packets shorter than their original length.'
+            }
+        ];
+        container.replaceChildren();
+        for (const definition of definitions) {
+            const count = finiteNumber(counts[definition.key]);
+            const percent = totalFlows > 0 ? (count / totalFlows) * 100 : 0;
+            const card = document.createElement('div');
+            card.className = 'pcap-finding-hero';
+            const label = document.createElement('div');
+            label.className = 'stat-label';
+            label.textContent = definition.label;
+            const percentElement = document.createElement('div');
+            percentElement.className = 'pcap-finding-percent';
+            percentElement.textContent = `${percent.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+            const countElement = document.createElement('div');
+            countElement.className = 'pcap-finding-count';
+            countElement.textContent = `${formatNumber(count)} of ${formatNumber(totalFlows)} directional flows`;
+            const description = document.createElement('div');
+            description.className = 'pcap-finding-description';
+            description.textContent = definition.description;
+            card.append(label, percentElement, countElement, description);
+            container.appendChild(card);
+        }
     }
 
     function dashboardFromJob(job) {
@@ -457,74 +493,7 @@
     }
 
     function destroyPcapCharts() {
-        destroyPcapChart('findingCounts');
         destroyPcapChart('topConversations');
-    }
-
-    function completenessSentence(job) {
-        return job?.completeness === 'complete'
-            ? 'The result is complete for the bounded capture.'
-            : 'The result is incomplete; counts describe only the available capture.';
-    }
-
-    function renderFindingCountsChart(job, dashboard) {
-        destroyPcapChart('findingCounts');
-        const counts = dashboard.findingCounts || {};
-        const definitions = [
-            { key: 'reverseNotObservedFlows', label: 'Reverse direction not observed', color: 'low' },
-            { key: 'sequenceGapFlows', label: 'Observed TCP sequence gap', color: 'mid' },
-            { key: 'truncatedFlows', label: 'Capture truncated or sliced', color: 'high' }
-        ];
-        const values = definitions.map(item => finiteNumber(counts[item.key]));
-        const hasFindings = values.some(value => value > 0);
-        element('pcapFindingCountsEmpty').hidden = hasFindings;
-        element('pcapFindingCountsChartFrame').hidden = !hasFindings;
-        element('pcapFindingCountsDescription').textContent = `A directional flow can appear in more than one category, so these counts must not be added together. ${completenessSentence(job)}`;
-        if (!hasFindings) {
-            element('pcapFindingCountsEmpty').textContent = job.completeness === 'complete'
-                ? 'No analyzed flows had these findings.'
-                : 'No findings were observed in the available capture.';
-            return;
-        }
-        const colors = chartColors();
-        const totalFlows = finiteNumber(summaryValue(job.summary || {}, ['flows', 'flowCount', 'flow_count']));
-        pcapState.charts.findingCounts = new Chart(element('pcapFindingCountsChart'), {
-            type: 'bar',
-            data: {
-                labels: definitions.map(item => item.label),
-                datasets: [{
-                    label: 'Affected flows',
-                    data: values,
-                    backgroundColor: definitions.map(item => colors[item.color]),
-                    borderWidth: 0
-                }]
-            },
-            options: {
-                indexAxis: 'y',
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            label(context) {
-                                const count = finiteNumber(context.raw);
-                                const percent = totalFlows > 0 ? (count / totalFlows) * 100 : 0;
-                                return `${formatNumber(count)} affected flows (${percent.toLocaleString(undefined, { maximumFractionDigits: 1 })}% of directional flows)`;
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        beginAtZero: true,
-                        ticks: { precision: 0, color: colors.muted },
-                        grid: { color: colors.grid }
-                    },
-                    y: { ticks: { color: colors.text }, grid: { display: false } }
-                }
-            }
-        });
     }
 
     function topChartLimit() {
@@ -536,10 +505,10 @@
         const sequenceMode = pcapState.topConversationMode === 'sequence_gap';
         const sourceRows = sequenceMode ? dashboard.topSequenceGaps : dashboard.topReverse;
         const rows = (Array.isArray(sourceRows) ? sourceRows : []).slice(0, topChartLimit());
-        const title = sequenceMode ? 'Top conversations — Sequence gaps' : 'Top conversations — Reverse visibility';
+        const title = sequenceMode ? 'Top conversations — Sequence gaps' : 'Top conversations — Unidirectional flows';
         const description = sequenceMode
-            ? `Ranked by observed TCP sequence-gap bytes. ${completenessSentence(job)}`
-            : `Ranked by packet count where no reverse flow was observed. ${completenessSentence(job)}`;
+            ? 'Flows with uncovered TCP sequence ranges, ranked by gap bytes.'
+            : 'Traffic observed in only one direction, ranked by packet count.';
         element('pcapTopConversationsHeading').textContent = title;
         element('pcapTopConversationsDescription').textContent = description;
         document.querySelectorAll('[data-pcap-chart-mode]').forEach(button => {
@@ -552,7 +521,7 @@
         if (!rows.length) {
             element('pcapTopConversationsEmpty').textContent = sequenceMode
                 ? 'No observed TCP sequence gaps were found.'
-                : 'No reverse-direction observations were found.';
+                : 'No unidirectional flows were found.';
             return;
         }
         const colors = chartColors();
@@ -655,7 +624,6 @@
         renderEnrichmentStatus(dashboard);
         renderReverseRows(dashboard.topReverse);
         renderSequenceGapRows(dashboard.topSequenceGaps);
-        renderFindingCountsChart(job, dashboard);
         renderTopConversationsChart(job, dashboard);
         updateExportButtons(dashboard);
         element('pcapResults').hidden = false;
