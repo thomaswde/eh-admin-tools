@@ -55,6 +55,27 @@ class ImportClient:
         return {}
 
 
+def test_import_parser_preserves_multiline_descriptions_and_quoted_network_lists(tmp_path):
+    manager = LocalityImportManager(tmp_path, username="tester", settings=settings())
+    content = (
+        'Name,Network,Type,Description\r\n'
+        '"Office, East","10.0.0.0/8, 192.168.0.0/16",yes,"First line\r\n'
+        'Second ""quoted"" line"\r\n'
+    ).encode()
+
+    rows = manager._parse_csv(content)
+
+    assert rows == [
+        {
+            "rowNumber": 2,
+            "name": "Office, East",
+            "networks": ["10.0.0.0/8", "192.168.0.0/16"],
+            "external": True,
+            "description": 'First line\r\nSecond "quoted" line',
+        }
+    ]
+
+
 def test_import_persists_every_row_outcome_and_exports_after_restart(tmp_path):
     asyncio.run(_test_import_persists_every_row_outcome_and_exports_after_restart(tmp_path))
 
