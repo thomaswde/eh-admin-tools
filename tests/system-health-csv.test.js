@@ -8,6 +8,7 @@ const source = fs.readFileSync(
     path.join(__dirname, '..', 'js', 'modules', 'system-health-report.js'),
     'utf8'
 );
+const SystemHealthViewModel = require('../js/modules/system-health-view-model.js');
 const context = vm.createContext({
     console,
     window: {},
@@ -15,7 +16,7 @@ const context = vm.createContext({
     state: { apiConfig: {} },
     CsvUtils: require('../js/utils/csv.js'),
     SystemHealthCollection: require('../js/modules/system-health-collection.js'),
-    SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
+    SystemHealthViewModel
 });
 vm.runInContext(source, context);
 
@@ -23,6 +24,8 @@ const csvApi = vm.runInContext(`({
     parseSystemHealthCsv,
     buildSystemHealthReportFromUnifiedCsv,
     systemHealthUnifiedSummaryCsv,
+    buildSystemHealthCachePayload,
+    systemHealthReportFromCachePayload,
     systemHealthRows,
     systemHealthPacketstoreRows,
     systemHealthPacketstoreLookbackRows,
@@ -242,6 +245,59 @@ test('one unified summary CSV round-trips every chart input and report metadata'
     assert.equal(first.collectionStatus.pkts, 'complete');
     assert.equal(first.collectionStatus.trigger_drops, 'zero_valued');
     assert.equal(first.health_conditions[0].message, 'quoted "condition"');
+});
+
+test('System Health cache omits raw time-series rows while preserving every summary projection', () => {
+    const original = fixtureReport();
+    original.target = { type: 'enterprise', host: 'sensor.example.test', verifyTls: true };
+    original.errors = ['sensor warning', 'x'.repeat(600)];
+    const rawMarker = 'raw-api-row-that-must-not-enter-the-cache';
+    for (const metric of Object.values(original.metrics)) {
+        metric.rows = Array.from({ length: 250 }, (_, index) => ({
+            appliance_id: original.appliances[0].id,
+            timestamp_ms: index,
+            value: index,
+            rawMarker
+        }));
+    }
+
+    const payload = csvApi.buildSystemHealthCachePayload(original);
+    const encoded = JSON.stringify(payload);
+    const restored = csvApi.systemHealthReportFromCachePayload(payload);
+
+    assert.equal(payload.projectionVersion, 1);
+    assert.equal(encoded.includes(rawMarker), false);
+    assert.ok(encoded.length < JSON.stringify(original).length / 10);
+    assert.equal(restored.source_type, 'cached_api_summary');
+    assert.equal(restored.target.type, original.target.type);
+    assert.equal(restored.target.host, original.target.host);
+    assert.equal(restored.target.verifyTls, true);
+    assert.deepEqual(Array.from(restored.errors), ['sensor warning', 'x'.repeat(500)]);
+    const originalProjection = SystemHealthViewModel.buildRendererProjection(original);
+    const restoredProjection = SystemHealthViewModel.buildRendererProjection(restored);
+    delete originalProjection.metadata;
+    delete restoredProjection.metadata;
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(restoredProjection)),
+        JSON.parse(JSON.stringify(originalProjection))
+    );
+    assert.equal(restored.metrics.pkts.rows.length, 0);
+});
+
+test('System Health cache rejects oversized or structured scalar cells', () => {
+    const payload = csvApi.buildSystemHealthCachePayload(fixtureReport());
+    payload.summaryRows[0].appliance_name = 'x'.repeat((128 * 1024) + 1);
+    assert.throws(
+        () => csvApi.systemHealthReportFromCachePayload(payload),
+        /cell-size limit/
+    );
+
+    const structured = csvApi.buildSystemHealthCachePayload(fixtureReport());
+    structured.summaryRows[0].appliance_name = { unexpected: true };
+    assert.throws(
+        () => csvApi.systemHealthReportFromCachePayload(structured),
+        /must be a scalar/
+    );
 });
 
 test('unified CSV preserves opaque IDs and legitimate zero values', () => {

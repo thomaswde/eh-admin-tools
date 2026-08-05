@@ -83,7 +83,9 @@ canonical result in `api-response-cache` beside `chart-themes`. Reopening that r
 a reload restores the historical result immediately and labels it as cached; generate or run the
 report again whenever current data is required. The cache stores completed report data rather than
 partial Metrics XID polling responses, so one result always retains its original time window and
-collection statuses.
+collection statuses. System Health caches its compact per-sensor summary, which preserves charts,
+findings, tables, PDF, and PowerPoint output without duplicating raw time-series rows. Use a fresh
+live report when the detailed **All API data** export is needed.
 
 Entries are organized as `<local-user>/<connection-id>/reports/<report>.json`. Each connection
 directory includes a `connection.json` manifest containing only the normalized deployment type and

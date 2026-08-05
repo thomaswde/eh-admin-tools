@@ -12,6 +12,7 @@ const SYSTEM_HEALTH_OFFLINE_LINE_HEIGHT = 15;
 const SYSTEM_HEALTH_OFFLINE_BOTTOM_PAD = 14;
 
 const SYSTEM_HEALTH_SUMMARY_CSV_SCHEMA_VERSION = '3';
+const SYSTEM_HEALTH_CACHE_PROJECTION_VERSION = 1;
 const SYSTEM_HEALTH_MAX_CSV_BYTES = 5 * 1024 * 1024;
 const SYSTEM_HEALTH_MAX_CSV_ROWS = 1000;
 const SYSTEM_HEALTH_MAX_CSV_CELL_CHARACTERS = 128 * 1024;
@@ -118,15 +119,19 @@ async function restoreSystemHealthReportCache() {
     systemHealthState.cacheRestoreAttempted = true;
     try {
         const cached = await ExtraHopAPI.getReportCache('system-health');
-        const report = cached?.payload?.report;
-        if (!cached?.cached || !report || typeof report !== 'object' || Array.isArray(report)) return;
+        if (!cached?.cached) return;
+        const report = systemHealthReportFromCachePayload(cached.payload);
+        if (!report) return;
         systemHealthState.currentReport = report;
         resetSystemHealthPages();
         document.getElementById('systemHealthResults').style.display = 'block';
         renderSystemHealthReport(report);
         updateSystemHealthCsvButtons();
         const cachedLabel = cached.cachedAt ? new Date(cached.cachedAt).toLocaleString() : 'an earlier session';
-        setSystemHealthCsvStatus(`Loaded the cached report saved ${cachedLabel} for this connection. Run report to refresh it.`);
+        const detail = report.source_type === 'cached_api_summary'
+            ? ' Detailed API response rows are not retained in the compact cache.'
+            : '';
+        setSystemHealthCsvStatus(`Loaded the cached report saved ${cachedLabel} for this connection.${detail} Run report to refresh it.`);
     } catch (error) {
         console.warn('Could not restore the System Health report cache:', error);
     }
@@ -350,7 +355,7 @@ async function generateSystemHealthReport() {
         renderSystemHealthReport(report);
         updateSystemHealthCsvButtons();
         try {
-            await ExtraHopAPI.saveReportCache('system-health', { report });
+            await ExtraHopAPI.saveReportCache('system-health', buildSystemHealthCachePayload(report));
         } catch (error) {
             console.warn('Could not save the System Health report cache:', error);
             setSystemHealthCsvStatus(`Report completed, but its local cache was not updated: ${error.message}`, true);
@@ -2497,8 +2502,10 @@ function updateSystemHealthCsvButtons() {
     if (apiExportButton) {
         const report = systemHealthState.currentReport;
         apiExportButton.disabled = !report || report.source_type !== 'api' || !canExportApiRows;
-        apiExportButton.title = report && report.source_type !== 'api'
-            ? 'Detailed API response rows are not present in a unified summary CSV.'
+        apiExportButton.title = report && report.source_type === 'cached_api_summary'
+            ? 'Detailed API response rows are not retained in the compact report cache. Run report to collect them.'
+            : report && report.source_type !== 'api'
+                ? 'Detailed API response rows are not present in a unified summary CSV.'
             : !canExportApiRows
                 ? 'Connect to an ExtraHop deployment to export detailed API rows.'
                 : '';
@@ -2855,6 +2862,73 @@ function exportSystemHealthSensorDetailCsv() {
 
 function systemHealthUnifiedSummaryCsv(report) {
     return systemHealthRowsToCsv(SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS, systemHealthUnifiedSummaryRows(report));
+}
+
+function buildSystemHealthCachePayload(report) {
+    const summaryRows = systemHealthUnifiedSummaryRows(report).map(row => Object.fromEntries(
+        SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS.map(column => [
+            column,
+            column === 'report_errors_json' ? '' : row[column] ?? ''
+        ])
+    ));
+    const target = report && report.target || {};
+    return {
+        projectionVersion: SYSTEM_HEALTH_CACHE_PROJECTION_VERSION,
+        target: {
+            type: String(target.type || '').slice(0, 40),
+            tenant: String(target.tenant || '').slice(0, 120),
+            host: String(target.host || '').slice(0, 240),
+            verifyTls: target.verifyTls !== false
+        },
+        errors: systemHealthCacheErrors(report && report.errors),
+        summaryRows
+    };
+}
+
+function systemHealthCacheErrors(errors) {
+    return (Array.isArray(errors) ? errors : [])
+        .slice(0, 1000)
+        .map(error => String(error).slice(0, 500));
+}
+
+function validateSystemHealthCacheRows(rows) {
+    if (!Array.isArray(rows) || !rows.length || rows.length > SYSTEM_HEALTH_MAX_CSV_ROWS) {
+        throw new Error('The cached System Health summary has an invalid sensor count.');
+    }
+    return rows.map((row, rowIndex) => {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) {
+            throw new Error(`Cached System Health row ${rowIndex + 1} is invalid.`);
+        }
+        return Object.fromEntries(SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS.map(column => {
+            const value = row[column] ?? '';
+            if (value && typeof value === 'object') {
+                throw new Error(`Cached System Health ${column} must be a scalar value.`);
+            }
+            if (String(value).length > SYSTEM_HEALTH_MAX_CSV_CELL_CHARACTERS) {
+                throw new Error(`Cached System Health ${column} exceeds the cell-size limit.`);
+            }
+            return [column, value];
+        }));
+    });
+}
+
+function systemHealthReportFromCachePayload(payload) {
+    // Read the initial full-report format for a smooth transition. New writes
+    // always use the compact summary projection below.
+    const legacy = payload && payload.report;
+    if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) return legacy;
+    if (
+        !payload
+        || payload.projectionVersion !== SYSTEM_HEALTH_CACHE_PROJECTION_VERSION
+        || !Array.isArray(payload.summaryRows)
+    ) return null;
+    const report = buildSystemHealthReportFromUnifiedCsv(validateSystemHealthCacheRows(payload.summaryRows));
+    report.source_type = 'cached_api_summary';
+    report.target = payload.target && typeof payload.target === 'object' && !Array.isArray(payload.target)
+        ? payload.target
+        : {};
+    report.errors = systemHealthCacheErrors(payload.errors);
+    return report;
 }
 
 function systemHealthUnifiedSummaryRows(report) {

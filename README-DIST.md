@@ -123,6 +123,9 @@ Completed Device Discovery, Records, and System Health results are saved under t
 same ExtraHop deployment restores the latest result immediately and labels it as cached. Use the
 page's generate or run button to replace it with current data.
 
+System Health stores the compact per-sensor summary needed for its charts and normal exports, not
+the much larger raw time-series rows. Run a fresh live report when **All API data** is required.
+
 The folder is organized by local computer user and an opaque connection ID. A `connection.json`
 file in each connection folder identifies its deployment type and normalized tenant or host; it
 does not contain credentials. Cached reports can contain sensitive operational data, so protect
