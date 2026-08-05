@@ -35,6 +35,12 @@ git diff --check
 
 The GitLab pipeline runs the JavaScript, Python, lint, and distribution stages. Live ExtraHop coverage remains a separate manual integration activity; a green fixture suite is not evidence that every supported product version or deployment topology was exercised.
 
+## Task completion
+
+- After completing and verifying an implementation task, commit the completed work in rational topic commits and run `python scripts/build_dist.py` without requiring a separate user request.
+- Skip the commit or distribution build only when the user explicitly asks to leave changes uncommitted or not to build the distribution.
+- Continue to preserve unrelated or incomplete user changes; include other completed dirty work only when the user has asked Codex to own it, and separate it by topic when practical.
+
 ## Publishing
 
 - GitLab is authoritative. Commit and push `main` to the `gitlab` remote first.
