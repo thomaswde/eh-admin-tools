@@ -8,36 +8,40 @@ import re
 import sys
 from pathlib import Path
 
-TS = ("est_lookback_sec", "input_load", "compress_load", "disk_write_load")
-TOTAL = ("pkts", "pkts_dropped", "pkts_dropped_wrslow", "secrets", "secrets_dropped", "if_drops", "blocks_dropped")
-KNOWN = frozenset(TS + TOTAL)
-POST = re.compile(r"^(?:/api/v1)?/metrics(?:/totalbyobject)?/?$")
-NEXT = re.compile(r"^(?:/api/v1)?/metrics/next/([0-9]+)/?$")
-CYCLE = re.compile(r"^[0-9]{1,4}(?:sec|min|hr|day)$")
+TIME_SERIES_METRICS = ("est_lookback_sec", "input_load", "compress_load", "disk_write_load")
+TOTAL_METRICS = ("pkts", "pkts_dropped", "pkts_dropped_wrslow", "secrets", "secrets_dropped", "if_drops", "blocks_dropped")
+KNOWN_METRICS = frozenset(TIME_SERIES_METRICS + TOTAL_METRICS)
+METRICS_REQUEST_PATTERN = re.compile(r"^(?:/api/v1)?/metrics(?:/totalbyobject)?/?$")
+METRICS_CONTINUATION_PATTERN = re.compile(r"^(?:/api/v1)?/metrics/next/([0-9]+)/?$")
+METRIC_CYCLE_PATTERN = re.compile(r"^(?:auto|[0-9]{1,4}(?:sec|min|hr|day))$")
 MAX_BYTES, MAX_LINE, MAX_ROWS = 64 << 20, 1 << 20, 100_000
 MAX_QUERIES, MAX_NEXT, MAX_STATS = 2_000, 10_000, 10_000
 
 
-class BadInput(RuntimeError):
+class DiagnosticInputError(RuntimeError):
     pass
 
 
-def ident(v):
-    v = "" if v is None or isinstance(v, bool) else str(v)
-    return v if v.isdecimal() else None
+def decimal_identifier(raw_value):
+    normalized = "" if raw_value is None or isinstance(raw_value, bool) else str(raw_value)
+    return normalized if normalized.isdecimal() else None
 
 
-def num(v):
-    return v if not isinstance(v, bool) and isinstance(v, (int, float)) and math.isfinite(v) else None
+def finite_number(raw_value):
+    return raw_value if (
+        not isinstance(raw_value, bool)
+        and isinstance(raw_value, (int, float))
+        and math.isfinite(raw_value)
+    ) else None
 
 
-def nat(v):
-    v = num(v)
-    return int(v) if v is not None and v >= 0 else None
+def nonnegative_integer(raw_value):
+    normalized = finite_number(raw_value)
+    return int(normalized) if normalized is not None and normalized >= 0 else None
 
 
-def endpoint(v):
-    return str(v or "").split("?", 1)[0].rstrip("/") or "/"
+def normalize_endpoint_path(raw_value):
+    return str(raw_value or "").split("?", 1)[0].rstrip("/") or "/"
 
 
 class StatBudget:
@@ -56,34 +60,34 @@ class StatBudget:
         return True
 
 
-class Aliases:
+class IdentifierAliases:
     def __init__(self) -> None:
         self.systems, self.objects, self.queries = {}, {}, {}
 
     @staticmethod
-    def add(table, raw, prefix):
+    def add_alias(table, raw, prefix):
         if raw not in table:
             table[raw] = f"{prefix}-{len(table) + 1:03d}"
         return table[raw]
 
-    def system(self, v):
-        raw = ident(v)
-        return self.add(self.systems, raw, "system") if raw else None
+    def system(self, raw_value):
+        raw = decimal_identifier(raw_value)
+        return self.add_alias(self.systems, raw, "system") if raw else None
 
-    def obj(self, v):
-        raw = ident(v)
+    def metric_object(self, raw_value):
+        raw = decimal_identifier(raw_value)
         if not raw:
             return None
-        return self.systems.get(raw) or self.add(self.objects, raw, "metric-object")
+        return self.systems.get(raw) or self.add_alias(self.objects, raw, "metric-object")
 
-    def query(self, v):
-        raw = ident(v)
-        return self.add(self.queries, raw, "query") if raw else None
+    def query_id(self, raw_value):
+        raw = decimal_identifier(raw_value)
+        return self.add_alias(self.queries, raw, "query") if raw else None
 
 
-def inputs(base):
+def discover_input_paths(base):
     if not base.is_file():
-        raise BadInput("The input JSONL file was not found.")
+        raise DiagnosticInputError("The input JSONL file was not found.")
     old = []
     for p in base.parent.glob(f"{base.name}.*"):
         tail = p.name[len(base.name) + 1 :]
@@ -92,9 +96,9 @@ def inputs(base):
     return [p for _, p in sorted(old, reverse=True)] + [base]
 
 
-def load(paths):
+def load_jsonl_rows(paths):
     if sum(p.stat().st_size for p in paths) > MAX_BYTES:
-        raise BadInput("The API logs exceed the 64 MiB input limit.")
+        raise DiagnosticInputError("The API logs exceed the 64 MiB input limit.")
     rows = []
     info, lines = {"bad": 0, "large": 0, "other": 0}, 0
     for p in paths:
@@ -104,7 +108,7 @@ def load(paths):
                     continue
                 lines += 1
                 if lines > MAX_ROWS:
-                    raise BadInput("The API logs exceed the source-entry limit.")
+                    raise DiagnosticInputError("The API logs exceed the source-entry limit.")
                 if len(raw) > MAX_LINE:
                     info["large"] += 1
                     continue
@@ -120,57 +124,64 @@ def load(paths):
     return rows, info
 
 
-def packetstore(row):
+def parse_packetstore_request(row):
     body = row.get("request_body")
-    if str(row.get("method", "")).upper() != "POST" or not POST.fullmatch(endpoint(row.get("endpoint"))):
+    if (
+        str(row.get("method", "")).upper() != "POST"
+        or not METRICS_REQUEST_PATTERN.fullmatch(normalize_endpoint_path(row.get("endpoint")))
+    ):
         return None
     if not isinstance(body, dict) or body.get("metric_category") != "cpc":
         return None
     specs = body.get("metric_specs")
     if not isinstance(specs, list):
         return None
-    names = [x.get("name") for x in specs if isinstance(x, dict) and x.get("name") in KNOWN]
+    names = [x.get("name") for x in specs if isinstance(x, dict) and x.get("name") in KNOWN_METRICS]
     skipped = len(specs) - len(names)
     return (body, names, skipped) if names else None
 
 
-def xid(row):
-    response = row.get("response")
-    return ident(response.get("xid")) if isinstance(response, dict) else None
+def response_xid(row):
+    response_body = row.get("response")
+    return decimal_identifier(response_body.get("xid")) if isinstance(response_body, dict) else None
 
 
-def value(v, depth=0):
+def sanitize_numeric_structure(raw_value, depth=0):
     if depth == 6:
         return {"omitted_type": "depth_limit"}
-    n = num(v)
-    if n is not None:
-        return n
-    if v is None:
+    normalized_number = finite_number(raw_value)
+    if normalized_number is not None:
+        return normalized_number
+    if raw_value is None:
         return None
-    if isinstance(v, list):
-        out = [value(x, depth + 1) for x in v[:64]]
-        if len(v) > 64:
-            out.append({"omitted_type": "item_limit", "omitted_count": len(v) - 64})
+    if isinstance(raw_value, list):
+        out = [sanitize_numeric_structure(item, depth + 1) for item in raw_value[:64]]
+        if len(raw_value) > 64:
+            out.append({"omitted_type": "item_limit", "omitted_count": len(raw_value) - 64})
         return out
-    if isinstance(v, dict):
-        out = {k: value(v[k], depth + 1) for k in ("value", "freq") if k in v}
-        if len(v) > len(out):
-            out["omitted_field_count"] = len(v) - len(out)
+    if isinstance(raw_value, dict):
+        out = {
+            key: sanitize_numeric_structure(raw_value[key], depth + 1)
+            for key in ("value", "freq")
+            if key in raw_value
+        }
+        if len(raw_value) > len(out):
+            out["omitted_field_count"] = len(raw_value) - len(out)
         return out or {"omitted_type": "object"}
-    if isinstance(v, bool):
+    if isinstance(raw_value, bool):
         return {"omitted_type": "boolean"}
-    if isinstance(v, (int, float)):
+    if isinstance(raw_value, (int, float)):
         return {"omitted_type": "non_finite_number"}
-    return {"omitted_type": type(v).__name__.lower()}
+    return {"omitted_type": type(raw_value).__name__.lower()}
 
 
-def relative(v, start):
-    v = num(v)
-    return v - start if v is not None and start is not None else None
+def relative_milliseconds(raw_value, start):
+    normalized = finite_number(raw_value)
+    return normalized - start if normalized is not None and start is not None else None
 
 
-def error(row):
-    status = nat(row.get("status_code"))
+def classify_error(row):
+    status = nonnegative_integer(row.get("status_code"))
     if status is None and "error" in row:
         return "network_error"
     if status is not None and 200 <= status < 300:
@@ -187,14 +198,18 @@ def error(row):
     return "upstream_client_error" if status is not None and status >= 400 else "unknown_error"
 
 
-def request(body, names, skipped, aliases):
-    start, end = num(body.get("from")), num(body.get("until"))
+def build_sanitized_request(body, names, skipped, aliases):
+    start, end = finite_number(body.get("from")), finite_number(body.get("until"))
     ids = body.get("object_ids") if isinstance(body.get("object_ids"), list) else []
     systems = [x for raw in ids if (x := aliases.system(raw))]
     return {
         "metric_category": "cpc",
         "object_type": "system" if body.get("object_type") == "system" else "unexpected_or_omitted",
-        "cycle": str(body.get("cycle", "")).lower() if CYCLE.fullmatch(str(body.get("cycle", "")).lower()) else None,
+        "cycle": (
+            str(body.get("cycle", "")).lower()
+            if METRIC_CYCLE_PATTERN.fullmatch(str(body.get("cycle", "")).lower())
+            else None
+        ),
         "window_duration_ms": end - start if start is not None and end is not None else None,
         "systems": systems,
         "system_identifier_count_omitted": len(ids) - len(systems),
@@ -203,25 +218,28 @@ def request(body, names, skipped, aliases):
     }, start
 
 
-def metric_tuple(values, names):
+def build_sanitized_metric_tuple(values, names):
     if not isinstance(values, list):
         return {"status": "non_array", "expected_count": len(names), "actual_count": None,
-                "value": value(values), "missing_metric_names": names}
+                "value": sanitize_numeric_structure(values), "missing_metric_names": names}
     actual, expected = len(values), len(names)
     out = {
         "status": "exact" if actual == expected else "short" if actual < expected else "long",
         "expected_count": expected,
         "actual_count": actual,
-        "positions": [{"position": i, "metric": names[i], "value": value(values[i])} for i in range(min(actual, expected))],
+        "positions": [
+            {"position": index, "metric": names[index], "value": sanitize_numeric_structure(values[index])}
+            for index in range(min(actual, expected))
+        ],
     }
     if actual < expected:
         out["missing_metric_names"] = names[actual:]
     if actual > expected:
-        out["unmapped_values"] = [value(x) for x in values[expected:]]
+        out["unmapped_values"] = [sanitize_numeric_structure(item) for item in values[expected:]]
     return out
 
 
-def response(row, names, start, aliases, budget):
+def build_sanitized_response(row, names, start, aliases, budget):
     raw = row.get("response")
     state = "entry_truncated" if row.get("entry_truncated") is True else (
         "response_not_captured" if "response" not in row else
@@ -234,13 +252,13 @@ def response(row, names, start, aliases, budget):
         return out
     cycle = str(raw.get("cycle", "")).lower()
     out.update({
-        "cycle": cycle if CYCLE.fullmatch(cycle) else None,
-        "from_offset_from_request_start_ms": relative(raw.get("from"), start),
-        "until_offset_from_request_start_ms": relative(raw.get("until"), start),
-        "clock_offset_from_request_start_ms": relative(raw.get("clock"), start),
+        "cycle": cycle if METRIC_CYCLE_PATTERN.fullmatch(cycle) else None,
+        "from_offset_from_request_start_ms": relative_milliseconds(raw.get("from"), start),
+        "until_offset_from_request_start_ms": relative_milliseconds(raw.get("until"), start),
+        "clock_offset_from_request_start_ms": relative_milliseconds(raw.get("clock"), start),
         "system": aliases.system(raw.get("node_id")),
-        "num_results": nat(raw.get("num_results")),
-        "query": aliases.query(raw.get("xid")),
+        "num_results": nonnegative_integer(raw.get("num_results")),
+        "query": aliases.query_id(raw.get("xid")),
     })
     stats = raw.get("stats")
     if isinstance(stats, list):
@@ -250,54 +268,55 @@ def response(row, names, start, aliases, budget):
             if not budget.take():
                 continue
             safe.append({
-                "metric_object": aliases.obj(stat.get("oid")),
-                "time_offset_from_request_start_ms": relative(stat.get("time"), start),
-                "duration_ms": num(stat.get("duration")),
-                "tuple": metric_tuple(stat.get("values"), names),
+                "metric_object": aliases.metric_object(stat.get("oid")),
+                "time_offset_from_request_start_ms": relative_milliseconds(stat.get("time"), start),
+                "duration_ms": finite_number(stat.get("duration")),
+                "tuple": build_sanitized_metric_tuple(stat.get("values"), names),
             })
         out["stats"] = safe
         out["non_object_stat_count_omitted"] = len(stats) - len(objects)
     return out
 
 
-def attempt(row, names, start, aliases, budget):
+def build_sanitized_attempt(row, names, start, aliases, budget):
     return {
-        "status_code": nat(row.get("status_code")),
-        "elapsed_ms": num(row.get("elapsed_ms")),
-        "response_bytes": nat(row.get("response_bytes")),
-        "error_category": error(row),
-        "response": response(row, names, start, aliases, budget),
+        "status_code": nonnegative_integer(row.get("status_code")),
+        "elapsed_ms": finite_number(row.get("elapsed_ms")),
+        "response_bytes": nonnegative_integer(row.get("response_bytes")),
+        "error_category": classify_error(row),
+        "response": build_sanitized_response(row, names, start, aliases, budget),
     }
 
 
-def build(base):
-    rows, info = load(inputs(base))
+def build_packetstore_diagnostic(base):
+    rows, info = load_jsonl_rows(discover_input_paths(base))
     selected, next_rows, post_at, no_body = [], {}, [], 0
     for pos, row in enumerate(rows):
-        method, ep = str(row.get("method", "")).upper(), endpoint(row.get("endpoint"))
-        if method == "POST" and POST.fullmatch(ep):
+        method = str(row.get("method", "")).upper()
+        endpoint_path = normalize_endpoint_path(row.get("endpoint"))
+        if method == "POST" and METRICS_REQUEST_PATTERN.fullmatch(endpoint_path):
             post_at.append(pos)
-            found = packetstore(row)
+            found = parse_packetstore_request(row)
             if found:
                 selected.append((pos, row, *found))
             elif not isinstance(row.get("request_body"), dict):
                 no_body += 1
-        elif method == "GET" and (match := NEXT.fullmatch(ep)):
+        elif method == "GET" and (match := METRICS_CONTINUATION_PATTERN.fullmatch(endpoint_path)):
             next_rows.setdefault(match.group(1), []).append((pos, row))
 
     dropped_queries = max(0, len(selected) - MAX_QUERIES)
     selected = selected[:MAX_QUERIES]
-    aliases, budget = Aliases(), StatBudget(MAX_STATS)
+    aliases, budget = IdentifierAliases(), StatBudget(MAX_STATS)
     for _, _, body, _, _ in selected:
         for raw in body.get("object_ids", []) if isinstance(body.get("object_ids"), list) else []:
             aliases.system(raw)
     for _, row, _, _, _ in selected:
-        aliases.query(xid(row))
+        aliases.query_id(response_xid(row))
 
     queries, matched, next_count, next_limit = [], set(), 0, False
     for number, (pos, row, body, names, skipped) in enumerate(selected, 1):
-        req, start = request(body, names, skipped, aliases)
-        raw_xid = xid(row)
+        sanitized_request, start = build_sanitized_request(body, names, skipped, aliases)
+        raw_xid = response_xid(row)
         following = []
         if raw_xid:
             stop = next((x for x in post_at if x > pos), len(rows))
@@ -307,14 +326,19 @@ def build(base):
                 if next_count == MAX_NEXT:
                     next_limit = True
                     break
-                following.append(attempt(nxt, names, start, aliases, budget))
+                following.append(build_sanitized_attempt(nxt, names, start, aliases, budget))
                 next_count += 1
-        query_kind = "packetstore_probe" if names == [TS[0]] else (
-            "packetstore_time_series" if names == list(TS) else
-            "packetstore_totals" if names == list(TOTAL) else "packetstore_mixed_or_unexpected_order"
+        query_kind = "packetstore_probe" if names == [TIME_SERIES_METRICS[0]] else (
+            "packetstore_time_series" if names == list(TIME_SERIES_METRICS) else
+            "packetstore_totals" if names == list(TOTAL_METRICS) else "packetstore_mixed_or_unexpected_order"
         )
-        queries.append({"query_number": number, "kind": query_kind, "request": req,
-                        "initial_attempt": attempt(row, names, start, aliases, budget), "continuations": following})
+        queries.append({
+            "query_number": number,
+            "kind": query_kind,
+            "request": sanitized_request,
+            "initial_attempt": build_sanitized_attempt(row, names, start, aliases, budget),
+            "continuations": following,
+        })
 
     warnings = []
     if not queries:
@@ -351,22 +375,22 @@ def build(base):
     }
 
 
-def save(doc, path):
-    path.parent.mkdir(parents=True, exist_ok=True)
+def save_diagnostic(diagnostic, output_path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError as e:
-        raise BadInput("The requested output file already exists.") from e
+        descriptor = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as error:
+        raise DiagnosticInputError("The requested output file already exists.") from error
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(doc, f, ensure_ascii=True, indent=2, allow_nan=False)
-            f.write("\n")
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output_file:
+            json.dump(diagnostic, output_file, ensure_ascii=True, indent=2, allow_nan=False)
+            output_file.write("\n")
         try:
-            os.chmod(path, 0o600)
+            os.chmod(output_path, 0o600)
         except OSError:
             pass
     except Exception:
-        path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
         raise
 
 
@@ -377,13 +401,13 @@ def main() -> int:
                        for n in range(1, 10_000)
                        if not (source.parent / f"packetstore-diagnostics{'-' + str(n) if n > 1 else ''}.json").exists()), None)
         if target is None:
-            raise BadInput("No unused diagnostic output filename is available.")
-        doc = build(source)
-        save(doc, target)
-    except (BadInput, OSError) as e:
-        print(f"Could not create the diagnostic: {e}", file=sys.stderr)
+            raise DiagnosticInputError("No unused diagnostic output filename is available.")
+        diagnostic = build_packetstore_diagnostic(source)
+        save_diagnostic(diagnostic, target)
+    except (DiagnosticInputError, OSError) as error:
+        print(f"Could not create the diagnostic: {error}", file=sys.stderr)
         return 2
-    summary = doc["capture_summary"]
+    summary = diagnostic["capture_summary"]
     print(f"Wrote {target.name}")
     print(f"Included {summary['packetstore_queries_included']} Packetstore queries and "
           f"{summary['correlated_continuations_included']} correlated continuations.")

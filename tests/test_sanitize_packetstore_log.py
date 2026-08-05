@@ -16,9 +16,9 @@ def query(endpoint="/api/v1/metrics/totalbyobject", response=None, **changes):
         "status_code": 200, "reason": "redacted", "elapsed_ms": 12.5,
         "content_type": "application/json", "response_bytes": 900,
         "request_body": {
-            "cycle": "1hr", "from": 1_700_000_000_000, "until": 1_700_003_600_000,
+            "cycle": "auto", "from": 1_700_000_000_000, "until": 1_700_003_600_000,
             "object_type": "system", "object_ids": ["9007199254740993"], "metric_category": "cpc",
-            "metric_specs": [{"name": x} for x in s.TOTAL], "extra": "****",
+            "metric_specs": [{"name": x} for x in s.TOTAL_METRICS], "extra": "****",
         },
         "response": response or {
             "cycle": "1hr", "from": 1_700_000_000_000, "until": 1_700_003_600_000,
@@ -35,11 +35,12 @@ def query(endpoint="/api/v1/metrics/totalbyobject", response=None, **changes):
 def test_allowlist_keeps_tuple_mapping_and_omits_other_text(tmp_path):
     path = tmp_path / "api-responses.jsonl"
     put(path, [{"method": "GET", "endpoint": "/api/v1/appliances", "response": [{"name": "****"}]}, query()])
-    doc = s.build(path)
+    doc = s.build_packetstore_diagnostic(path)
     text = json.dumps(doc)
     q = doc["queries"][0]
     assert q["kind"] == "packetstore_totals"
     assert q["request"]["systems"] == ["system-001"]
+    assert q["request"]["cycle"] == "auto"
     assert q["request"]["window_duration_ms"] == 3_600_000
     r = q["initial_attempt"]["response"]
     assert r["system"] == "system-001"
@@ -52,12 +53,12 @@ def test_allowlist_keeps_tuple_mapping_and_omits_other_text(tmp_path):
 def test_correlates_continuation_and_reports_short_tuple(tmp_path):
     path = tmp_path / "api-responses.jsonl"
     first = query("/api/v1/metrics", {"xid": "77"})
-    first["request_body"]["metric_specs"] = [{"name": x} for x in s.TS]
+    first["request_body"]["metric_specs"] = [{"name": x} for x in s.TIME_SERIES_METRICS]
     nxt = {"method": "GET", "endpoint": "/api/v1/metrics/next/77", "status_code": 200,
            "response": {"node_id": "9007199254740993", "stats": [{"oid": "9007199254740993",
            "time": 1_700_000_030_000, "duration": 30_000, "values": [10, 20, 30]}]}}
     put(path, [first, {**nxt, "endpoint": "/api/v1/metrics/next/88"}, nxt])
-    doc = s.build(path)
+    doc = s.build_packetstore_diagnostic(path)
     q = doc["queries"][0]
     assert q["initial_attempt"]["response"]["query"] == "query-001"
     assert len(q["continuations"]) == 1
@@ -70,13 +71,13 @@ def test_correlates_continuation_and_reports_short_tuple(tmp_path):
 def test_new_metrics_post_stops_reused_xid_correlation(tmp_path):
     path = tmp_path / "api-responses.jsonl"
     first = query("/api/v1/metrics", {"xid": "77"})
-    first["request_body"]["metric_specs"] = [{"name": x} for x in s.TS]
+    first["request_body"]["metric_specs"] = [{"name": x} for x in s.TIME_SERIES_METRICS]
     other = query("/api/v1/metrics", {"xid": "77"})
     other["request_body"].update(metric_category="capture", metric_specs=[{"name": "bytes"}])
     nxt = {"method": "GET", "endpoint": "/api/v1/metrics/next/77", "status_code": 200,
            "response": {"stats": [{"oid": "1", "time": 1, "duration": 1, "values": [999]}]}}
     put(path, [first, other, nxt])
-    doc = s.build(path)
+    doc = s.build_packetstore_diagnostic(path)
     assert doc["queries"][0]["continuations"] == []
     assert doc["capture_summary"]["uncorrelated_metric_continuations_omitted"] == 1
 
@@ -84,7 +85,7 @@ def test_new_metrics_post_stops_reused_xid_correlation(tmp_path):
 def test_error_text_is_replaced_with_category(tmp_path):
     path = tmp_path / "api-responses.jsonl"
     put(path, [query(status_code=400, response={"error_message": "invalid stat name 'extrahop.system.cpc': ****"})])
-    doc = s.build(path)
+    doc = s.build_packetstore_diagnostic(path)
     text = json.dumps(doc)
     assert doc["queries"][0]["initial_attempt"]["error_category"] == "unsupported_cpc_metric_category"
     assert "****" not in text
@@ -94,7 +95,7 @@ def test_error_text_is_replaced_with_category(tmp_path):
 def test_metadata_mode_is_flagged(tmp_path):
     path = tmp_path / "api-responses.jsonl"
     put(path, [{"method": "POST", "endpoint": "/api/v1/metrics", "status_code": 200, "response_shape": {"xid": "integer"}}])
-    doc = s.build(path)
+    doc = s.build_packetstore_diagnostic(path)
     assert doc["queries"] == []
     assert doc["capture_summary"]["warnings"] == [
         "no_packetstore_requests_found",
@@ -107,8 +108,8 @@ def test_rotations_are_oldest_first_and_output_is_owner_only(tmp_path):
     put(path.with_name(path.name + ".2"), [query(elapsed_ms=2)])
     put(path.with_name(path.name + ".1"), [query(elapsed_ms=1)])
     put(path, [query(elapsed_ms=0)])
-    doc = s.build(path)
+    doc = s.build_packetstore_diagnostic(path)
     out = tmp_path / "diagnostic.json"
-    s.save(doc, out)
+    s.save_diagnostic(doc, out)
     assert [q["initial_attempt"]["elapsed_ms"] for q in doc["queries"]] == [2, 1, 0]
     assert stat.S_IMODE(out.stat().st_mode) == 0o600
