@@ -254,3 +254,22 @@ test('filter-aware bulk selection stages only selected localities for deletion',
     assert.equal(localitiesState.currentLocalities[2]._deleted, true);
     assert.equal(localitiesState.selectedKeys.size, 0);
 });
+
+test('large locality queries render a bounded editable page', () => {
+    const { context, localitiesState } = loadLocalities({});
+    localitiesState.currentLocalities = Array.from({ length: 30000 }, (_, index) => ({
+        id: String(9007199254740993n + BigInt(index)),
+        name: `locality-${index}`,
+        networks: [`10.${Math.floor(index / 256) % 256}.${index % 256}.0/24`],
+        external: false,
+        description: ''
+    }));
+
+    assert.equal(vm.runInContext('getFilteredLocalityEntries().length', context), 30000);
+    assert.equal(vm.runInContext('getVisibleLocalityEntries().length', context), 200);
+    assert.equal(vm.runInContext('getVisibleLocalityEntries()[0].index', context), 0);
+    localitiesState.page = 149;
+    assert.equal(vm.runInContext('getVisibleLocalityEntries().length', context), 200);
+    assert.equal(vm.runInContext('getVisibleLocalityEntries()[0].index', context), 29800);
+    assert.equal(localitiesState.currentLocalities[0].id, '9007199254740993');
+});
