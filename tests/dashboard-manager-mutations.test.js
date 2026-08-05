@@ -308,3 +308,17 @@ test('dashboard inactivity filters do not claim results when usage collection is
 
     assert.equal(matches, false);
 });
+
+test('dashboard inactivity filtering uses the appliance metric clock', () => {
+    const { context } = loadDashboardManager({});
+    const matches = vm.runInContext(`
+        dashboardUsageState.status = 'complete';
+        dashboardUsageState.untilMs = 1_700_200_000_000;
+        dashboardMatchesUsageFilter({
+            id: '1',
+            _usage: { lastViewedBucketEndMs: 1_700_086_400_000 }
+        }, '30');
+    `, context);
+
+    assert.equal(matches, false);
+});

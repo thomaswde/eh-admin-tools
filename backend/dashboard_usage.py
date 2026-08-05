@@ -181,6 +181,28 @@ def summarize_dashboard_views(chunks: list[dict[str, Any]]) -> dict[str, dict[st
     return by_id
 
 
+def _response_window(
+    chunks: list[dict[str, Any]],
+    *,
+    lookback_days: int,
+    fallback_until_ms: int,
+) -> tuple[int, int]:
+    response_from = [
+        chunk["from"]
+        for chunk in chunks
+        if isinstance(chunk.get("from"), int) and chunk["from"] > 0
+    ]
+    response_until = [
+        value
+        for chunk in chunks
+        for value in (chunk.get("until"), chunk.get("clock"))
+        if isinstance(value, int) and value > 0
+    ]
+    until_ms = max(response_until, default=fallback_until_ms)
+    from_ms = min(response_from, default=until_ms - lookback_days * DAY_MS)
+    return from_ms, until_ms
+
+
 async def collect_dashboard_usage(
     client: ExtraHopClient,
     *,
@@ -193,12 +215,14 @@ async def collect_dashboard_usage(
     days = int(lookback_days)
     if days < 1 or days > MAX_LOOKBACK_DAYS:
         raise ValueError(f"lookback_days must be between 1 and {MAX_LOOKBACK_DAYS}")
-    until_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
-    from_ms = until_ms - days * DAY_MS
+    fallback_until_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
     body = {
         "cycle": DASHBOARD_VIEW_CYCLE,
-        "from": from_ms,
-        "until": until_ms,
+        # ExtraHop evaluates negative windows and zero against its own clock.
+        # Workstation time can differ enough to make an otherwise valid query
+        # return a successful response with no metric buckets.
+        "from": -days * DAY_MS,
+        "until": 0,
         "object_type": "system",
         "object_ids": [0],
         "metric_category": DASHBOARD_VIEW_CATEGORY,
@@ -213,6 +237,11 @@ async def collect_dashboard_usage(
         sleep=sleep,
     )
     by_id = summarize_dashboard_views(chunks)
+    from_ms, until_ms = _response_window(
+        chunks,
+        lookback_days=days,
+        fallback_until_ms=fallback_until_ms,
+    )
     return {
         "status": "complete",
         "fromMs": from_ms,
@@ -222,7 +251,7 @@ async def collect_dashboard_usage(
         "metric": DASHBOARD_VIEW_METRIC,
         "lastViewedByDashboardId": by_id,
         "notice": (
-            f"Dashboard views are derived from hourly metric buckets in the last {days} days. "
+            f"Dashboard views are derived from appliance-relative hourly metric buckets in the last {days} days. "
             "No recorded view does not prove that a dashboard has never been viewed."
         ),
     }

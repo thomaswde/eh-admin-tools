@@ -59,7 +59,11 @@ function attachDashboardUsage(dashboards, usage) {
     });
 }
 
-function dashboardMatchesUsageFilter(dashboard, filterValue, nowMs = Date.now()) {
+function dashboardMatchesUsageFilter(
+    dashboard,
+    filterValue,
+    nowMs = dashboardUsageState.untilMs || Date.now()
+) {
     const normalized = String(filterValue || '');
     if (!normalized) return true;
     if (!DASHBOARD_USAGE_FILTER_DAYS.has(normalized)) return true;

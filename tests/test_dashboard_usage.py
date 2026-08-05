@@ -15,10 +15,13 @@ class FakeClient:
 
 
 class DashboardUsageTests(unittest.IsolatedAsyncioTestCase):
-    async def test_collects_hourly_dashboard_views_with_one_absolute_window(self):
+    async def test_collects_hourly_dashboard_views_with_one_appliance_relative_window(self):
         unsafe_id = 9007199254740993
         client = FakeClient([{
             "cycle": "1hr",
+            "from": 1_780_200_000_000 - 30 * 86_400_000,
+            "until": 1_780_200_000_000,
+            "clock": 1_780_200_000_500,
             "node_id": "0",
             "stats": [
                 {
@@ -55,7 +58,7 @@ class DashboardUsageTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["fromMs"], 1_780_200_000_000 - 30 * 86_400_000)
-        self.assertEqual(result["untilMs"], 1_780_200_000_000)
+        self.assertEqual(result["untilMs"], 1_780_200_000_500)
         self.assertEqual(result["cycle"], "1hr")
         self.assertEqual(
             result["lastViewedByDashboardId"][str(unsafe_id)],
@@ -74,8 +77,38 @@ class DashboardUsageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["object_ids"], [0])
         self.assertEqual(request["metric_category"], "ui")
         self.assertEqual(request["metric_specs"], [{"name": "_bi_dashboard_views_id"}])
-        self.assertEqual(request["from"], result["fromMs"])
-        self.assertEqual(request["until"], result["untilMs"])
+        self.assertEqual(request["from"], -30 * 86_400_000)
+        self.assertEqual(request["until"], 0)
+
+    async def test_uses_appliance_window_when_workstation_clock_differs(self):
+        appliance_until = 1_700_086_400_000
+        client = FakeClient([{
+            "cycle": "1hr",
+            "from": appliance_until - 86_400_000,
+            "until": appliance_until,
+            "clock": appliance_until + 500,
+            "stats": [{
+                "time": appliance_until - 3_600_000,
+                "duration": 3_600_000,
+                "values": [[{
+                    "key": {"key_type": "intval", "intval": 42},
+                    "value": 1,
+                }]],
+            }],
+        }])
+
+        result = await collect_dashboard_usage(
+            client,
+            lookback_days=1,
+            now_ms=1_780_200_000_000,
+        )
+
+        request = json.loads(client.calls[0][2]["body"])
+        self.assertEqual(request["from"], -86_400_000)
+        self.assertEqual(request["until"], 0)
+        self.assertEqual(result["fromMs"], appliance_until - 86_400_000)
+        self.assertEqual(result["untilMs"], appliance_until + 500)
+        self.assertIn("42", result["lastViewedByDashboardId"])
 
     async def test_drains_bounded_continuation_results(self):
         client = FakeClient([
