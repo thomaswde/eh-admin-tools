@@ -154,3 +154,30 @@ test('ExtraHop proxy requests have a browser deadline that aborts the fetch', as
     );
     assert.equal(fetchSignal.aborted, true);
 });
+
+test('report cache helpers use the connection-scoped local backend routes', async () => {
+    const calls = [];
+    const context = vm.createContext({
+        console,
+        window: {},
+        fetch: async (url, options) => {
+            calls.push({ url, options });
+            return {
+                status: 200,
+                ok: true,
+                text: async () => JSON.stringify({ cached: true })
+            };
+        }
+    });
+    vm.runInContext(source('js/api-client/extrahop-api.js'), context);
+    const ExtraHopAPI = vm.runInContext('ExtraHopAPI', context);
+
+    await ExtraHopAPI.getReportCache('system-health');
+    await ExtraHopAPI.saveReportCache('system-health', { report: { source_type: 'api' } });
+
+    assert.equal(calls[0].url, '/backend/report-cache/system-health');
+    assert.equal(calls[0].options.method, 'GET');
+    assert.equal(calls[0].options.cache, 'no-store');
+    assert.equal(calls[1].options.method, 'PUT');
+    assert.deepEqual(JSON.parse(calls[1].options.body), { report: { source_type: 'api' } });
+});

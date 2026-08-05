@@ -56,6 +56,7 @@ const systemHealthState = {
     collecting: false,
     charts: {},
     currentReport: null,
+    cacheRestoreAttempted: false,
     abortController: null,
     pages: {
         packetModel: 0,
@@ -103,6 +104,32 @@ async function activateSystemHealthModule() {
     }
     syncSystemHealthCapabilities();
     await loadSystemHealthCatalog();
+    await restoreSystemHealthReportCache();
+}
+
+async function restoreSystemHealthReportCache() {
+    if (
+        systemHealthState.cacheRestoreAttempted
+        || systemHealthState.currentReport
+        || systemHealthState.collecting
+        || !window.state?.connected
+        || !systemHealthSupportsAction('systemHealth.collect')
+    ) return;
+    systemHealthState.cacheRestoreAttempted = true;
+    try {
+        const cached = await ExtraHopAPI.getReportCache('system-health');
+        const report = cached?.payload?.report;
+        if (!cached?.cached || !report || typeof report !== 'object' || Array.isArray(report)) return;
+        systemHealthState.currentReport = report;
+        resetSystemHealthPages();
+        document.getElementById('systemHealthResults').style.display = 'block';
+        renderSystemHealthReport(report);
+        updateSystemHealthCsvButtons();
+        const cachedLabel = cached.cachedAt ? new Date(cached.cachedAt).toLocaleString() : 'an earlier session';
+        setSystemHealthCsvStatus(`Loaded the cached report saved ${cachedLabel} for this connection. Run report to refresh it.`);
+    } catch (error) {
+        console.warn('Could not restore the System Health report cache:', error);
+    }
 }
 
 function loadSystemHealthCatalog() {
@@ -322,6 +349,12 @@ async function generateSystemHealthReport() {
         results.style.display = 'block';
         renderSystemHealthReport(report);
         updateSystemHealthCsvButtons();
+        try {
+            await ExtraHopAPI.saveReportCache('system-health', { report });
+        } catch (error) {
+            console.warn('Could not save the System Health report cache:', error);
+            setSystemHealthCsvStatus(`Report completed, but its local cache was not updated: ${error.message}`, true);
+        }
     } catch (error) {
         if (abortController.signal.aborted) return;
         showErrorModal(error.message || 'System Health report failed', {
@@ -400,6 +433,7 @@ function systemHealthApplianceRole(appliance) {
 async function probeSystemHealthPacketstoreSensors(sensors, appliancesById, options) {
     const request = window.apiClient.request.bind(window.apiClient);
     const detectedSensors = [];
+    const indeterminateSensorIds = [];
     const probeStatus = {};
     const errors = [];
     const untilMs = Number(options.untilMs);
@@ -409,6 +443,7 @@ async function probeSystemHealthPacketstoreSensors(sensors, appliancesById, opti
     // invalidate the result for an AIO or a sensor paired with a Packetstore.
     for (const sensor of sensors || []) {
         const id = String(sensor.id);
+        const inventoryConfirmed = isSystemHealthAllInOneAppliance(sensor);
         if (!isSystemHealthMetricSensor(sensor)) {
             const status = sensor.data_access === false ? 'data_access_unavailable' : 'offline';
             probeStatus[id] = { status, detail: 'Packetstore capability was not probed because sensor metrics are unavailable.' };
@@ -433,16 +468,41 @@ async function probeSystemHealthPacketstoreSensors(sensors, appliancesById, opti
             if (sensorFailure) {
                 probeStatus[id] = { ...sensorFailure, status: 'failed' };
                 errors.push(`Packetstore probe (${id}): failed - ${sensorFailure.detail || 'sensor query failed'}`);
-            } else if (SystemHealthCollection.hasMetricValue(normalized.rows, SystemHealthCollection.PACKETSTORE_PROBE_METRIC)) {
-                detectedSensors.push(sensor);
-                probeStatus[id] = {
-                    status: 'detected',
-                    metric: SystemHealthCollection.PACKETSTORE_PROBE_METRIC,
-                    row_count: normalized.rows.length,
-                    collection_metadata: normalized.metadata
-                };
+            } else if (normalized.shape_errors.length) {
+                const detail = SystemHealthCollection.metricShapeErrorDetail(normalized.shape_errors[0]);
+                probeStatus[id] = { status: 'failed', detail };
+                errors.push(`Packetstore probe (${id}) returned an invalid metric response: ${detail}`);
             } else {
-                probeStatus[id] = { status: 'not_detected', detail: 'The Packetstore probe returned no metric values.' };
+                const evidence = SystemHealthCollection.metricValueState(
+                    normalized.rows,
+                    SystemHealthCollection.PACKETSTORE_PROBE_METRIC,
+                    id
+                );
+                if (evidence === 'positive' || inventoryConfirmed) {
+                    detectedSensors.push(sensor);
+                    probeStatus[id] = {
+                        status: 'detected',
+                        evidence: evidence === 'positive' ? 'positive_lookback' : 'inventory_confirmed',
+                        metric: SystemHealthCollection.PACKETSTORE_PROBE_METRIC,
+                        row_count: normalized.rows.length,
+                        collection_metadata: normalized.metadata,
+                        ...(evidence === 'positive' ? {} : {
+                            detail: `Integrated Packetstore is confirmed by appliance inventory; probe evidence was ${evidence}.`
+                        })
+                    };
+                } else if (evidence === 'zero_only') {
+                    indeterminateSensorIds.push(id);
+                    probeStatus[id] = {
+                        status: 'indeterminate',
+                        evidence,
+                        detail: 'The cpc metric reported only zero lookback, which does not confirm a paired Packetstore.'
+                    };
+                } else if (evidence === 'invalid') {
+                    probeStatus[id] = { status: 'failed', evidence, detail: 'The Packetstore probe returned a negative lookback value.' };
+                    errors.push(`Packetstore probe (${id}) returned an invalid negative lookback value.`);
+                } else {
+                    probeStatus[id] = { status: 'not_detected', evidence, detail: 'The Packetstore probe returned no metric values.' };
+                }
             }
         } catch (error) {
             if (options.signal && options.signal.aborted) throw error;
@@ -455,9 +515,14 @@ async function probeSystemHealthPacketstoreSensors(sensors, appliancesById, opti
         }
     }
 
+    if (indeterminateSensorIds.length) {
+        errors.push(`Packetstore presence was indeterminate for ${indeterminateSensorIds.length} sensor(s) because the probe returned only zero lookback; those sensors were excluded from Packetstore metrics.`);
+    }
+
     return {
         detected_sensors: detectedSensors,
         sensor_ids: detectedSensors.map(sensor => String(sensor.id)),
+        indeterminate_sensor_ids: indeterminateSensorIds,
         probe_status: probeStatus,
         errors
     };
@@ -491,6 +556,10 @@ async function collectSystemHealthTimeSeries(metricSensors, allSensors, applianc
             { signal: options.signal }
         );
         const normalized = SystemHealthCollection.normalizeTimeSeriesChunks(result.chunks, appliancesById, metricNames);
+        const sensorStatuses = SystemHealthCollection.mergeMetricShapeStatuses(
+            result.sensor_statuses,
+            normalized.shape_errors
+        );
         const errors = [];
         const metrics = {};
         metricNames.forEach(metricName => {
@@ -510,7 +579,7 @@ async function collectSystemHealthTimeSeries(metricSensors, allSensors, applianc
             const coverage = SystemHealthCollection.buildSensorCoverage(
                 allSensors,
                 rows.map(row => ({ appliance_id: row.appliance_id, value: row.value })),
-                { sensorFailures: result.sensor_failures, sensorStatuses: result.sensor_statuses }
+                { sensorFailures: result.sensor_failures, sensorStatuses }
             );
             errors.push(...systemHealthCoverageErrors(coverage, metricName));
             metrics[metricName] = {
@@ -572,6 +641,10 @@ async function collectSystemHealthTriggerDrops(metricSensors, allSensors, applia
             { signal: options.signal }
         );
         const normalized = SystemHealthCollection.normalizeAggregateChunks(result.chunks, appliancesById, ['trigger_drops']);
+        const sensorStatuses = SystemHealthCollection.mergeMetricShapeStatuses(
+            result.sensor_statuses,
+            normalized.shape_errors
+        );
         normalized.rows.forEach(row => {
             const appliance = appliancesById[String(row.appliance_id)] || {};
             row.appliance_name = systemHealthApplianceName(appliance, row.appliance_id);
@@ -583,7 +656,7 @@ async function collectSystemHealthTriggerDrops(metricSensors, allSensors, applia
         const coverage = SystemHealthCollection.buildSensorCoverage(
             allSensors,
             normalized.rows,
-            { sensorFailures: result.sensor_failures, sensorStatuses: result.sensor_statuses }
+            { sensorFailures: result.sensor_failures, sensorStatuses }
         );
         return {
             metric_category_used: 'capture',
@@ -664,11 +737,18 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
         });
         const result = await SystemHealthCollection.collectMetricBatches(request, '/metrics', body, { signal: options.signal });
         const normalized = SystemHealthCollection.normalizeTimeSeriesChunks(result.chunks, appliancesById, timeSeriesNames);
+        const sensorStatuses = SystemHealthCollection.mergeMetricShapeStatuses(
+            result.sensor_statuses,
+            normalized.shape_errors
+        );
         timeSeriesNames.forEach(name => {
             const rows = decorateRows(normalized.rows.map(row => ({ ...row, metric: name, value: row.values[name] })));
-            const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, rows, {
+            const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, rows.map(row => ({
+                appliance_id: row.appliance_id,
+                value: row.value
+            })), {
                 sensorFailures: result.sensor_failures,
-                sensorStatuses: result.sensor_statuses
+                sensorStatuses
             });
             metrics[name] = {
                 metric_category_used: 'cpc', aggregation_mode: 'time_series', rows,
@@ -700,11 +780,15 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
         });
         const result = await SystemHealthCollection.collectMetricBatches(request, '/metrics/totalbyobject', body, { signal: options.signal });
         const normalized = SystemHealthCollection.normalizeAggregateChunks(result.chunks, appliancesById, totalNames);
+        const sensorStatuses = SystemHealthCollection.mergeMetricShapeStatuses(
+            result.sensor_statuses,
+            normalized.shape_errors
+        );
         totalNames.forEach(name => {
             const rows = decorateRows(normalized.rows.filter(row => row.metric === name));
             const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, rows, {
                 sensorFailures: result.sensor_failures,
-                sensorStatuses: result.sensor_statuses
+                sensorStatuses
             });
             metrics[name] = {
                 metric_category_used: 'cpc', aggregation_mode: 'total_by_object', rows,
@@ -1459,8 +1543,8 @@ function renderSystemHealthPacketstoreTable(rows) {
             <td>${escapeSystemHealthHtml(systemHealthPacketstoreRoleLabel(row))}</td>
             <td>${escapeSystemHealthHtml(row.license_platform || '')}</td>
             <td>${escapeSystemHealthHtml(systemHealthRowStatusText(row) || 'complete')}</td>
-            <td>${formatSystemHealthDays(Number(row.lookbackLatestSec) / 86400)}</td>
-            <td>${formatSystemHealthDays(Number(row.lookbackMinSec) / 86400)}</td>
+            <td>${formatSystemHealthLookbackDays(row.lookbackLatestSec)}</td>
+            <td>${formatSystemHealthLookbackDays(row.lookbackMinSec)}</td>
             <td>${formatSystemHealthNumber(row.packetsTotal)}</td>
             <td${severityCell(packetSeverity)}>${formatSystemHealthNumber(row.packetDropsTotal)} (${formatSystemHealthPercent(row.packetDropRatio)})</td>
             <td${counterCell(row.slowWriteDropsTotal)}>${formatSystemHealthNumber(row.slowWriteDropsTotal)}</td>
@@ -3353,6 +3437,11 @@ function formatSystemHealthPercentValue(value) {
 function formatSystemHealthDays(value) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
     return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 })}d`;
+}
+
+function formatSystemHealthLookbackDays(value) {
+    if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return '-';
+    return formatSystemHealthDays(Number(value) / 86400);
 }
 
 function formatSystemHealthCycles(value) {

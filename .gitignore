@@ -12,3 +12,4 @@ logs/
 dist/
 .runtime/
 chart-themes/
+api-response-cache/

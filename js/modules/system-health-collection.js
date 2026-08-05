@@ -30,6 +30,7 @@
     const DEFAULT_PENDING_RETRIES = 120;
     const DEFAULT_MAX_CONTINUATION_REQUESTS = 1000;
     const DEFAULT_MAX_RECOVERY_QUERIES = 64;
+    const MAX_METRIC_SHAPE_VARIANTS = 8;
 
     class SystemHealthIncompleteResultError extends Error {
         constructor(message, details = {}) {
@@ -194,6 +195,22 @@
             if (expectedId !== null && idKey(row && row.appliance_id) !== expectedId) return false;
             return finiteNumber(row && row.values && row.values[metricName]) !== null;
         });
+    }
+
+    function metricValueState(rows, metricName, sensorId = null) {
+        const expectedId = sensorId === null || sensorId === undefined ? null : idKey(sensorId);
+        let found = false;
+        let invalid = false;
+        for (const row of rows || []) {
+            if (expectedId !== null && idKey(row && row.appliance_id) !== expectedId) continue;
+            const value = finiteNumber(row && row.values && row.values[metricName]);
+            if (value === null) continue;
+            found = true;
+            if (value > 0) return 'positive';
+            if (value < 0) invalid = true;
+        }
+        if (invalid) return 'invalid';
+        return found ? 'zero_only' : 'empty';
     }
 
     function metricSensorFailure(error) {
@@ -575,18 +592,72 @@
         };
     }
 
+    function recordMetricShapeError(errorsBySource, stat, chunk, appliancesById, expectedValueCount) {
+        const applianceId = resolveSensorId(stat, chunk, appliancesById);
+        const metricObjectId = idKey(stat && stat.oid);
+        const sourceKey = applianceId || metricObjectId || '__unknown__';
+        const rawValues = stat && stat.values;
+        const actualValueCount = Array.isArray(rawValues) ? rawValues.length : null;
+        let error = errorsBySource.get(sourceKey);
+        if (!error) {
+            error = {
+                appliance_id: applianceId,
+                metric_object_id: metricObjectId,
+                expected_value_count: expectedValueCount,
+                actual_value_counts: [],
+                malformed_row_count: 0,
+                variants_truncated: false
+            };
+            errorsBySource.set(sourceKey, error);
+        }
+        error.malformed_row_count += 1;
+        if (!error.actual_value_counts.includes(actualValueCount)) {
+            if (error.actual_value_counts.length < MAX_METRIC_SHAPE_VARIANTS) {
+                error.actual_value_counts.push(actualValueCount);
+            } else {
+                error.variants_truncated = true;
+            }
+        }
+    }
+
+    function metricShapeErrorDetail(error) {
+        const expected = Number(error && error.expected_value_count);
+        const actual = Array.isArray(error && error.actual_value_counts)
+            ? error.actual_value_counts.map(value => value === null ? 'non-array' : String(value)).join('/')
+            : 'unknown';
+        const count = Number(error && error.malformed_row_count) || 0;
+        const rows = `${count.toLocaleString()} malformed metric ${count === 1 ? 'row' : 'rows'}`;
+        const suffix = error && error.variants_truncated ? ' (additional tuple sizes omitted)' : '';
+        return `${rows}; expected ${expected} values but received ${actual}${suffix}`;
+    }
+
+    function mergeMetricShapeStatuses(sensorStatuses, shapeErrors) {
+        const shapeStatuses = {};
+        (shapeErrors || []).forEach(error => {
+            const id = idKey(error && error.appliance_id);
+            if (!id) return;
+            shapeStatuses[id] = { status: 'partial', detail: metricShapeErrorDetail(error) };
+        });
+        return { ...shapeStatuses, ...(sensorStatuses || {}) };
+    }
+
     function normalizeTimeSeriesChunks(chunks, appliancesById, metricNames) {
         const rows = [];
         const metadata = [];
+        const shapeErrorsBySource = new Map();
         (chunks || []).forEach(chunk => {
             const chunkMetadata = responseMetadata(chunk);
             metadata.push(chunkMetadata);
             const stats = Array.isArray(chunk && chunk.stats) ? chunk.stats : [];
             stats.forEach(stat => {
                 const sensorId = resolveSensorId(stat, chunk, appliancesById);
+                if (!Array.isArray(stat && stat.values) || stat.values.length !== metricNames.length) {
+                    recordMetricShapeError(shapeErrorsBySource, stat, chunk, appliancesById, metricNames.length);
+                    return;
+                }
                 const values = {};
                 metricNames.forEach((metricName, index) => {
-                    values[metricName] = nestedNumber(Array.isArray(stat.values) ? stat.values[index] : null);
+                    values[metricName] = nestedNumber(stat.values[index]);
                 });
                 rows.push({
                     appliance_id: sensorId,
@@ -606,18 +677,23 @@
             if (timeOrder) return timeOrder;
             return idKey(a.metric_object_id).localeCompare(idKey(b.metric_object_id));
         });
-        return { rows, metadata };
+        return { rows, metadata, shape_errors: Array.from(shapeErrorsBySource.values()) };
     }
 
     function normalizeAggregateChunks(chunks, appliancesById, metricNames) {
         const rows = [];
         const metadata = [];
+        const shapeErrorsBySource = new Map();
         (chunks || []).forEach(chunk => {
             const chunkMetadata = responseMetadata(chunk);
             metadata.push(chunkMetadata);
             const stats = Array.isArray(chunk && chunk.stats) ? chunk.stats : [];
             stats.forEach(stat => {
                 const sensorId = resolveSensorId(stat, chunk, appliancesById);
+                if (!Array.isArray(stat && stat.values) || stat.values.length !== metricNames.length) {
+                    recordMetricShapeError(shapeErrorsBySource, stat, chunk, appliancesById, metricNames.length);
+                    return;
+                }
                 metricNames.forEach((metricName, index) => {
                     rows.push({
                         appliance_id: sensorId,
@@ -626,7 +702,7 @@
                         timestamp_ms: stat.time,
                         aggregation_duration_ms: stat.duration,
                         aggregation_mode: 'total_by_object',
-                        value: nestedNumber(Array.isArray(stat.values) ? stat.values[index] : null)
+                        value: nestedNumber(stat.values[index])
                     });
                 });
             });
@@ -636,7 +712,7 @@
             if (sensorOrder) return sensorOrder;
             return (Number(a.timestamp_ms) || 0) - (Number(b.timestamp_ms) || 0);
         });
-        return { rows, metadata };
+        return { rows, metadata, shape_errors: Array.from(shapeErrorsBySource.values()) };
     }
 
     function summarizeTimeSeriesRows(rows, metricName) {
@@ -866,10 +942,13 @@
         metricSensorFailure,
         isPacketstoreProbeMiss,
         hasMetricValue,
+        metricValueState,
         collectMetricEndpoint,
         collectMetricBatches,
         normalizeTimeSeriesChunks,
         normalizeAggregateChunks,
+        metricShapeErrorDetail,
+        mergeMetricShapeStatuses,
         summarizeTimeSeriesRows,
         summarizeAggregateRows,
         summarizeTriggerUtilization,

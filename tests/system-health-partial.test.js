@@ -28,7 +28,7 @@ test('Packetstore sensor continuation failure produces diagnostics and continues
                             oid: '7',
                             time: 1000,
                             duration: 60_000,
-                            values: [10, 1, 0, 2, 0, 0]
+                            values: [10, 1, 0, 2, 0, 0, 0]
                         }]
                     };
                 }
@@ -82,6 +82,108 @@ test('Packetstore sensor continuation failure produces diagnostics and continues
     assert.equal(result.metrics.pkts.summary.totals['7'], 10);
 });
 
+test('Packetstore coverage evaluates each time-series metric independently', async () => {
+    const window = {
+        apiClient: {
+            async request(endpoint) {
+                if (endpoint === '/metrics') {
+                    return {
+                        cycle: '1hr',
+                        node_id: '7',
+                        stats: [{
+                            oid: '700',
+                            time: 1000,
+                            duration: 3_600_000,
+                            values: [null, 0, 0, 0]
+                        }]
+                    };
+                }
+                if (endpoint === '/metrics/totalbyobject') {
+                    return {
+                        node_id: '7',
+                        stats: [{ oid: '700', time: 1000, duration: 3_600_000, values: [0, 0, 0, 0, 0, 0, 0] }]
+                    };
+                }
+                throw new Error(`Unexpected endpoint ${endpoint}`);
+            }
+        }
+    };
+    const context = vm.createContext({
+        window, console, AbortController, setTimeout, clearTimeout,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
+    });
+    vm.runInContext(source('js/modules/system-health-collection.js'), context);
+    vm.runInContext(source('js/modules/system-health-report.js'), context);
+    const controller = new AbortController();
+    context.testSensor = { id: '7', hostname: 'sensor-7', status_message: 'Online', data_access: true };
+    context.testOptions = { cycle: '1hr', fromMs: 0, untilMs: 3_600_000, signal: controller.signal };
+
+    const result = await vm.runInContext(
+        `collectSystemHealthPacketstoreMetrics(
+            [testSensor],
+            { detected_sensors: [testSensor], probe_status: { '7': { status: 'detected' } }, errors: [] },
+            [],
+            { '7': testSensor },
+            testOptions
+        )`,
+        context
+    );
+
+    assert.equal(result.metrics.est_lookback_sec.sensor_status['7'].status, 'empty');
+    assert.equal(result.metrics.input_load.sensor_status['7'].status, 'zero_valued');
+    assert.equal(result.metrics.compress_load.sensor_status['7'].status, 'zero_valued');
+    assert.equal(result.metrics.disk_write_load.sensor_status['7'].status, 'zero_valued');
+    assert.equal(result.metrics.est_lookback_sec.summary.latest_values['7'], undefined);
+    assert.equal(result.metrics.input_load.summary.peak_values['7'], 0);
+});
+
+test('Packetstore collector marks malformed positional tuples partial', async () => {
+    const window = {
+        apiClient: {
+            async request(endpoint) {
+                if (endpoint === '/metrics') {
+                    return {
+                        cycle: '1hr', node_id: '7',
+                        stats: [{ oid: '700', time: 1000, duration: 3_600_000, values: [1, 2, 3] }]
+                    };
+                }
+                if (endpoint === '/metrics/totalbyobject') {
+                    return {
+                        node_id: '7',
+                        stats: [{ oid: '700', time: 1000, duration: 3_600_000, values: [0, 0, 0, 0, 0, 0, 0] }]
+                    };
+                }
+                throw new Error(`Unexpected endpoint ${endpoint}`);
+            }
+        }
+    };
+    const context = vm.createContext({
+        window, console, AbortController, setTimeout, clearTimeout,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
+    });
+    vm.runInContext(source('js/modules/system-health-collection.js'), context);
+    vm.runInContext(source('js/modules/system-health-report.js'), context);
+    const controller = new AbortController();
+    context.testSensor = { id: '7', hostname: 'sensor-7', status_message: 'Online', data_access: true };
+    context.testOptions = { cycle: '1hr', fromMs: 0, untilMs: 3_600_000, signal: controller.signal };
+
+    const result = await vm.runInContext(
+        `collectSystemHealthPacketstoreMetrics(
+            [testSensor],
+            { detected_sensors: [testSensor], probe_status: { '7': { status: 'detected' } }, errors: [] },
+            [],
+            { '7': testSensor },
+            testOptions
+        )`,
+        context
+    );
+
+    assert.equal(result.metrics.est_lookback_sec.rows.length, 0);
+    assert.equal(result.metrics.est_lookback_sec.sensor_status['7'].status, 'partial');
+    assert.match(result.metrics.est_lookback_sec.sensor_status['7'].detail, /expected 4 values but received 3/);
+    assert.match(result.errors.join('\n'), /expected 4 values but received 3/);
+});
+
 test('probes every eligible sensor separately and keeps clean misses out of the full metric set', async () => {
     const requestBodies = [];
     const window = {
@@ -94,9 +196,13 @@ test('probes every eligible sensor separately and keeps clean misses out of the 
                 if (id === '1') {
                     return {
                         cycle: '30sec', node_id: 1,
-                        stats: [{ oid: '4294967296', time: 1000, duration: 30000, values: [0] }]
+                        stats: [{ oid: '4294967296', time: 1000, duration: 30000, values: [120] }]
                     };
                 }
+                if (id === '5' || id === '6') return {
+                    cycle: '30sec', node_id: id,
+                    stats: [{ oid: `${id}00`, time: 1000, duration: 30000, values: [0] }]
+                };
                 if (id === '2') {
                     const error = new Error("invalid stat name 'extrahop.system.cpc' (-32602)");
                     error.status = 400;
@@ -120,7 +226,12 @@ test('probes every eligible sensor separately and keeps clean misses out of the 
         { id: 1, hostname: 'aio', status_message: 'Online', data_access: true },
         { id: 2, hostname: 'sensor', status_message: 'Online', data_access: true },
         { id: 3, hostname: 'offline', status_message: 'Unable to connect', data_access: true },
-        { id: 4, hostname: 'unauthorized', status_message: 'Online', data_access: true }
+        { id: 4, hostname: 'unauthorized', status_message: 'Online', data_access: true },
+        { id: 5, hostname: 'zero-only', status_message: 'Online', data_access: true },
+        {
+            id: 6, hostname: 'integrated', status_message: 'Online', data_access: true,
+            licensed_features: { eda_onboard_trace: true }
+        }
     ];
     context.testById = Object.fromEntries(context.testSensors.map(sensor => [String(sensor.id), sensor]));
     context.testOptions = { untilMs: 300000, signal: controller.signal };
@@ -130,17 +241,71 @@ test('probes every eligible sensor separately and keeps clean misses out of the 
         context
     );
 
-    assert.deepEqual(Array.from(result.sensor_ids), ['1']);
+    assert.deepEqual(Array.from(result.sensor_ids), ['1', '6']);
+    assert.deepEqual(Array.from(result.indeterminate_sensor_ids), ['5']);
     assert.equal(result.probe_status['1'].status, 'detected');
+    assert.equal(result.probe_status['1'].evidence, 'positive_lookback');
     assert.equal(result.probe_status['2'].status, 'not_detected');
     assert.equal(result.probe_status['3'].status, 'offline');
     assert.equal(result.probe_status['4'].status, 'failed');
-    assert.equal(result.errors.length, 1);
-    assert.equal(requestBodies.length, 3);
-    assert.deepEqual(requestBodies.map(body => body.object_ids), [[1], [2], [4]]);
+    assert.equal(result.probe_status['5'].status, 'indeterminate');
+    assert.equal(result.probe_status['5'].evidence, 'zero_only');
+    assert.equal(result.probe_status['6'].status, 'detected');
+    assert.equal(result.probe_status['6'].evidence, 'inventory_confirmed');
+    assert.equal(result.errors.length, 2);
+    assert.equal(requestBodies.length, 5);
+    assert.deepEqual(requestBodies.map(body => body.object_ids), [[1], [2], [4], [5], [6]]);
     assert.ok(requestBodies.every(body => body.metric_specs.length === 1));
     assert.ok(requestBodies.every(body => body.metric_category === 'cpc'
         && body.cycle === '30sec' && body.from === 0 && body.until === 300000));
+});
+
+test('zero-only probes cannot promote unrelated interface drops into Packetstore rows', async () => {
+    const requestPaths = [];
+    const window = {
+        apiClient: {
+            async request(endpoint) {
+                requestPaths.push(endpoint);
+                if (endpoint === '/metrics') return {
+                    cycle: '30sec', node_id: '7',
+                    stats: [{ oid: '700', time: 1000, duration: 30000, values: [0] }]
+                };
+                if (endpoint === '/metrics/totalbyobject') return {
+                    node_id: '7',
+                    stats: [{ oid: '700', time: 1000, duration: 30000, values: [0, 0, 0, 0, 0, 173127753054, 0] }]
+                };
+                throw new Error(`Unexpected endpoint ${endpoint}`);
+            }
+        }
+    };
+    const context = vm.createContext({
+        window, console, AbortController, setTimeout, clearTimeout,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
+    });
+    vm.runInContext(source('js/modules/system-health-collection.js'), context);
+    vm.runInContext(source('js/modules/system-health-report.js'), context);
+    const controller = new AbortController();
+    context.testSensor = { id: '7', hostname: 'sensor-7', status_message: 'Online', data_access: true };
+    context.testById = { '7': context.testSensor };
+    context.testProbeOptions = { untilMs: 300000, signal: controller.signal };
+    context.testCollectOptions = { cycle: '1hr', fromMs: 0, untilMs: 300000, signal: controller.signal };
+
+    const probe = await vm.runInContext(
+        'probeSystemHealthPacketstoreSensors([testSensor], testById, testProbeOptions)',
+        context
+    );
+    context.testProbe = probe;
+    const collected = await vm.runInContext(
+        'collectSystemHealthPacketstoreMetrics(testProbe.detected_sensors, testProbe, [], testById, testCollectOptions)',
+        context
+    );
+
+    assert.deepEqual(Array.from(probe.sensor_ids), []);
+    assert.deepEqual(Array.from(probe.indeterminate_sensor_ids), ['7']);
+    assert.equal(probe.probe_status['7'].status, 'indeterminate');
+    assert.deepEqual(Array.from(collected.appliance_ids), []);
+    assert.deepEqual(requestPaths, ['/metrics']);
+    assert.equal(collected.metrics.if_drops.rows.length, 0);
 });
 
 test('classifies only integrated sensors as all-in-one appliances', () => {
@@ -161,4 +326,7 @@ test('classifies only integrated sensors as all-in-one appliances', () => {
         context
     ), 'packet_sensor');
     assert.equal(vm.runInContext("systemHealthApplianceRole({ platform: 'trace' })", context), 'packetstore');
+    assert.equal(vm.runInContext('formatSystemHealthLookbackDays(null)', context), '-');
+    assert.equal(vm.runInContext("formatSystemHealthLookbackDays('')", context), '-');
+    assert.equal(vm.runInContext('formatSystemHealthLookbackDays(0)', context), '0d');
 });

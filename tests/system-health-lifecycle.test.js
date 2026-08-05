@@ -117,6 +117,54 @@ test('offline System Health keeps import enabled and blocks live collection befo
     assert.equal(fetchCalls, 1);
 });
 
+test('connected System Health activation restores the cached canonical report once', async () => {
+    const source = fs.readFileSync(
+        path.join(__dirname, '..', 'js', 'modules', 'system-health-report.js'),
+        'utf8'
+    );
+    const results = { style: {} };
+    const report = { source_type: 'api', metadata: { generated_at: '2026-08-05T12:00:00Z' } };
+    let cacheReads = 0;
+    let rendered = null;
+    const context = vm.createContext({
+        console: { log() {}, warn() {}, error() {} },
+        DOMException,
+        ExtraHopAPI: {
+            async getReportCache(reportId) {
+                cacheReads += 1;
+                assert.equal(reportId, 'system-health');
+                return { cached: true, cachedAt: '2026-08-05T12:01:00Z', payload: { report } };
+            }
+        },
+        window: {
+            state: { connected: true, runtimeContext: 'enterprise', apiConfig: { type: 'enterprise' } },
+            addEventListener() {},
+            initChartThemePanel() {}
+        },
+        document: {
+            getElementById(id) { return id === 'systemHealthResults' ? results : null; },
+            querySelectorAll() { return []; }
+        },
+        runtimeContextForState: () => 'enterprise',
+        runtimeSupportsAction: () => true
+    });
+    vm.runInContext(source, context);
+    context.__capture = value => { rendered = value; };
+    vm.runInContext(`
+        renderSystemHealthReport = report => __capture(report);
+        resetSystemHealthPages = () => {};
+        updateSystemHealthCsvButtons = () => {};
+        setSystemHealthCsvStatus = () => {};
+    `, context);
+
+    await vm.runInContext('restoreSystemHealthReportCache()', context);
+    await vm.runInContext('restoreSystemHealthReportCache()', context);
+
+    assert.equal(cacheReads, 1);
+    assert.equal(rendered, report);
+    assert.equal(results.style.display, 'block');
+});
+
 test('oversized CSV selection is rejected before File.text and preserves the current report', async () => {
     const source = fs.readFileSync(
         path.join(__dirname, '..', 'js', 'modules', 'system-health-report.js'),

@@ -71,11 +71,18 @@ test('recognizes only the expected cpc invalid-stat response as a negative Packe
     assert.equal(health.isPacketstoreProbeMiss(unauthorized), false);
 });
 
-test('treats a zero-valued Packetstore probe as a metric hit', () => {
+test('preserves a zero metric value without treating it as positive evidence', () => {
     assert.equal(health.hasMetricValue([{
         appliance_id: '7', values: { est_lookback_sec: 0 }
     }], health.PACKETSTORE_PROBE_METRIC, '7'), true);
+    assert.equal(health.metricValueState([{
+        appliance_id: '7', values: { est_lookback_sec: 0 }
+    }], health.PACKETSTORE_PROBE_METRIC, '7'), 'zero_only');
+    assert.equal(health.metricValueState([{
+        appliance_id: '7', values: { est_lookback_sec: 60 }
+    }], health.PACKETSTORE_PROBE_METRIC, '7'), 'positive');
     assert.equal(health.hasMetricValue([], health.PACKETSTORE_PROBE_METRIC, '7'), false);
+    assert.equal(health.metricValueState([], health.PACKETSTORE_PROBE_METRIC, '7'), 'empty');
 });
 
 test('drains XID chunks through again, data, and null', async () => {
@@ -388,6 +395,36 @@ test('preserves opaque large node IDs without arithmetic decoding', () => {
     }], appliances, health.TIME_SERIES_METRICS);
     assert.equal(normalized.rows[0].appliance_id, '90071992547409931234');
     assert.equal(normalized.rows[0].metric_object_id, '18446744073709551615');
+});
+
+test('rejects malformed metric tuples instead of shifting positional values', () => {
+    const timeSeries = health.normalizeTimeSeriesChunks([{
+        node_id: '7',
+        stats: [{ oid: '700', time: 1, duration: 1000, values: [10, 20, 30] }]
+    }], appliances, health.PACKETSTORE_TIME_SERIES_METRICS);
+    assert.equal(timeSeries.rows.length, 0);
+    assert.deepEqual(timeSeries.shape_errors, [{
+        appliance_id: '7',
+        metric_object_id: '700',
+        expected_value_count: 4,
+        actual_value_counts: [3],
+        malformed_row_count: 1,
+        variants_truncated: false
+    }]);
+
+    const aggregate = health.normalizeAggregateChunks([{
+        node_id: '7',
+        stats: [{ oid: '700', time: 1, duration: 1000, values: [1, 2, 3, 4, 5, 6] }]
+    }], appliances, health.PACKETSTORE_TOTAL_METRICS);
+    assert.equal(aggregate.rows.length, 0);
+    assert.equal(aggregate.shape_errors[0].expected_value_count, 7);
+    assert.deepEqual(aggregate.shape_errors[0].actual_value_counts, [6]);
+    assert.deepEqual(health.mergeMetricShapeStatuses({}, aggregate.shape_errors), {
+        '7': {
+            status: 'partial',
+            detail: '1 malformed metric row; expected 7 values but received 6'
+        }
+    });
 });
 
 test('sorts opaque identifiers lexically without numeric interpretation', () => {

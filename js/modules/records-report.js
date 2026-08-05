@@ -5,6 +5,7 @@ const crsState = {
     inputMethod: 'manual',
     csvData: null,
     lastReport: null,
+    cacheRestoreAttempted: false,
     chartInstances: {}
 };
 
@@ -378,10 +379,29 @@ async function generateCRSReport() {
         const capacityData = getCapacityData(reportWindow);
         const applianceData = await fetchCRSData(reportWindow);
         const summary = buildCRSSummary(applianceData, capacityData, reportWindow.dayCount);
-        const compressionRatio = summary.compressionRatio === null ? null : summary.compressionRatio.toFixed(2);
-        const utilizationPercent = summary.utilizationPercent === null ? null : summary.utilizationPercent.toFixed(1);
-        const compressedData = summary.applianceData;
         crsState.lastReport = { reportWindow, capacityData, ...summary };
+        renderCRSReport(crsState.lastReport);
+        try {
+            await ExtraHopAPI.saveReportCache('records-report', { report: crsState.lastReport });
+        } catch (error) {
+            console.warn('Could not save the Records Report cache:', error);
+            const cacheStatus = document.getElementById('crsCacheStatus');
+            if (cacheStatus) cacheStatus.textContent = `Report completed, but its cache was not updated: ${error.message}`;
+        }
+        document.getElementById('crsLoading').style.display = 'none';
+        document.getElementById('crsResults').style.display = 'flex';
+    } catch (error) {
+        alert(`Error generating report: ${error.message}`);
+        document.getElementById('crsLoading').style.display = 'none';
+    }
+}
+
+function renderCRSReport(report, cachedAt = '') {
+    const capacityData = report.capacityData;
+    const summary = report;
+    const compressionRatio = summary.compressionRatio === null ? null : summary.compressionRatio.toFixed(2);
+    const utilizationPercent = summary.utilizationPercent === null ? null : summary.utilizationPercent.toFixed(1);
+    const compressedData = summary.applianceData;
         
         // Update KPIs
         if (compressionRatio !== null) {
@@ -420,13 +440,28 @@ async function generateCRSReport() {
         renderStackedBarChart(compressedData, compressionRatio !== null ? capacityData.reserved : null);
         renderSensorBarChart(compressedData);
         renderDataTable(compressedData, compressionRatio);
-        
+
+    const cacheStatus = document.getElementById('crsCacheStatus');
+    if (cacheStatus) {
+        cacheStatus.textContent = cachedAt
+            ? `Loaded cached report saved ${new Date(cachedAt).toLocaleString()}. Generate report to refresh it.`
+            : '';
+    }
+}
+
+async function restoreCRSReportCache() {
+    if (crsState.cacheRestoreAttempted || crsState.lastReport || !window.state?.connected) return;
+    crsState.cacheRestoreAttempted = true;
+    try {
+        const cached = await ExtraHopAPI.getReportCache('records-report');
+        const report = cached?.payload?.report;
+        if (!cached?.cached || !report || !Array.isArray(report.applianceData)) return;
+        crsState.lastReport = report;
+        renderCRSReport(report, cached.cachedAt);
         document.getElementById('crsLoading').style.display = 'none';
         document.getElementById('crsResults').style.display = 'flex';
-        
     } catch (error) {
-        alert(`Error generating report: ${error.message}`);
-        document.getElementById('crsLoading').style.display = 'none';
+        console.warn('Could not restore the Records Report cache:', error);
     }
 }
 
@@ -658,6 +693,7 @@ function initCrsUsageModule() {
 
 if (typeof featureRegistry !== 'undefined') {
     featureRegistry.register('crs-usage', {
-        initialize: initCrsUsageModule
+        initialize: initCrsUsageModule,
+        activate: restoreCRSReportCache
     });
 }

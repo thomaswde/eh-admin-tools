@@ -36,7 +36,7 @@ function loadDeviceDiscovery(overrides = {}) {
         stateIndicatorColor: () => '#f59e0b',
         escapeHtml: value => String(value)
     });
-    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, getPeriodRange, fetchDevicesBatch, renderDeviceDiscoveryTable, stopDeviceDiscoveryLoad };`, context);
+    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, getPeriodRange, fetchDevicesBatch, renderDeviceDiscoveryTable, buildDeviceDiscoveryCachedResult, stopDeviceDiscoveryLoad };`, context);
     return { api: window.__deviceDiscoveryTest, elements };
 }
 
@@ -128,6 +128,38 @@ test('every device page reuses one absolute activity window', () => {
     assert.equal(month.activeUntil, nowMs);
     assert.equal(yesterday.activeUntil - yesterday.activeFrom, 24 * 60 * 60 * 1000);
     assert.notEqual(yesterday.activeUntil, 0);
+});
+
+test('completed device cache payload keeps one window and the active connection filters', () => {
+    const { api } = loadDeviceDiscovery();
+    api.deviceDiscoveryState.includeEfc = false;
+    api.deviceDiscoveryState.includeDiscovery = true;
+    api.deviceDiscoveryState.appliances = [
+        { id: 'sensor-1', display_name: 'Sensor', license_platform: 'EDA 9300' },
+        { id: 'flow-1', display_name: 'Flow', license_platform: 'EFC VM' }
+    ];
+    api.deviceDiscoveryState.applianceMap = {
+        'sensor-1': api.deviceDiscoveryState.appliances[0],
+        'flow-1': api.deviceDiscoveryState.appliances[1]
+    };
+    const range = { label: 'Yesterday', displayRange: 'Aug 4, 2026', activeFrom: 1, activeUntil: 2 };
+    const payload = api.buildDeviceDiscoveryCachedResult({
+        aggregate: {
+            'sensor-1': { advanced: 2, standard: 0, discovery: 1, flow_log: 0, total: 3 },
+            'flow-1': { advanced: 0, standard: 0, discovery: 0, flow_log: 5, total: 5 }
+        },
+        perLevelTotals: { advanced: 2, standard: 0, discovery: 1, flow_log: 5 },
+        totalDevices: 8,
+        incomplete: false,
+        detail: 'complete'
+    }, range);
+
+    assert.equal(payload.range, range);
+    assert.equal(payload.totalDevices, undefined);
+    assert.equal(payload.totals.totalDevices, 3);
+    assert.deepEqual(Array.from(payload.sortedNodes, row => row.id), ['sensor-1']);
+    assert.equal(payload.includeDiscovery, true);
+    assert.equal(payload.incomplete, false);
 });
 
 test('device pagination enforces row and page budgets with explicit partial reasons', async () => {

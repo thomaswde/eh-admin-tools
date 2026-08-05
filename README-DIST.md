@@ -116,6 +116,18 @@ PowerPoint decks request **Source Sans 3**. Install `SourceSans3-Regular.ttf` an
 
 Themes you save are written to the `chart-themes` folder beside this file, one small JSON file each. Copy that folder to back up your themes or to give them to someone else — drop the files into their `chart-themes` folder and they appear in the picker.
 
+## Cached reports
+
+Completed Device Discovery, Records, and System Health results are saved under the
+`api-response-cache` folder beside this file. Reopening the same page after reconnecting to the
+same ExtraHop deployment restores the latest result immediately and labels it as cached. Use the
+page's generate or run button to replace it with current data.
+
+The folder is organized by local computer user and an opaque connection ID. A `connection.json`
+file in each connection folder identifies its deployment type and normalized tenant or host; it
+does not contain credentials. Cached reports can contain sensitive operational data, so protect
+the folder and review its contents before sharing it.
+
 ## Logs and privacy
 
 The launcher prints the writable log directory during startup and diagnostics.

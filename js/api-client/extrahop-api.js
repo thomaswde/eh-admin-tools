@@ -110,6 +110,32 @@ class ExtraHopAPI {
         return ExtraHopAPI.parseStaticResponse(response);
     }
 
+    static async getReportCache(reportId) {
+        const response = await ExtraHopAPI.backendFetch(
+            `/backend/report-cache/${encodeURIComponent(reportId)}`,
+            {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' }
+            }
+        );
+        return ExtraHopAPI.parseStaticResponse(response);
+    }
+
+    static async saveReportCache(reportId, payload) {
+        const response = await ExtraHopAPI.backendFetch(
+            `/backend/report-cache/${encodeURIComponent(reportId)}`,
+            {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            }
+        );
+        return ExtraHopAPI.parseStaticResponse(response);
+    }
+
     async dispose() {
         await ExtraHopAPI.backendFetch('/backend/session', { method: 'DELETE' }).catch(() => {});
     }

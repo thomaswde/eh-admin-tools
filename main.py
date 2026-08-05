@@ -19,6 +19,7 @@ from backend.build_identity import resolve_runtime_version
 from backend.connection_store import ConnectionStorageError, ConnectionStore
 from backend.extrahop_client import ExtraHopApiError, ExtraHopClient, ExtraHopResponse
 from backend.pcap_analyzer.jobs import PcapJobError, PcapJobManager
+from backend.report_cache import ReportCache, ReportCacheError, ReportCacheLimitError
 from backend.session_store import SessionStore
 from backend import system_health_pdf as system_health_pdf_backend
 
@@ -34,6 +35,10 @@ MAX_SESSIONS = int(os.environ.get("EH_MAX_SESSIONS", 32))
 PROXY_MAX_REQUEST_BYTES = max(
     1,
     int(os.environ.get("EH_PROXY_MAX_REQUEST_BYTES", 64 * 1024 * 1024)),
+)
+REPORT_CACHE_MAX_REQUEST_BYTES = max(
+    1,
+    int(os.environ.get("EH_REPORT_CACHE_MAX_ENTRY_BYTES", 32 * 1024 * 1024)),
 )
 TENANT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 HEX_PATTERN = r"^#[0-9a-fA-F]{6}$"
@@ -87,6 +92,14 @@ APP_VERSION = resolve_runtime_version(
 )
 
 
+def resolve_report_cache_dir() -> Path:
+    env_path = os.environ.get("EH_REPORT_CACHE_DIR")
+    if env_path:
+        return Path(env_path).expanduser()
+    base = APP_ROOT.parent if APP_ROOT.name == "app" else APP_ROOT
+    return base / "api-response-cache"
+
+
 @asynccontextmanager
 async def app_lifespan(_: FastAPI):
     await pcap_jobs.startup()
@@ -113,6 +126,16 @@ api_response_logger = ApiResponseLogger(
     os.environ.get("EH_API_LOG_VERBOSITY", "errors"),
 )
 connection_store = ConnectionStore(APP_ROOT)
+report_cache = ReportCache(
+    resolve_report_cache_dir(),
+    username=os.environ.get("EH_REPORT_CACHE_USER") or None,
+    max_entry_bytes=REPORT_CACHE_MAX_REQUEST_BYTES,
+    max_user_bytes=max(
+        REPORT_CACHE_MAX_REQUEST_BYTES,
+        int(os.environ.get("EH_REPORT_CACHE_MAX_USER_BYTES", 512 * 1024 * 1024)),
+    ),
+    max_connections=max(1, int(os.environ.get("EH_REPORT_CACHE_MAX_CONNECTIONS", 64))),
+)
 
 
 async def detach_pcap_client(session_id: str, client: ExtraHopClient) -> bool:
@@ -537,6 +560,60 @@ async def delete_chart_theme(
     return {"deleted": True}
 
 
+@app.get("/backend/report-cache/{report_id}")
+async def read_report_cache(
+    report_id: str,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    client = get_session_client(eh_admin_session)
+    try:
+        cached = await asyncio.to_thread(report_cache.read, report_id, client.metadata.public_dict())
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail={"message": "Report cache is not supported for this page."}) from error
+    except ReportCacheError as error:
+        raise HTTPException(status_code=500, detail={"message": str(error)}) from error
+    if cached is None:
+        return {"cached": False}
+    return {
+        "cached": True,
+        "cachedAt": cached["cached_at"],
+        "connectionId": cached["connection_id"],
+        "payload": cached["payload"],
+    }
+
+
+@app.put("/backend/report-cache/{report_id}")
+async def write_report_cache(
+    report_id: str,
+    request: Request,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    client = get_session_client(eh_admin_session)
+    raw = await read_bounded_body(request, REPORT_CACHE_MAX_REQUEST_BYTES, "Report cache payload")
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=400, detail={"message": "Report cache payload must be valid JSON."}) from error
+    try:
+        cached = await asyncio.to_thread(
+            report_cache.write,
+            report_id,
+            client.metadata.public_dict(),
+            payload,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail={"message": "Report cache is not supported for this page."}) from error
+    except ReportCacheLimitError as error:
+        raise HTTPException(status_code=413, detail={"message": str(error)}) from error
+    except ReportCacheError as error:
+        raise HTTPException(status_code=500, detail={"message": str(error)}) from error
+    return {
+        "cached": True,
+        "cachedAt": cached["cached_at"],
+        "connectionId": cached["connection_id"],
+    }
+
+
 @app.get("/backend/session")
 async def read_session(
     response: Response,
@@ -806,6 +883,10 @@ async def proxy_extrahop_request(
 
 
 async def read_proxy_request_body(request: Request) -> bytes:
+    return await read_bounded_body(request, PROXY_MAX_REQUEST_BYTES, "ExtraHop proxy request")
+
+
+async def read_bounded_body(request: Request, maximum_bytes: int, label: str) -> bytes:
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -813,33 +894,29 @@ async def read_proxy_request_body(request: Request) -> bytes:
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail={"message": "ExtraHop proxy request has an invalid Content-Length header."},
+                detail={"message": f"{label} has an invalid Content-Length header."},
             ) from None
         if declared_length < 0:
             raise HTTPException(
                 status_code=400,
-                detail={"message": "ExtraHop proxy request has an invalid Content-Length header."},
+                detail={"message": f"{label} has an invalid Content-Length header."},
             )
-        if declared_length > PROXY_MAX_REQUEST_BYTES:
+        if declared_length > maximum_bytes:
             raise HTTPException(
                 status_code=413,
                 detail={
-                    "message": (
-                        f"ExtraHop proxy request exceeds the configured {PROXY_MAX_REQUEST_BYTES:,}-byte limit."
-                    )
+                    "message": f"{label} exceeds the configured {maximum_bytes:,}-byte limit."
                 },
             )
 
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
-        if len(body) > PROXY_MAX_REQUEST_BYTES:
+        if len(body) > maximum_bytes:
             raise HTTPException(
                 status_code=413,
                 detail={
-                    "message": (
-                        f"ExtraHop proxy request exceeds the configured {PROXY_MAX_REQUEST_BYTES:,}-byte limit."
-                    )
+                    "message": f"{label} exceeds the configured {maximum_bytes:,}-byte limit."
                 },
             )
     return bytes(body)

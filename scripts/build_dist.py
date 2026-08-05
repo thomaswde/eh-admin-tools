@@ -154,6 +154,7 @@ def validate_package(package_root: Path) -> None:
         "__pycache__",
         "logs",
         "chart-themes",
+        "api-response-cache",
         "tests",
         "dist",
         "node_modules",

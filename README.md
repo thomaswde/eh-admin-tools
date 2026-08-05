@@ -76,6 +76,24 @@ Connections use numbered variables, so additional RevealX 360 or Enterprise entr
 indexes `2`, `3`, and so on. `.env` is ignored by Git, but it contains plaintext secrets; prefer
 the connection form and operating-system credential store for normal use.
 
+## Cached reports
+
+After a Device Discovery, Records, or System Health collection completes, the app keeps its latest
+canonical result in `api-response-cache` beside `chart-themes`. Reopening that reporting page after
+a reload restores the historical result immediately and labels it as cached; generate or run the
+report again whenever current data is required. The cache stores completed report data rather than
+partial Metrics XID polling responses, so one result always retains its original time window and
+collection statuses.
+
+Entries are organized as `<local-user>/<connection-id>/reports/<report>.json`. Each connection
+directory includes a `connection.json` manifest containing only the normalized deployment type and
+tenant or host; credentials are never written there. Atomic replacement, a 32 MiB per-report
+default, a 512 MiB per-user default, and at most 64 connection directories keep the cache bounded.
+Set `EH_REPORT_CACHE_DIR`, `EH_REPORT_CACHE_MAX_ENTRY_BYTES`,
+`EH_REPORT_CACHE_MAX_USER_BYTES`, or `EH_REPORT_CACHE_MAX_CONNECTIONS` before startup to change
+those defaults. Cached report data can contain sensitive operational details; protect it and
+review it before sharing.
+
 ## Tests
 
 ```bash
@@ -173,6 +191,7 @@ step and no utility-class framework.
 - `backend/build_identity.py` derives source-checkout display versions from Git commit dates and validates packaged `VERSION` metadata.
 - `backend/session_store.py` keeps bounded, expiring workspace sessions with an optional authenticated client, keyed by an HTTP-only browser cookie.
 - `backend/pcap_analyzer/` owns bounded PCAP parsing, collection jobs, results, CSV, cancellation, and cleanup.
+- `backend/report_cache.py` owns connection-scoped, per-user persistence of completed reporting results.
 - `js/api-client/extrahop-api.js` preserves the existing frontend API surface while calling the local backend.
 - `scripts/build_dist.py` creates the end-user ZIP from an explicit file allowlist.
 

@@ -7,6 +7,7 @@ const deviceDiscoveryState = {
     applianceMap: {},
     includeEfc: false,
     includeDiscovery: false,
+    cacheRestoreAttempted: false,
     shouldStop: false,
     abortController: null
 };
@@ -352,12 +353,95 @@ function renderDeviceDiscoveryTable(sortedNodes, applianceMap) {
     tbody.appendChild(totalRow);
 }
 
+function buildDeviceDiscoveryCachedResult(data, range) {
+    const aggregateEntries = Object.entries(data.aggregate || {});
+    let filteredEntries = aggregateEntries;
+    if (!deviceDiscoveryState.includeEfc) {
+        filteredEntries = aggregateEntries.filter(([nodeId]) => !isEfcNode(nodeId, deviceDiscoveryState.applianceMap));
+    }
+    const sortedNodes = filteredEntries.map(([nodeId, counts]) => ({
+        id: nodeId,
+        label: getNodeLabel(nodeId, deviceDiscoveryState.applianceMap),
+        counts
+    })).sort((a, b) => b.counts.total - a.counts.total);
+
+    let totals = data;
+    if (!deviceDiscoveryState.includeEfc) {
+        const aggregate = {};
+        const perLevelTotals = { advanced: 0, standard: 0, discovery: 0, flow_log: 0 };
+        let totalDevices = 0;
+        sortedNodes.forEach(node => {
+            aggregate[node.id] = node.counts;
+            perLevelTotals.advanced += node.counts.advanced;
+            perLevelTotals.standard += node.counts.standard;
+            perLevelTotals.discovery += node.counts.discovery;
+            perLevelTotals.flow_log += node.counts.flow_log;
+            totalDevices += node.counts.total;
+        });
+        totals = { aggregate, perLevelTotals, totalDevices };
+    }
+    return {
+        selectedPeriod: deviceDiscoveryState.selectedPeriod,
+        includeEfc: deviceDiscoveryState.includeEfc,
+        includeDiscovery: deviceDiscoveryState.includeDiscovery,
+        appliances: deviceDiscoveryState.appliances,
+        range,
+        totals: {
+            aggregate: totals.aggregate || {},
+            perLevelTotals: totals.perLevelTotals || { advanced: 0, standard: 0, discovery: 0, flow_log: 0 },
+            totalDevices: totals.totalDevices || 0
+        },
+        sortedNodes,
+        incomplete: !!data.incomplete,
+        detail: data.detail || ''
+    };
+}
+
+function renderDeviceDiscoveryCachedResult(payload, cachedAt = '') {
+    if (!payload || !payload.range || !payload.totals || !Array.isArray(payload.sortedNodes)) return false;
+    deviceDiscoveryState.selectedPeriod = payload.selectedPeriod || 'yesterday';
+    deviceDiscoveryState.includeEfc = payload.includeEfc === true;
+    deviceDiscoveryState.includeDiscovery = payload.includeDiscovery === true;
+    deviceDiscoveryState.appliances = Array.isArray(payload.appliances) ? payload.appliances : [];
+    deviceDiscoveryState.applianceMap = ensureApplianceMap(deviceDiscoveryState.appliances);
+
+    document.querySelectorAll('.device-period-btn').forEach(button => {
+        button.classList.toggle('active', button.dataset.period === deviceDiscoveryState.selectedPeriod);
+    });
+    const includeEfcToggle = document.getElementById('includeEfcToggle');
+    const includeDiscoveryToggle = document.getElementById('includeDiscoveryToggle');
+    if (includeEfcToggle) includeEfcToggle.checked = deviceDiscoveryState.includeEfc;
+    if (includeDiscoveryToggle) includeDiscoveryToggle.checked = deviceDiscoveryState.includeDiscovery;
+
+    const cachedLabel = cachedAt ? ` · Cached ${new Date(cachedAt).toLocaleString()}` : '';
+    document.getElementById('deviceReportRange').textContent =
+        `${payload.range.label} · ${payload.range.displayRange}${cachedLabel}`;
+    const count = payload.sortedNodes.length;
+    document.getElementById('deviceNodeCount').textContent = `Nodes represented: ${count}`
+        + (payload.incomplete ? ` (partial results - ${payload.detail})` : '');
+    document.getElementById('deviceNoDataMessage').style.display = count ? 'none' : 'block';
+    updateDeviceDiscoveryKpis(payload.totals, { discoveryIncluded: deviceDiscoveryState.includeDiscovery });
+    if (count) renderDeviceDiscoveryChart(payload.sortedNodes);
+    renderDeviceDiscoveryTable(payload.sortedNodes, deviceDiscoveryState.applianceMap);
+    document.getElementById('deviceDiscoveryLoading').style.display = 'none';
+    document.getElementById('deviceDiscoveryResults').style.display = 'flex';
+    return true;
+}
+
+async function restoreDeviceDiscoveryCache() {
+    if (deviceDiscoveryState.cacheRestoreAttempted || !window.state?.connected) return;
+    deviceDiscoveryState.cacheRestoreAttempted = true;
+    try {
+        const cached = await ExtraHopAPI.getReportCache('device-discovery');
+        if (cached?.cached) renderDeviceDiscoveryCachedResult(cached.payload, cached.cachedAt);
+    } catch (error) {
+        console.warn('Could not restore the Device Discovery report cache:', error);
+    }
+}
+
 async function generateDeviceDiscoveryReport() {
     const loading = document.getElementById('deviceDiscoveryLoading');
-    const results = document.getElementById('deviceDiscoveryResults');
     const noData = document.getElementById('deviceNoDataMessage');
-    const rangeInfo = document.getElementById('deviceReportRange');
-    const nodeCount = document.getElementById('deviceNodeCount');
     const generateBtn = document.getElementById('generateDeviceReport');
     const stopBtn = document.getElementById('stopDeviceDiscoveryLoad');
     const loadingText = document.getElementById('deviceLoadingText');
@@ -387,65 +471,19 @@ async function generateDeviceDiscoveryReport() {
     try {
         await loadAppliancesForDeviceModule(abortController.signal);
         const range = getPeriodRange(deviceDiscoveryState.selectedPeriod, Date.now());
-        rangeInfo.textContent = `${range.label} · ${range.displayRange}`;
-
         const data = await fetchDevicesBatch(range, abortController.signal);
         stoppedEarly = !!data.incomplete;
-        const aggregateEntries = Object.entries(data.aggregate);
-
-        if (!aggregateEntries.length) {
-            noData.style.display = 'block';
-            updateDeviceDiscoveryKpis({ totalDevices: 0, perLevelTotals: { advanced: 0, standard: 0, discovery: 0, flow_log: 0 } }, { discoveryIncluded: deviceDiscoveryState.includeDiscovery });
-            nodeCount.textContent = 'Nodes represented: 0';
-        } else {
-            let filteredEntries = aggregateEntries;
-
-            // Filter out EFC nodes if includeEfc is false
-            if (!deviceDiscoveryState.includeEfc) {
-                filteredEntries = aggregateEntries.filter(([nodeId]) => !isEfcNode(nodeId, deviceDiscoveryState.applianceMap));
+        const cachedResult = buildDeviceDiscoveryCachedResult(data, range);
+        renderDeviceDiscoveryCachedResult(cachedResult);
+        if (!stoppedEarly) {
+            try {
+                await ExtraHopAPI.saveReportCache('device-discovery', cachedResult);
+            } catch (error) {
+                console.warn('Could not save the Device Discovery report cache:', error);
+                const rangeInfo = document.getElementById('deviceReportRange');
+                rangeInfo.textContent += ` · Cache not updated: ${error.message}`;
             }
-
-            const sortedNodes = filteredEntries.map(([nodeId, counts]) => ({
-                id: nodeId,
-                label: getNodeLabel(nodeId, deviceDiscoveryState.applianceMap),
-                counts
-            })).sort((a, b) => b.counts.total - a.counts.total);
-
-            // Recalculate totals if we filtered out EFC nodes
-            let finalData = data;
-            if (!deviceDiscoveryState.includeEfc) {
-                const filteredAggregate = {};
-                const filteredPerLevelTotals = { advanced: 0, standard: 0, discovery: 0, flow_log: 0 };
-                let filteredTotalDevices = 0;
-
-                sortedNodes.forEach(node => {
-                    filteredAggregate[node.id] = node.counts;
-                    filteredPerLevelTotals.advanced += node.counts.advanced;
-                    filteredPerLevelTotals.standard += node.counts.standard;
-                    filteredPerLevelTotals.discovery += node.counts.discovery;
-                    filteredPerLevelTotals.flow_log += node.counts.flow_log;
-                    filteredTotalDevices += node.counts.total;
-                });
-
-                finalData = {
-                    aggregate: filteredAggregate,
-                    perLevelTotals: filteredPerLevelTotals,
-                    totalDevices: filteredTotalDevices
-                };
-            }
-
-            nodeCount.textContent = `Nodes represented: ${sortedNodes.length}`;
-            updateDeviceDiscoveryKpis(finalData, { discoveryIncluded: deviceDiscoveryState.includeDiscovery });
-            renderDeviceDiscoveryChart(sortedNodes);
-            renderDeviceDiscoveryTable(sortedNodes, deviceDiscoveryState.applianceMap);
         }
-
-        if (stoppedEarly) {
-            nodeCount.textContent = `${nodeCount.textContent} (partial results - ${data.detail})`;
-        }
-
-        loading.style.display = 'none';
-        results.style.display = 'flex';
     } catch (error) {
         if (abortController.signal.aborted) return;
         console.error('Error generating device discovery report', error);
@@ -520,8 +558,8 @@ function initDeviceDiscoveryModule() {
     setupDeviceDiscoveryEvents();
 }
 
-function activateDeviceDiscoveryModule() {
-    // Placeholder for future activation logic
+async function activateDeviceDiscoveryModule() {
+    await restoreDeviceDiscoveryCache();
 }
 
 function cancelDeviceDiscoveryModule() {
