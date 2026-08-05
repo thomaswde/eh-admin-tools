@@ -82,6 +82,12 @@ Packetstore packets are evidence from the Packetstore observation point. Their f
 
 Inputs, packet records, flows, findings, sequence intervals, windows, transferred bytes, runtime, concurrent jobs, result pages, and retention all have explicit bounds. Uploaded and downloaded captures use generated owner-only paths outside static directories and are removed after every terminal outcome; only bounded result metadata remains until job expiration. Local upload requires only the bounded workspace owner and runs without ExtraHop credentials. If a client is attached, upload enrichment is best effort; without one, enrichment is skipped and analysis remains complete. Client detachment cancels active connected-collection jobs but does not delete completed local results. Workspace expiry or removal cancels all owned work and removes retained metadata.
 
+## Network locality bulk imports
+
+Interactive network locality edits remain browser-managed drafts, but CSV imports are connection-bound backend jobs because a browser tab is not a durable execution or audit boundary. The backend parses a bounded UTF-8 CSV, checks the authoritative locality list once, applies new entries with bounded concurrency and one absolute deadline, and persists the source-row projection, job metadata, and append-only per-row outcomes under the same local-user and deployment identity boundary as cached reports. Completed and interrupted jobs remain queryable after browser reloads and app restarts for a bounded retention period and job count.
+
+Every non-empty CSV row has an exportable outcome: created, conclusively failed, skipped as a duplicate, invalid, unknown when transport failure makes application ambiguous, or not attempted when the job ended before that row. Unknown is never collapsed into failure, and unattempted work is never presented as applied. Active imports are cancelled when their owning ExtraHop connection is detached; their persisted outcomes remain available after reconnecting to the same deployment. The ordinary locality query can still return the complete upstream array, but the browser renders only one bounded editable page at a time so large deployments do not create an unbounded DOM.
+
 ## Tests and CI
 
 Behavioral JavaScript tests use Node's test runner, and backend tests use the Python test configuration in `pyproject.toml`. ESLint, Ruff, syntax checks, and distribution construction are first-class checks. `.gitlab-ci.yml` runs separate JavaScript and Python stages, then builds the allowlisted distribution only after both pass.

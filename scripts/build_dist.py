@@ -117,6 +117,7 @@ def validate_package(package_root: Path) -> None:
         "app/index.html",
         "app/backend/build_identity.py",
         "app/backend/extrahop_client.py",
+        "app/backend/locality_imports.py",
         "app/backend/pcap_analyzer/analyzer.py",
         "app/backend/pcap_analyzer/jobs.py",
         "app/backend/system_health_pdf.py",
