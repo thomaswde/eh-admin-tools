@@ -32,6 +32,8 @@ const USER_MODULE_ACCESS_OPTIONS = {
 const USER_ROLE_ORDER = ['system', 'write', 'metrics', 'ndr', 'npm', 'packets'];
 const USER_BASE_FAMILIES = ['system', 'write', 'metrics'];
 const USER_KNOWN_FAMILIES = [...USER_ROLE_ORDER];
+const USER_INACTIVITY_FILTER_DAYS = new Set(['30', '90', '180', '365']);
+const MAX_USER_BATCH_SIZE = 500;
 
 const userManagerState = {
     isLoaded: false,
@@ -41,8 +43,34 @@ const userManagerState = {
         create: null,
         edit: null
     },
-    activeDeleteUsername: null
+    activeDeleteUsername: null,
+    selectedUsers: new Set(),
+    mutationPromise: null,
+    mutationOperation: null
 };
+
+function isUserMutationRunning() {
+    return userManagerState.mutationPromise !== null;
+}
+
+function userTimestamp(value) {
+    if (value == null || value === '' || value === 0 || value === '0') return null;
+    const timestamp = Number(value);
+    return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
+}
+
+function userMatchesInactivityFilter(user, filterValue, nowMs = Date.now()) {
+    const normalized = String(filterValue || '');
+    if (!normalized) return true;
+    const lastLogin = userTimestamp(user?.last_ui_login_time);
+    if (normalized === 'never') return lastLogin === null;
+    if (!USER_INACTIVITY_FILTER_DAYS.has(normalized)) return true;
+
+    const cutoff = nowMs - Number(normalized) * 24 * 60 * 60 * 1000;
+    if (lastLogin !== null) return lastLogin <= cutoff;
+    const joined = userTimestamp(user?.date_joined);
+    return joined !== null && joined <= cutoff;
+}
 
 function cloneRoleObject(roles) {
     if (!roles || typeof roles !== 'object') {
@@ -442,6 +470,7 @@ function applyUserFilters() {
     const searchTerm = document.getElementById('searchUsers').value.trim().toLowerCase();
     const typeFilter = document.getElementById('filterUserType').value;
     const stateFilter = document.getElementById('filterUserState').value;
+    const inactivityFilter = document.getElementById('filterUserInactivity').value;
 
     state.filteredUsers = state.users.filter(user => {
         const matchesSearch = !searchTerm
@@ -450,10 +479,190 @@ function applyUserFilters() {
         const matchesType = !typeFilter || user.type === typeFilter;
         const enabledState = user.enabled ? 'enabled' : 'disabled';
         const matchesState = !stateFilter || enabledState === stateFilter;
-        return matchesSearch && matchesType && matchesState;
+        const matchesInactivity = userMatchesInactivityFilter(user, inactivityFilter);
+        return matchesSearch && matchesType && matchesState && matchesInactivity;
     });
 
     userManagerState.currentPage = 1;
+}
+
+function getCurrentPageUsers() {
+    const start = (userManagerState.currentPage - 1) * userManagerState.itemsPerPage;
+    return state.filteredUsers.slice(start, start + userManagerState.itemsPerPage);
+}
+
+function pruneSelectedUsers() {
+    const existing = new Set(state.users.map(user => user.username));
+    userManagerState.selectedUsers.forEach(username => {
+        if (!existing.has(username)) userManagerState.selectedUsers.delete(username);
+    });
+}
+
+function syncUserSelectAllCheckbox() {
+    const checkbox = document.getElementById('selectAllUsers');
+    if (!checkbox) return;
+    const pageUsers = getCurrentPageUsers();
+    const selectedOnPage = pageUsers.filter(user => userManagerState.selectedUsers.has(user.username)).length;
+    checkbox.disabled = pageUsers.length === 0 || isUserMutationRunning();
+    checkbox.checked = pageUsers.length > 0 && selectedOnPage === pageUsers.length;
+    checkbox.indeterminate = selectedOnPage > 0 && selectedOnPage < pageUsers.length;
+}
+
+function updateUserBulkActions() {
+    const count = userManagerState.selectedUsers.size;
+    const allFilteredSelected = state.filteredUsers.length > 0
+        && state.filteredUsers.every(user => userManagerState.selectedUsers.has(user.username));
+    const busy = isUserMutationRunning();
+    document.getElementById('selectedUserCount').textContent = count > 0
+        ? `${count} selected${allFilteredSelected ? ' (all filtered users)' : ''}`
+        : '0 selected';
+    document.getElementById('userBulkActions').style.display = count > 0 ? 'flex' : 'none';
+    document.getElementById('bulkDisableUsersBtn').disabled = busy || count === 0;
+    document.getElementById('bulkDeleteUsersBtn').disabled = busy || count === 0;
+    document.getElementById('selectAllFilteredUsersBtn').disabled = busy;
+    document.getElementById('selectAllFilteredUsersBtn').textContent = allFilteredSelected
+        ? 'All selected'
+        : 'Select all filtered';
+    document.getElementById('clearUserSelectionBtn').disabled = busy || count === 0;
+}
+
+function selectAllFilteredUsers() {
+    if (state.filteredUsers.length > MAX_USER_BATCH_SIZE) {
+        alert(`Narrow the filters to ${MAX_USER_BATCH_SIZE} users or fewer before selecting all.`);
+        return;
+    }
+    state.filteredUsers.forEach(user => userManagerState.selectedUsers.add(user.username));
+    renderUsers();
+}
+
+function clearUserSelection() {
+    userManagerState.selectedUsers.clear();
+    renderUsers();
+}
+
+function setUserMutationProgress(operation, completed, total, phase = 'mutating') {
+    const verb = operation === 'disable' ? 'Disabling users' : 'Deleting users';
+    const message = phase === 'refreshing'
+        ? `${verb}: ${total} of ${total} complete. Refreshing users…`
+        : `${verb}: ${completed} of ${total} complete…`;
+    document.querySelectorAll?.('.user-mutation-progress').forEach(element => {
+        element.style.display = 'flex';
+        element.querySelector('.user-mutation-progress-text').textContent = message;
+    });
+}
+
+function setUserMutationBusy(busy) {
+    [
+        'loadUsersBtn',
+        'createUserBtn',
+        'bulkDisableUsersBtn',
+        'bulkDeleteUsersBtn',
+        'selectAllFilteredUsersBtn',
+        'clearUserSelectionBtn',
+        'confirmBulkDisableUsers',
+        'cancelBulkDisableUsers',
+        'confirmBulkDeleteUsers',
+        'cancelBulkDeleteUsers'
+    ].forEach(id => {
+        const control = document.getElementById(id);
+        if (control) control.disabled = busy;
+    });
+    const module = document.getElementById('usersModule');
+    if (module) module.setAttribute('aria-busy', busy ? 'true' : 'false');
+    if (!busy) {
+        document.querySelectorAll?.('.user-mutation-progress').forEach(element => {
+            element.style.display = 'none';
+        });
+    }
+    renderUsers();
+}
+
+async function runUserMutation(operation, usernames, mutation) {
+    if (userManagerState.mutationPromise) return null;
+    if (usernames.length === 0 || usernames.length > MAX_USER_BATCH_SIZE) {
+        throw new RangeError(`Select between 1 and ${MAX_USER_BATCH_SIZE} users.`);
+    }
+
+    userManagerState.mutationOperation = operation;
+    const pending = Promise.resolve().then(() => mutation(progress => {
+        setUserMutationProgress(operation, progress.completed, progress.total, progress.phase);
+    }));
+    userManagerState.mutationPromise = pending;
+    setUserMutationBusy(true);
+    setUserMutationProgress(operation, 0, usernames.length);
+    try {
+        return await pending;
+    } finally {
+        userManagerState.mutationPromise = null;
+        userManagerState.mutationOperation = null;
+        setUserMutationBusy(false);
+    }
+}
+
+function newUserMutationResults() {
+    return { mutations: 0, disabled: 0, deleted: 0, skipped: 0, items: [], errors: [] };
+}
+
+async function refreshUsersAfterMutations(results) {
+    if (results.mutations === 0) return;
+    const refreshed = await loadUsers();
+    if (refreshed !== true) results.errors.push('User refresh failed after the batch operation.');
+}
+
+async function performUserDisables(usernames, onProgress) {
+    const results = newUserMutationResults();
+    for (const [index, username] of usernames.entries()) {
+        const user = state.users.find(entry => entry.username === username);
+        const item = { username, disable: { status: 'pending' } };
+        results.items.push(item);
+        if (!user) {
+            item.disable = { status: 'failed', error: 'User was not found.' };
+            results.errors.push(`${username}: user was not found.`);
+        } else if (!user.enabled) {
+            item.disable.status = 'skipped';
+            results.skipped++;
+        } else {
+            try {
+                await window.apiClient.updateUser(username, { enabled: false });
+                item.disable.status = 'succeeded';
+                results.disabled++;
+                results.mutations++;
+            } catch (error) {
+                const message = `${username}: ${error?.message || error}`;
+                item.disable = { status: 'failed', error: message };
+                results.errors.push(message);
+            }
+        }
+        onProgress?.({ completed: index + 1, total: usernames.length, phase: 'mutating' });
+    }
+    onProgress?.({ completed: usernames.length, total: usernames.length, phase: 'refreshing' });
+    await refreshUsersAfterMutations(results);
+    return results;
+}
+
+async function performUserDeletes(usernames, transferUser, onProgress) {
+    const results = newUserMutationResults();
+    if (transferUser && usernames.includes(transferUser)) {
+        throw new Error('The ownership-transfer user cannot also be selected for deletion.');
+    }
+    for (const [index, username] of usernames.entries()) {
+        const item = { username, deletion: { status: 'pending' } };
+        results.items.push(item);
+        try {
+            await window.apiClient.deleteUser(username, transferUser || undefined);
+            item.deletion.status = 'succeeded';
+            results.deleted++;
+            results.mutations++;
+        } catch (error) {
+            const message = `${username}: ${error?.message || error}`;
+            item.deletion = { status: 'failed', error: message };
+            results.errors.push(message);
+        }
+        onProgress?.({ completed: index + 1, total: usernames.length, phase: 'mutating' });
+    }
+    onProgress?.({ completed: usernames.length, total: usernames.length, phase: 'refreshing' });
+    await refreshUsersAfterMutations(results);
+    return results;
 }
 
 function updateUsersPagination() {
@@ -479,17 +688,19 @@ function renderUsers() {
     const tbody = document.getElementById('usersTableBody');
     const tableContainer = document.getElementById('usersTableContainer');
     const paginationContainer = document.getElementById('usersPaginationContainer');
-    const start = (userManagerState.currentPage - 1) * userManagerState.itemsPerPage;
-    const end = start + userManagerState.itemsPerPage;
-    const pageData = state.filteredUsers.slice(start, end);
+    const pageData = getCurrentPageUsers();
+
+    pruneSelectedUsers();
 
     tbody.innerHTML = '';
 
     if (pageData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7"><div class="empty-inline">No users found</div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8"><div class="empty-inline">No users found</div></td></tr>';
         tableContainer.style.display = 'block';
         paginationContainer.style.display = 'flex';
         updateUsersPagination();
+        updateUserBulkActions();
+        syncUserSelectAllCheckbox();
         return;
     }
 
@@ -501,8 +712,15 @@ function renderUsers() {
         const lastLogin = formatTimestamp(user.last_ui_login_time);
         const enabledLabel = user.enabled ? 'Enabled' : 'Disabled';
         const isExpanded = !!user._expanded;
+        const isSelected = userManagerState.selectedUsers.has(user.username);
+
+        row.classList.toggle('is-selected', isSelected);
 
         row.innerHTML = `
+            <td>
+                <input type="checkbox" class="user-checkbox" data-username="${escapeAttribute(user.username)}"
+                    ${isSelected ? 'checked' : ''} ${isUserMutationRunning() ? 'disabled' : ''}>
+            </td>
             <td>
                 <div class="row-tight">
                     <span class="disclosure-caret${isExpanded ? ' is-open' : ''}"></span>
@@ -519,8 +737,8 @@ function renderUsers() {
             </td>
             <td>${escapeHtml(lastLogin)}</td>
             <td class="actions">
-                <button class="btn btn-sm edit-user-btn" data-username="${escapeAttribute(user.username)}">Edit</button>
-                <button class="btn-danger btn-sm delete-user-btn" data-username="${escapeAttribute(user.username)}">Delete</button>
+                <button class="btn btn-sm edit-user-btn" data-username="${escapeAttribute(user.username)}" ${isUserMutationRunning() ? 'disabled' : ''}>Edit</button>
+                <button class="btn-danger btn-sm delete-user-btn" data-username="${escapeAttribute(user.username)}" ${isUserMutationRunning() ? 'disabled' : ''}>Delete</button>
             </td>
         `;
 
@@ -570,6 +788,7 @@ function renderUsers() {
             }
 
             detailRow.innerHTML = `
+                <td></td>
                 <td colspan="7">${detailContent}</td>
             `;
 
@@ -580,6 +799,8 @@ function renderUsers() {
     document.getElementById('usersTableContainer').style.display = 'block';
     document.getElementById('usersPaginationContainer').style.display = 'flex';
     updateUsersPagination();
+    updateUserBulkActions();
+    syncUserSelectAllCheckbox();
 }
 
 async function ensureUserDetailsLoaded(user) {
@@ -651,11 +872,11 @@ async function ensureUserDetailsLoaded(user) {
 async function loadUsers(options = {}) {
     if (!state.connected) {
         alert('Please connect to your ExtraHop instance first');
-        return;
+        return false;
     }
     if (!deploymentSupportsApiFamily(state.apiConfig?.type, 'users')) {
         showStatus('User Manager is available only for self-managed RevealX Enterprise deployments.', true);
-        return;
+        return false;
     }
 
     const loadBtn = document.getElementById('loadUsersBtn');
@@ -692,11 +913,13 @@ async function loadUsers(options = {}) {
                 ensureUserDetailsLoaded(targetUser);
             }
         }
+        return true;
     } catch (error) {
         loadingDiv.style.display = 'none';
         alert('Error loading users: ' + error.message);
+        return false;
     } finally {
-        loadBtn.disabled = false;
+        loadBtn.disabled = isUserMutationRunning();
         loadBtn.textContent = 'Refresh';
     }
 }
@@ -966,6 +1189,80 @@ async function confirmDeleteUser() {
     }
 }
 
+function openBulkDisableUsersModal() {
+    const count = userManagerState.selectedUsers.size;
+    document.getElementById('bulkDisableUserCount').textContent = `${count} user${count === 1 ? '' : 's'}`;
+    showModal('bulkDisableUsersModal');
+}
+
+async function confirmBulkDisableUsers() {
+    const usernames = Array.from(userManagerState.selectedUsers);
+    try {
+        const results = await runUserMutation(
+            'disable',
+            usernames,
+            onProgress => performUserDisables(usernames, onProgress)
+        );
+        if (!results) return;
+        results.items.forEach(item => {
+            if (['succeeded', 'skipped'].includes(item.disable.status)) {
+                userManagerState.selectedUsers.delete(item.username);
+            }
+        });
+        if (results.disabled > 0 || results.skipped > 0) hideModal('bulkDisableUsersModal');
+        renderUsers();
+        const errorSummary = results.errors.length > 0 ? ` ${results.errors.length} update(s) failed.` : '';
+        alert(
+            `Disabled ${results.disabled} of ${usernames.length} selected user(s); `
+            + `${results.skipped} already disabled.${errorSummary}`
+        );
+    } catch (error) {
+        alert('Error disabling users: ' + error.message);
+    }
+}
+
+function openBulkDeleteUsersModal() {
+    const selected = userManagerState.selectedUsers;
+    document.getElementById('bulkDeleteUserCount').textContent = `${selected.size} user${selected.size === 1 ? '' : 's'}`;
+    document.getElementById('bulkDeleteUsersConfirmInput').value = '';
+    const transferSelect = document.getElementById('bulkDeleteUsersTransferSelect');
+    transferSelect.innerHTML = '<option value="">Do not transfer owned objects</option>';
+    state.users
+        .filter(user => !selected.has(user.username))
+        .forEach(user => {
+            const option = document.createElement('option');
+            option.value = user.username;
+            option.textContent = user.username;
+            transferSelect.appendChild(option);
+        });
+    window.refreshCustomSelect?.(transferSelect);
+    showModal('bulkDeleteUsersModal');
+}
+
+async function confirmBulkDeleteUsers() {
+    const confirmation = document.getElementById('bulkDeleteUsersConfirmInput').value.trim();
+    if (confirmation !== 'DELETE') {
+        alert('Type DELETE exactly to confirm bulk deletion.');
+        return;
+    }
+    const usernames = Array.from(userManagerState.selectedUsers);
+    const transferUser = document.getElementById('bulkDeleteUsersTransferSelect').value;
+    try {
+        const results = await runUserMutation(
+            'delete',
+            usernames,
+            onProgress => performUserDeletes(usernames, transferUser, onProgress)
+        );
+        if (!results) return;
+        if (results.deleted > 0) hideModal('bulkDeleteUsersModal');
+        renderUsers();
+        const errorSummary = results.errors.length > 0 ? ` ${results.errors.length} deletion(s) failed.` : '';
+        alert(`Deleted ${results.deleted} of ${usernames.length} selected user(s).${errorSummary}`);
+    } catch (error) {
+        alert('Error deleting users: ' + error.message);
+    }
+}
+
 async function copyCreatedApiKey() {
     const apiKey = document.getElementById('createdUserApiKeyValue').textContent;
     if (!apiKey) {
@@ -1023,6 +1320,20 @@ function initUsersModule() {
         renderUsers();
     });
 
+    document.getElementById('filterUserInactivity').addEventListener('change', () => {
+        applyUserFilters();
+        renderUsers();
+    });
+
+    document.getElementById('selectAllUsers').addEventListener('change', event => {
+        if (isUserMutationRunning()) return;
+        getCurrentPageUsers().forEach(user => {
+            if (event.target.checked) userManagerState.selectedUsers.add(user.username);
+            else userManagerState.selectedUsers.delete(user.username);
+        });
+        renderUsers();
+    });
+
     document.getElementById('usersPrevPageBtn').addEventListener('click', () => {
         if (userManagerState.currentPage > 1) {
             userManagerState.currentPage--;
@@ -1038,7 +1349,17 @@ function initUsersModule() {
         }
     });
 
+    document.getElementById('usersTableBody').addEventListener('change', event => {
+        if (isUserMutationRunning() || !event.target.classList.contains('user-checkbox')) return;
+        const username = event.target.dataset.username;
+        if (event.target.checked) userManagerState.selectedUsers.add(username);
+        else userManagerState.selectedUsers.delete(username);
+        updateUserBulkActions();
+        syncUserSelectAllCheckbox();
+    });
+
     document.getElementById('usersTableBody').addEventListener('click', async event => {
+        if (isUserMutationRunning() || event.target.closest('input[type="checkbox"]')) return;
         const editButton = event.target.closest('.edit-user-btn');
         const deleteButton = event.target.closest('.delete-user-btn');
         const unlockButton = event.target.closest('.unlock-user-btn');
@@ -1079,6 +1400,15 @@ function initUsersModule() {
 
     document.getElementById('confirmDeleteUser').addEventListener('click', confirmDeleteUser);
     document.getElementById('cancelDeleteUser').addEventListener('click', () => hideModal('deleteUserModal'));
+
+    document.getElementById('bulkDisableUsersBtn').addEventListener('click', openBulkDisableUsersModal);
+    document.getElementById('bulkDeleteUsersBtn').addEventListener('click', openBulkDeleteUsersModal);
+    document.getElementById('selectAllFilteredUsersBtn').addEventListener('click', selectAllFilteredUsers);
+    document.getElementById('clearUserSelectionBtn').addEventListener('click', clearUserSelection);
+    document.getElementById('confirmBulkDisableUsers').addEventListener('click', confirmBulkDisableUsers);
+    document.getElementById('cancelBulkDisableUsers').addEventListener('click', () => hideModal('bulkDisableUsersModal'));
+    document.getElementById('confirmBulkDeleteUsers').addEventListener('click', confirmBulkDeleteUsers);
+    document.getElementById('cancelBulkDeleteUsers').addEventListener('click', () => hideModal('bulkDeleteUsersModal'));
 
     document.getElementById('copyCreatedUserApiKey').addEventListener('click', copyCreatedApiKey);
     document.getElementById('closeCreatedUserApiKey').addEventListener('click', () => {

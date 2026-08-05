@@ -7,7 +7,7 @@ import re
 import subprocess
 from typing import Any, Literal
 
-from fastapi import Cookie, FastAPI, HTTPException, Request, Response
+from fastapi import Cookie, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from backend.api_response_logger import ApiResponseLogger, LOG_VERBOSITIES
 from backend.build_identity import resolve_runtime_version
 from backend.connection_store import ConnectionStorageError, ConnectionStore
+from backend.dashboard_usage import DashboardUsageError, collect_dashboard_usage
 from backend.extrahop_client import ExtraHopApiError, ExtraHopClient, ExtraHopResponse
 from backend.pcap_analyzer.jobs import PcapJobError, PcapJobManager
 from backend.report_cache import ReportCache, ReportCacheError, ReportCacheLimitError
@@ -658,6 +659,32 @@ async def system_health_catalog_lookup(
 ) -> dict[str, Any]:
     catalog = await system_health_catalog(eh_admin_session)
     return {key: catalog[key] for key in ("loaded", "path", "lookup")}
+
+
+@app.get("/backend/dashboard-usage")
+async def dashboard_usage(
+    lookback_days: int = Query(default=365, alias="lookbackDays", ge=1, le=365),
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    client = get_session_client(eh_admin_session)
+    try:
+        return await collect_dashboard_usage(client, lookback_days=lookback_days)
+    except DashboardUsageError as error:
+        raise HTTPException(status_code=error.status_code, detail={"message": str(error)}) from error
+    except ExtraHopApiError as error:
+        exception = http_exception(error)
+        if error.status_code == 401:
+            detached = await sessions.adetach_if(eh_admin_session, client)
+            if detached:
+                await pcap_jobs.cancel_owner_collections(eh_admin_session)
+                exception.detail["code"] = "extrahop_session_expired"
+            else:
+                exception.status_code = 409
+                exception.detail = {
+                    "message": "The request used an ExtraHop connection that has since been replaced. Retry the operation.",
+                    "code": "extrahop_connection_replaced",
+                }
+        raise exception from error
 
 
 @app.post("/backend/system-health/pdf")

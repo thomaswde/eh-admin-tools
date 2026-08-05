@@ -254,3 +254,57 @@ test('reports an authoritative reload failure after a successful mutation', asyn
         'Dashboard refresh failed: authoritative reload did not complete'
     ]);
 });
+
+test('dashboard usage attaches by opaque ID and inactivity filters include unrecorded dashboards', () => {
+    const unsafeId = '90071992547409931234';
+    const dashboards = [{ id: unsafeId }, { id: '-3' }, { id: 'unused' }];
+    const { context } = loadDashboardManager({}, dashboards);
+    context.testDashboards = dashboards;
+    context.testUsage = {
+        lastViewedByDashboardId: {
+            [unsafeId]: {
+                lastViewedBucketStartMs: 1_700_000_000_000,
+                lastViewedBucketEndMs: 1_700_086_400_000,
+                viewsInWindow: 4
+            },
+            '-3': {
+                lastViewedBucketStartMs: 1_690_000_000_000,
+                lastViewedBucketEndMs: 1_690_086_400_000,
+                viewsInWindow: 1
+            }
+        }
+    };
+
+    vm.runInContext(`
+        dashboardUsageState.status = 'complete';
+        dashboardUsageState.lookbackDays = 365;
+        attachDashboardUsage(testDashboards, testUsage);
+    `, context);
+
+    assert.equal(dashboards[0]._usage.viewsInWindow, 4);
+    assert.equal(dashboards[1]._usage.viewsInWindow, 1);
+    assert.equal(dashboards[2]._usage, null);
+    context.nowMs = 1_700_200_000_000;
+    assert.equal(
+        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[0], '30', nowMs)`, context),
+        false
+    );
+    assert.equal(
+        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[1], '30', nowMs)`, context),
+        true
+    );
+    assert.equal(
+        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[2], '30', nowMs)`, context),
+        true
+    );
+});
+
+test('dashboard inactivity filters do not claim results when usage collection is unavailable', () => {
+    const { context } = loadDashboardManager({});
+    const matches = vm.runInContext(`
+        dashboardUsageState.status = 'unavailable';
+        dashboardMatchesUsageFilter({ id: '1', _usage: null }, '90', 1700000000000);
+    `, context);
+
+    assert.equal(matches, false);
+});

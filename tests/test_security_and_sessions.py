@@ -309,6 +309,36 @@ class BackendRouteSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["detail"]["code"], "extrahop_not_connected")
 
+    def test_dashboard_usage_route_uses_the_attached_client_and_bounded_lookback(self):
+        workspace_id = main.sessions.ensure()
+        attached_client = unittest.mock.Mock()
+        attached_client.aclose = AsyncMock()
+        main.sessions.attach(workspace_id, attached_client)
+        self.client.cookies.set(main.SESSION_COOKIE, workspace_id)
+        projection = {
+            "status": "complete",
+            "lookbackDays": 90,
+            "lastViewedByDashboardId": {"9007199254740993": {"viewsInWindow": 1}},
+        }
+
+        with patch("main.collect_dashboard_usage", new=AsyncMock(return_value=projection)) as collect:
+            response = self.client.get("/backend/dashboard-usage?lookbackDays=90")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), projection)
+        collect.assert_awaited_once_with(attached_client, lookback_days=90)
+
+    def test_dashboard_usage_route_rejects_an_unbounded_lookback(self):
+        workspace_id = main.sessions.ensure()
+        attached_client = unittest.mock.Mock()
+        attached_client.aclose = AsyncMock()
+        main.sessions.attach(workspace_id, attached_client)
+        self.client.cookies.set(main.SESSION_COOKIE, workspace_id)
+
+        response = self.client.get("/backend/dashboard-usage?lookbackDays=366")
+
+        self.assertEqual(response.status_code, 422)
+
     def test_terminal_upstream_401_detaches_client_but_keeps_workspace(self):
         workspace_id = main.sessions.ensure()
         failing_client = unittest.mock.Mock()

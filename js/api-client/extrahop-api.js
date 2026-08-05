@@ -306,6 +306,21 @@ class ExtraHopAPI {
         return this.request('/dashboards');
     }
 
+    async getDashboardUsage(lookbackDays = 365) {
+        const normalizedDays = Number(lookbackDays);
+        if (!Number.isInteger(normalizedDays) || normalizedDays < 1 || normalizedDays > 365) {
+            throw new TypeError('Dashboard usage lookback must be between 1 and 365 days.');
+        }
+        const response = await ExtraHopAPI.backendFetch(
+            `/backend/dashboard-usage?lookbackDays=${encodeURIComponent(normalizedDays)}`,
+            {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' }
+            }
+        );
+        return ExtraHopAPI.parseStaticResponse(response);
+    }
+
     async getDashboardSharing(dashboardId) {
         return this.request(`/dashboards/${dashboardId}/sharing`);
     }

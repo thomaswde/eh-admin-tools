@@ -381,10 +381,18 @@
                     <input type="search" id="searchDashboards" placeholder="Search dashboards…">
                 </div>
                 <div class="grow"><input type="text" id="filterOwner" placeholder="Filter by owner…"></div>
+                <select id="filterDashboardActivity" style="width: 220px;" disabled>
+                    <option value="">All dashboard activity</option>
+                    <option value="30">No view recorded in 30 days</option>
+                    <option value="90">No view recorded in 90 days</option>
+                    <option value="180">No view recorded in 180 days</option>
+                    <option value="365">No view recorded in 365 days</option>
+                </select>
                 <button type="button" id="loadDashboardsBtn" class="btn-primary">Load dashboards</button>
                 <div class="spacer"></div>
                 <span id="dashboardFilterCount" class="small muted"></span>
             </div>
+            <p id="dashboardUsageStatus" class="small muted" style="margin: -8px 0 14px;"></p>
 
             <div class="selection-bar">
                 <span id="selectedCount" class="selection-count">0 selected</span>
@@ -411,6 +419,7 @@
                             <th class="col-check"><input type="checkbox" id="selectAll" aria-label="Select all on this page"></th>
                             <th>Dashboard name</th>
                             <th style="width: 180px;">Owner</th>
+                            <th style="width: 220px;">Last viewed</th>
                             <th style="width: 200px;" class="actions">Actions</th>
                         </tr>
                     </thead>
@@ -451,8 +460,28 @@
                     <option value="enabled">Enabled</option>
                     <option value="disabled">Disabled</option>
                 </select>
+                <select id="filterUserInactivity" style="width: 210px;">
+                    <option value="">All last-login dates</option>
+                    <option value="never">Never logged in</option>
+                    <option value="30">Inactive for 30 days</option>
+                    <option value="90">Inactive for 90 days</option>
+                    <option value="180">Inactive for 180 days</option>
+                    <option value="365">Inactive for 365 days</option>
+                </select>
                 <button type="button" id="loadUsersBtn" class="btn">Refresh</button>
                 <button type="button" id="createUserBtn" class="btn-primary">Create user</button>
+            </div>
+
+            <div class="selection-bar">
+                <span id="selectedUserCount" class="selection-count">0 selected</span>
+                <div id="userBulkActions" class="row-tight" style="display: none;">
+                    <button type="button" id="bulkDisableUsersBtn" class="btn btn-sm">Disable</button>
+                    <button type="button" id="bulkDeleteUsersBtn" class="btn-danger btn-sm">Delete</button>
+                </div>
+                <div class="spacer"></div>
+                <button type="button" id="selectAllFilteredUsersBtn" class="btn-link">Select all filtered</button>
+                <span class="small muted">·</span>
+                <button type="button" id="clearUserSelectionBtn" class="btn-link" disabled>Clear</button>
             </div>
 
             <div id="usersLoading" class="loading-state" style="display: none;">
@@ -464,6 +493,7 @@
                 <table id="usersTable">
                     <thead>
                         <tr>
+                            <th class="col-check"><input type="checkbox" id="selectAllUsers" aria-label="Select all users on this page"></th>
                             <th>Username</th>
                             <th>Name</th>
                             <th style="width: 100px;">Type</th>
@@ -1858,6 +1888,54 @@
         <div class="modal-foot">
             <button type="button" id="cancelDeleteUser" class="btn">Cancel</button>
             <button type="button" id="confirmDeleteUser" class="btn-danger">Delete user</button>
+        </div>
+    </div>
+</div>
+
+<!-- Disable users in bulk -->
+<div id="bulkDisableUsersModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title">Disable users</h2>
+        <p class="modal-desc">
+            Disable <strong id="bulkDisableUserCount"></strong>? Disabled users cannot log in until an administrator enables them again.
+        </p>
+        <div class="user-mutation-progress notice" role="status" aria-live="polite" style="display: none; margin-top: 14px;">
+            <div class="spinner spinner-sm"></div>
+            <span class="user-mutation-progress-text"></span>
+        </div>
+        <div class="modal-foot" style="margin-top: 20px;">
+            <button type="button" id="cancelBulkDisableUsers" class="btn">Cancel</button>
+            <button type="button" id="confirmBulkDisableUsers" class="btn-primary">Disable users</button>
+        </div>
+    </div>
+</div>
+
+<!-- Delete users in bulk -->
+<div id="bulkDeleteUsersModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title modal-title-danger">Delete users</h2>
+        <p class="modal-desc">
+            Permanently delete <strong id="bulkDeleteUserCount"></strong>? This cannot be undone.
+        </p>
+        <div class="modal-body">
+            <div class="field">
+                <label for="bulkDeleteUsersTransferSelect">Transfer dashboards, collections, and activity maps to</label>
+                <select id="bulkDeleteUsersTransferSelect">
+                    <option value="">Do not transfer owned objects</option>
+                </select>
+            </div>
+            <div class="field">
+                <label for="bulkDeleteUsersConfirmInput">Type DELETE to confirm</label>
+                <input type="text" id="bulkDeleteUsersConfirmInput" autocomplete="off">
+            </div>
+            <div class="user-mutation-progress notice" role="status" aria-live="assertive" style="display: none;">
+                <div class="spinner spinner-sm"></div>
+                <span class="user-mutation-progress-text"></span>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button type="button" id="cancelBulkDeleteUsers" class="btn">Cancel</button>
+            <button type="button" id="confirmBulkDeleteUsers" class="btn-danger">Delete users</button>
         </div>
     </div>
 </div>

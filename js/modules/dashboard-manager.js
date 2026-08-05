@@ -1,5 +1,18 @@
 // Dashboard Manager Module
 
+const DASHBOARD_USAGE_LOOKBACK_DAYS = 365;
+const DASHBOARD_USAGE_FILTER_DAYS = new Set(['30', '90', '180', '365']);
+
+const dashboardUsageState = {
+    status: 'not_loaded',
+    fromMs: null,
+    untilMs: null,
+    lookbackDays: DASHBOARD_USAGE_LOOKBACK_DAYS,
+    cycle: '1hr',
+    notice: '',
+    error: ''
+};
+
 const dashboardMutationState = {
     promise: null,
     operation: null
@@ -25,6 +38,92 @@ const dashboardMutationUi = {
 
 function isDashboardMutationRunning() {
     return dashboardMutationState.promise !== null;
+}
+
+function finiteTimestamp(value) {
+    const timestamp = Number(value);
+    return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
+}
+
+function attachDashboardUsage(dashboards, usage) {
+    const byId = usage?.lastViewedByDashboardId || {};
+    (dashboards || []).forEach(dashboard => {
+        const activity = byId[String(dashboard.id)];
+        dashboard._usage = activity && typeof activity === 'object'
+            ? {
+                lastViewedBucketStartMs: finiteTimestamp(activity.lastViewedBucketStartMs),
+                lastViewedBucketEndMs: finiteTimestamp(activity.lastViewedBucketEndMs),
+                viewsInWindow: Number(activity.viewsInWindow) || 0
+            }
+            : null;
+    });
+}
+
+function dashboardMatchesUsageFilter(dashboard, filterValue, nowMs = Date.now()) {
+    const normalized = String(filterValue || '');
+    if (!normalized) return true;
+    if (!DASHBOARD_USAGE_FILTER_DAYS.has(normalized)) return true;
+    if (dashboardUsageState.status !== 'complete') return false;
+
+    const days = Number(normalized);
+    const cutoff = nowMs - days * 24 * 60 * 60 * 1000;
+    const lastBucketEnd = finiteTimestamp(dashboard?._usage?.lastViewedBucketEndMs);
+    return lastBucketEnd === null || lastBucketEnd <= cutoff;
+}
+
+function formatDashboardLastViewed(dashboard) {
+    if (dashboardUsageState.status !== 'complete') return 'Unavailable';
+    const bucketStart = finiteTimestamp(dashboard?._usage?.lastViewedBucketStartMs);
+    if (bucketStart === null) return `No recorded views (${dashboardUsageState.lookbackDays}d)`;
+    return new Date(bucketStart).toLocaleString();
+}
+
+function renderDashboardUsageStatus() {
+    const status = document.getElementById('dashboardUsageStatus');
+    const filter = document.getElementById('filterDashboardActivity');
+    if (!status || !filter) return;
+
+    if (dashboardUsageState.status === 'complete') {
+        status.textContent = dashboardUsageState.notice
+            || `Last viewed is derived from hourly dashboard-view metrics over ${dashboardUsageState.lookbackDays} days.`;
+        filter.disabled = false;
+        window.refreshCustomSelect?.(filter);
+        return;
+    }
+    if (dashboardUsageState.status === 'loading') {
+        status.textContent = 'Loading dashboard usage metrics…';
+    } else if (dashboardUsageState.status === 'unavailable') {
+        status.textContent = `Dashboard usage is unavailable: ${dashboardUsageState.error}`;
+    } else {
+        status.textContent = '';
+    }
+    filter.value = '';
+    filter.disabled = true;
+    window.refreshCustomSelect?.(filter);
+}
+
+async function loadDashboardUsage(dashboards) {
+    dashboardUsageState.status = 'loading';
+    dashboardUsageState.error = '';
+    renderDashboardUsageStatus();
+    try {
+        const usage = await window.apiClient.getDashboardUsage(DASHBOARD_USAGE_LOOKBACK_DAYS);
+        dashboardUsageState.status = usage?.status === 'complete' ? 'complete' : 'unavailable';
+        dashboardUsageState.fromMs = finiteTimestamp(usage?.fromMs);
+        dashboardUsageState.untilMs = finiteTimestamp(usage?.untilMs);
+        dashboardUsageState.lookbackDays = Number(usage?.lookbackDays) || DASHBOARD_USAGE_LOOKBACK_DAYS;
+        dashboardUsageState.cycle = String(usage?.cycle || '1hr');
+        dashboardUsageState.notice = String(usage?.notice || '');
+        dashboardUsageState.error = dashboardUsageState.status === 'complete'
+            ? ''
+            : 'the metric query did not complete';
+        attachDashboardUsage(dashboards, usage);
+    } catch (error) {
+        dashboardUsageState.status = 'unavailable';
+        dashboardUsageState.error = error?.message || 'metric query failed';
+        attachDashboardUsage(dashboards, null);
+    }
+    renderDashboardUsageStatus();
 }
 
 function setDashboardMutationProgress(operation, completed, total, phase = 'mutating') {
@@ -124,9 +223,13 @@ async function loadDashboards() {
 
         // Load dashboards
         state.dashboards = await window.apiClient.getDashboards();
-        
-        // Load users for owner dropdown
-        state.allUsers = await window.apiClient.getUsers();
+
+        // Dashboard usage is advisory and must not make dashboard administration unavailable.
+        const [users] = await Promise.all([
+            window.apiClient.getUsers(),
+            loadDashboardUsage(state.dashboards)
+        ]);
+        state.allUsers = users;
 
         // Get unique owners from dashboards
         const ownerSet = new Set();
@@ -356,11 +459,13 @@ function populateUserDropdowns() {
 function applyFilters() {
     const searchTerm = document.getElementById('searchDashboards').value.toLowerCase();
     const ownerFilter = document.getElementById('filterOwner').value.toLowerCase();
+    const usageFilter = document.getElementById('filterDashboardActivity').value;
 
     state.filteredDashboards = state.dashboards.filter(dashboard => {
         const nameMatch = !searchTerm || dashboard.name.toLowerCase().includes(searchTerm);
         const ownerMatch = !ownerFilter || (dashboard.owner && dashboard.owner.toLowerCase().includes(ownerFilter));
-        return nameMatch && ownerMatch;
+        const usageMatch = dashboardMatchesUsageFilter(dashboard, usageFilter);
+        return nameMatch && ownerMatch && usageMatch;
     });
 
     state.currentPage = 1;
@@ -464,7 +569,7 @@ function renderDashboards() {
     tbody.innerHTML = '';
 
     if (pageData.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4"><div class="empty-inline">No dashboards found</div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5"><div class="empty-inline">No dashboards found</div></td></tr>';
         updatePagination();
         updateBulkActions();
         syncSelectAllCheckbox();
@@ -476,6 +581,7 @@ function renderDashboards() {
         const isExpanded = !!dashboard._expanded;
 
         row.dataset.id = dashboard.id;
+        row.classList.toggle('is-selected', state.selectedDashboards.has(dashboard.id));
 
         row.innerHTML = `
             <td>
@@ -488,6 +594,7 @@ function renderDashboards() {
                 </div>
             </td>
             <td>${escapeHtml(dashboard.owner || 'System')}</td>
+            <td>${escapeHtml(formatDashboardLastViewed(dashboard))}</td>
             <td class="actions">
                 <button class="btn btn-sm change-owner-btn" data-id="${escapeAttribute(dashboard.id)}">Change owner</button>
                 <button class="btn-danger btn-sm delete-btn" data-id="${escapeAttribute(dashboard.id)}">Delete</button>
@@ -511,6 +618,15 @@ function renderDashboards() {
             if (dashboard.description) {
                 metaItems.push(detailItem('Description', dashboard.description));
             }
+            if (dashboard.mod_time) {
+                metaItems.push(detailItem('Last modified', new Date(Number(dashboard.mod_time)).toLocaleString()));
+            }
+            if (dashboard._usage) {
+                metaItems.push(detailItem(
+                    `Views in ${dashboardUsageState.lookbackDays}d`,
+                    Number(dashboard._usage.viewsInWindow || 0).toLocaleString()
+                ));
+            }
 
             const metadataSection = metaItems.length > 0
                 ? `<div class="grid-fields">${metaItems.join('')}</div>`
@@ -527,7 +643,7 @@ function renderDashboards() {
 
             detailRow.innerHTML = `
                 <td></td>
-                <td colspan="3">${detailsContent}</td>
+                <td colspan="4">${detailsContent}</td>
             `;
 
             tbody.appendChild(detailRow);
@@ -749,6 +865,11 @@ function initDashboardsModule() {
         });
         
         document.getElementById('filterOwner').addEventListener('input', () => {
+            applyFilters();
+            renderDashboards();
+        });
+
+        document.getElementById('filterDashboardActivity').addEventListener('change', () => {
             applyFilters();
             renderDashboards();
         });
