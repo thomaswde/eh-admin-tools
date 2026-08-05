@@ -82,6 +82,50 @@ function formatDashboardLastViewed(dashboard) {
     return new Date(bucketStart).toLocaleString();
 }
 
+function describeDashboardFilters(searchValue, ownerValue, usageValue, usageLabel = '') {
+    const filters = [];
+    const search = String(searchValue || '').trim();
+    const owner = String(ownerValue || '').trim();
+    const usage = String(usageValue || '');
+    if (search) filters.push(`Name contains “${search}”`);
+    if (owner) filters.push(`Owner contains “${owner}”`);
+    if (DASHBOARD_USAGE_FILTER_DAYS.has(usage)) {
+        filters.push(usageLabel || `No view recorded in ${usage} days`);
+    }
+    return filters;
+}
+
+function getDashboardFilterDescription() {
+    const search = document.getElementById('searchDashboards');
+    const owner = document.getElementById('filterOwner');
+    const usage = document.getElementById('filterDashboardActivity');
+    const usageLabel = usage?.options?.[usage.selectedIndex]?.textContent || '';
+    return describeDashboardFilters(search?.value, owner?.value, usage?.value, usageLabel);
+}
+
+function dashboardFilterCountText(matchedCount, totalCount, appliedFilterCount) {
+    const totalLabel = Number(totalCount || 0).toLocaleString();
+    if (appliedFilterCount === 0) {
+        return `Showing all ${totalLabel} dashboard${totalCount === 1 ? '' : 's'}`;
+    }
+    const matchedLabel = Number(matchedCount || 0).toLocaleString();
+    return `${matchedLabel} of ${totalLabel} dashboard${totalCount === 1 ? '' : 's'} match ${appliedFilterCount} applied filter${appliedFilterCount === 1 ? '' : 's'}`;
+}
+
+function renderDashboardAppliedFilters(filters = getDashboardFilterDescription()) {
+    const summary = document.getElementById('dashboardAppliedFilters');
+    const chips = document.getElementById('dashboardAppliedFilterChips');
+    if (!summary || !chips) return;
+    chips.replaceChildren();
+    filters.forEach(label => {
+        const chip = document.createElement('span');
+        chip.className = 'badge';
+        chip.textContent = label;
+        chips.appendChild(chip);
+    });
+    summary.hidden = filters.length === 0;
+}
+
 function renderDashboardUsageStatus() {
     const status = document.getElementById('dashboardUsageStatus');
     const filter = document.getElementById('filterDashboardActivity');
@@ -101,7 +145,9 @@ function renderDashboardUsageStatus() {
     } else {
         status.textContent = '';
     }
-    filter.value = '';
+    if (dashboardUsageState.status !== 'loading') {
+        filter.value = '';
+    }
     filter.disabled = true;
     window.refreshCustomSelect?.(filter);
 }
@@ -665,10 +711,16 @@ function updatePagination() {
     const prevBtn = document.getElementById('prevPageBtn');
     const nextBtn = document.getElementById('nextPageBtn');
     const filterCount = document.getElementById('dashboardFilterCount');
+    const appliedFilters = getDashboardFilterDescription();
+    renderDashboardAppliedFilters(appliedFilters);
+    filterCount.textContent = dashboardFilterCountText(
+        state.filteredDashboards.length,
+        state.dashboards.length,
+        appliedFilters.length
+    );
 
     if (state.filteredDashboards.length === 0) {
         paginationInfo.textContent = 'Showing 0 of 0';
-        filterCount.textContent = '0 dashboards match the current filters';
         prevBtn.disabled = true;
         nextBtn.disabled = true;
         return;
@@ -678,7 +730,6 @@ function updatePagination() {
     const end = Math.min(start + state.itemsPerPage - 1, state.filteredDashboards.length);
 
     paginationInfo.textContent = `Showing ${start}-${end} of ${state.filteredDashboards.length}`;
-    filterCount.textContent = `${state.filteredDashboards.length} dashboard${state.filteredDashboards.length === 1 ? '' : 's'} match the current filters`;
 
     prevBtn.disabled = state.currentPage === 1;
     nextBtn.disabled = state.currentPage >= totalPages;
@@ -874,6 +925,16 @@ function initDashboardsModule() {
         });
 
         document.getElementById('filterDashboardActivity').addEventListener('change', () => {
+            applyFilters();
+            renderDashboards();
+        });
+
+        document.getElementById('clearDashboardFiltersBtn').addEventListener('click', () => {
+            document.getElementById('searchDashboards').value = '';
+            document.getElementById('filterOwner').value = '';
+            const activityFilter = document.getElementById('filterDashboardActivity');
+            activityFilter.value = '';
+            window.refreshCustomSelect?.(activityFilter);
             applyFilters();
             renderDashboards();
         });

@@ -72,6 +72,57 @@ function userMatchesInactivityFilter(user, filterValue, nowMs = Date.now()) {
     return joined !== null && joined <= cutoff;
 }
 
+function describeUserFilters(searchValue, typeValue, stateValue, inactivityValue) {
+    const filters = [];
+    const search = String(searchValue || '').trim();
+    const type = String(typeValue || '');
+    const accountState = String(stateValue || '');
+    const inactivity = String(inactivityValue || '');
+
+    if (search) filters.push(`Name or username contains “${search}”`);
+    if (type === 'local') filters.push('Type: Local');
+    if (type === 'remote') filters.push('Type: Remote');
+    if (accountState === 'enabled') filters.push('State: Enabled');
+    if (accountState === 'disabled') filters.push('State: Disabled');
+    if (inactivity === 'never') filters.push('Last login: Never logged in');
+    if (USER_INACTIVITY_FILTER_DAYS.has(inactivity)) {
+        filters.push(`Last login: Inactive for ${inactivity} days`);
+    }
+    return filters;
+}
+
+function getUserFilterDescription() {
+    return describeUserFilters(
+        document.getElementById('searchUsers')?.value,
+        document.getElementById('filterUserType')?.value,
+        document.getElementById('filterUserState')?.value,
+        document.getElementById('filterUserInactivity')?.value
+    );
+}
+
+function userFilterCountText(matchedCount, totalCount, appliedFilterCount) {
+    const totalLabel = Number(totalCount || 0).toLocaleString();
+    if (appliedFilterCount === 0) {
+        return `Showing all ${totalLabel} user${totalCount === 1 ? '' : 's'}`;
+    }
+    const matchedLabel = Number(matchedCount || 0).toLocaleString();
+    return `${matchedLabel} of ${totalLabel} user${totalCount === 1 ? '' : 's'} match ${appliedFilterCount} applied filter${appliedFilterCount === 1 ? '' : 's'}`;
+}
+
+function renderUserAppliedFilters(filters = getUserFilterDescription()) {
+    const summary = document.getElementById('userAppliedFilters');
+    const chips = document.getElementById('userAppliedFilterChips');
+    if (!summary || !chips) return;
+    chips.replaceChildren();
+    filters.forEach(label => {
+        const chip = document.createElement('span');
+        chip.className = 'badge';
+        chip.textContent = label;
+        chips.appendChild(chip);
+    });
+    summary.hidden = filters.length === 0;
+}
+
 function cloneRoleObject(roles) {
     if (!roles || typeof roles !== 'object') {
         return {};
@@ -671,6 +722,13 @@ function updateUsersPagination() {
     const infoEl = document.getElementById('usersPaginationInfo');
     const prevBtn = document.getElementById('usersPrevPageBtn');
     const nextBtn = document.getElementById('usersNextPageBtn');
+    const appliedFilters = getUserFilterDescription();
+    renderUserAppliedFilters(appliedFilters);
+    document.getElementById('userFilterCount').textContent = userFilterCountText(
+        totalItems,
+        state.users.length,
+        appliedFilters.length
+    );
 
     if (totalItems === 0) {
         infoEl.textContent = 'Showing 0 of 0';
@@ -1321,6 +1379,17 @@ function initUsersModule() {
     });
 
     document.getElementById('filterUserInactivity').addEventListener('change', () => {
+        applyUserFilters();
+        renderUsers();
+    });
+
+    document.getElementById('clearUserFiltersBtn').addEventListener('click', () => {
+        document.getElementById('searchUsers').value = '';
+        ['filterUserType', 'filterUserState', 'filterUserInactivity'].forEach(id => {
+            const filter = document.getElementById(id);
+            filter.value = '';
+            window.refreshCustomSelect?.(filter);
+        });
         applyUserFilters();
         renderUsers();
     });

@@ -13,7 +13,7 @@ function plain(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function loadDashboardManager(apiClient, dashboards = []) {
+function loadDashboardManager(apiClient, dashboards = [], elements = {}) {
     const state = {
         connected: true,
         dashboards,
@@ -27,7 +27,7 @@ function loadDashboardManager(apiClient, dashboards = []) {
         console: { log() {}, warn() {}, error() {} },
         state,
         window: { apiClient },
-        document: { getElementById: () => null },
+        document: { getElementById: id => elements[id] || null },
         alert() {},
         escapeHtml: value => String(value),
         escapeAttribute: value => String(value),
@@ -321,4 +321,67 @@ test('dashboard inactivity filtering uses the appliance metric clock', () => {
     `, context);
 
     assert.equal(matches, false);
+});
+
+test('dashboard filter summary distinguishes no filters from applied filters', () => {
+    const { context } = loadDashboardManager({});
+    context.filterDescription = vm.runInContext(
+        `describeDashboardFilters(' EDR ', ' stand@example.com ', '365', 'No view recorded in 365 days')`,
+        context
+    );
+
+    assert.deepEqual(plain(context.filterDescription), [
+        'Name contains “EDR”',
+        'Owner contains “stand@example.com”',
+        'No view recorded in 365 days'
+    ]);
+    assert.equal(
+        vm.runInContext(`dashboardFilterCountText(5475, 5475, 0)`, context),
+        'Showing all 5,475 dashboards'
+    );
+    assert.equal(
+        vm.runInContext(`dashboardFilterCountText(5475, 5475, 1)`, context),
+        '5,475 of 5,475 dashboards match 1 applied filter'
+    );
+});
+
+test('dashboard name, owner, and activity filters combine in one result set', () => {
+    const elements = {
+        searchDashboards: { value: 'EDR Agent' },
+        filterOwner: { value: 'stand@example.com' },
+        filterDashboardActivity: { value: '90' }
+    };
+    const dashboards = [
+        { id: 'match', name: 'EDR Agent Tracking', owner: 'stand@example.com', _usage: null },
+        { id: 'owner-miss', name: 'EDR Agent Tracking', owner: 'guyr@example.com', _usage: null },
+        { id: 'name-miss', name: 'Cloud Record Store Volume', owner: 'stand@example.com', _usage: null },
+        {
+            id: 'activity-miss',
+            name: 'EDR Agent Tracking - Current',
+            owner: 'stand@example.com',
+            _usage: { lastViewedBucketEndMs: 1_699_990_000_000 }
+        }
+    ];
+    const { context, state } = loadDashboardManager({}, dashboards, elements);
+
+    vm.runInContext(`
+        dashboardUsageState.status = 'complete';
+        dashboardUsageState.untilMs = 1_700_000_000_000;
+        applyFilters();
+    `, context);
+
+    assert.deepEqual(state.filteredDashboards.map(dashboard => dashboard.id), ['match']);
+});
+
+test('dashboard activity filter survives the loading phase of refresh', () => {
+    const elements = {
+        dashboardUsageStatus: { textContent: '' },
+        filterDashboardActivity: { value: '365', disabled: false }
+    };
+    const { context } = loadDashboardManager({}, [], elements);
+
+    vm.runInContext(`dashboardUsageState.status = 'loading'; renderDashboardUsageStatus();`, context);
+
+    assert.equal(elements.filterDashboardActivity.value, '365');
+    assert.equal(elements.filterDashboardActivity.disabled, true);
 });

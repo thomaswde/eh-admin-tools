@@ -13,7 +13,7 @@ function plain(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function loadUserManager(apiClient, users = []) {
+function loadUserManager(apiClient, users = [], elements = {}) {
     const state = {
         connected: true,
         apiConfig: { type: 'enterprise' },
@@ -25,7 +25,7 @@ function loadUserManager(apiClient, users = []) {
         console: { log() {}, warn() {}, error() {} },
         state,
         window: { apiClient },
-        document: { getElementById: () => null },
+        document: { getElementById: id => elements[id] || null },
         alert() {},
         confirm: () => true,
         escapeHtml: value => String(value),
@@ -65,6 +65,57 @@ test('inactivity filtering uses account age for users who never logged in', () =
         `userMatchesInactivityFilter({ last_ui_login_time: null, date_joined: newJoined }, 'never', nowMs)`,
         context
     ), true);
+});
+
+test('user filter summary distinguishes no filters from combined filters', () => {
+    const { context } = loadUserManager({});
+    context.filterDescription = vm.runInContext(
+        `describeUserFilters(' Alice ', 'local', 'disabled', '90')`,
+        context
+    );
+
+    assert.deepEqual(plain(context.filterDescription), [
+        'Name or username contains “Alice”',
+        'Type: Local',
+        'State: Disabled',
+        'Last login: Inactive for 90 days'
+    ]);
+    assert.equal(
+        vm.runInContext(`userFilterCountText(25, 25, 0)`, context),
+        'Showing all 25 users'
+    );
+    assert.equal(
+        vm.runInContext(`userFilterCountText(2, 25, 4)`, context),
+        '2 of 25 users match 4 applied filters'
+    );
+});
+
+test('user name, type, state, and inactivity filters combine in one result set', () => {
+    const nowMs = Date.UTC(2026, 7, 5);
+    const oldLogin = Date.UTC(2025, 0, 1);
+    const recentLogin = Date.UTC(2026, 7, 4);
+    const elements = {
+        searchUsers: { value: 'alice' },
+        filterUserType: { value: 'local' },
+        filterUserState: { value: 'disabled' },
+        filterUserInactivity: { value: '90' }
+    };
+    const users = [
+        { username: 'alice', name: 'Alice Admin', type: 'local', enabled: false, last_ui_login_time: oldLogin },
+        { username: 'alice-remote', name: 'Alice Remote', type: 'remote', enabled: false, last_ui_login_time: oldLogin },
+        { username: 'alice-enabled', name: 'Alice Enabled', type: 'local', enabled: true, last_ui_login_time: oldLogin },
+        { username: 'alice-current', name: 'Alice Current', type: 'local', enabled: false, last_ui_login_time: recentLogin },
+        { username: 'bob', name: 'Bob Admin', type: 'local', enabled: false, last_ui_login_time: oldLogin }
+    ];
+    const { context, state } = loadUserManager({}, users, elements);
+    context.nowMs = nowMs;
+
+    vm.runInContext(`
+        Date.now = () => nowMs;
+        applyUserFilters();
+    `, context);
+
+    assert.deepEqual(state.filteredUsers.map(user => user.username), ['alice']);
 });
 
 test('bulk disable skips disabled users, continues after failures, and reloads once', async () => {

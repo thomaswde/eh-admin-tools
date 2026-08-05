@@ -392,7 +392,12 @@
                 <div class="spacer"></div>
                 <span id="dashboardFilterCount" class="small muted"></span>
             </div>
-            <p id="dashboardUsageStatus" class="small muted" style="margin: -8px 0 14px;"></p>
+            <p id="dashboardUsageStatus" class="small muted" style="margin: -8px 0 8px;"></p>
+            <div id="dashboardAppliedFilters" class="applied-filters row-tight" style="margin: 0 0 14px;" hidden>
+                <span class="small muted">Applied filters:</span>
+                <div id="dashboardAppliedFilterChips" class="row-tight"></div>
+                <button type="button" id="clearDashboardFiltersBtn" class="btn-link">Clear filters</button>
+            </div>
 
             <div class="selection-bar">
                 <span id="selectedCount" class="selection-count">0 selected</span>
@@ -470,6 +475,14 @@
                 </select>
                 <button type="button" id="loadUsersBtn" class="btn">Refresh</button>
                 <button type="button" id="createUserBtn" class="btn-primary">Create user</button>
+                <div class="spacer"></div>
+                <span id="userFilterCount" class="small muted"></span>
+            </div>
+
+            <div id="userAppliedFilters" class="applied-filters row-tight" style="margin: 0 0 14px;" hidden>
+                <span class="small muted">Applied filters:</span>
+                <div id="userAppliedFilterChips" class="row-tight"></div>
+                <button type="button" id="clearUserFiltersBtn" class="btn-link">Clear filters</button>
             </div>
 
             <div class="selection-bar">
