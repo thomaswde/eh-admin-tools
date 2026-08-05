@@ -353,7 +353,7 @@ function renderDeviceDiscoveryTable(sortedNodes, applianceMap) {
     tbody.appendChild(totalRow);
 }
 
-function buildDeviceDiscoveryCachedResult(data, range) {
+function buildDeviceDiscoveryResult(data, range) {
     const aggregateEntries = Object.entries(data.aggregate || {});
     let filteredEntries = aggregateEntries;
     if (!deviceDiscoveryState.includeEfc) {
@@ -397,7 +397,7 @@ function buildDeviceDiscoveryCachedResult(data, range) {
     };
 }
 
-function renderDeviceDiscoveryCachedResult(payload, cachedAt = '') {
+function renderDeviceDiscoveryResult(payload, cachedAt = '') {
     if (!payload || !payload.range || !payload.totals || !Array.isArray(payload.sortedNodes)) return false;
     deviceDiscoveryState.selectedPeriod = payload.selectedPeriod || 'yesterday';
     deviceDiscoveryState.includeEfc = payload.includeEfc === true;
@@ -433,7 +433,7 @@ async function restoreDeviceDiscoveryCache() {
     deviceDiscoveryState.cacheRestoreAttempted = true;
     try {
         const cached = await ExtraHopAPI.getReportCache('device-discovery');
-        if (cached?.cached) renderDeviceDiscoveryCachedResult(cached.payload, cached.cachedAt);
+        if (cached?.cached) renderDeviceDiscoveryResult(cached.payload, cached.cachedAt);
     } catch (error) {
         console.warn('Could not restore the Device Discovery report cache:', error);
     }
@@ -473,11 +473,11 @@ async function generateDeviceDiscoveryReport() {
         const range = getPeriodRange(deviceDiscoveryState.selectedPeriod, Date.now());
         const data = await fetchDevicesBatch(range, abortController.signal);
         stoppedEarly = !!data.incomplete;
-        const cachedResult = buildDeviceDiscoveryCachedResult(data, range);
-        renderDeviceDiscoveryCachedResult(cachedResult);
+        const result = buildDeviceDiscoveryResult(data, range);
+        renderDeviceDiscoveryResult(result);
         if (!stoppedEarly) {
             try {
-                await ExtraHopAPI.saveReportCache('device-discovery', cachedResult);
+                await ExtraHopAPI.saveReportCache('device-discovery', result);
             } catch (error) {
                 console.warn('Could not save the Device Discovery report cache:', error);
                 const rangeInfo = document.getElementById('deviceReportRange');

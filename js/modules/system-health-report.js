@@ -2489,6 +2489,19 @@ function setupSystemHealthCsvControls() {
     updateSystemHealthCsvButtons();
 }
 
+function systemHealthApiExportTitle(report, canExportApiRows) {
+    if (report && report.source_type === 'cached_api_summary') {
+        return 'Detailed API response rows are not retained in the compact report cache. Run report to collect them.';
+    }
+    if (report && report.source_type !== 'api') {
+        return 'Detailed API response rows are not present in a unified summary CSV.';
+    }
+    if (!canExportApiRows) {
+        return 'Connect to an ExtraHop deployment to export detailed API rows.';
+    }
+    return '';
+}
+
 function updateSystemHealthCsvButtons() {
     const exportButton = document.getElementById('systemHealthExportCsvButton');
     const tableExportButton = document.getElementById('systemHealthExportTableCsvButton');
@@ -2502,13 +2515,7 @@ function updateSystemHealthCsvButtons() {
     if (apiExportButton) {
         const report = systemHealthState.currentReport;
         apiExportButton.disabled = !report || report.source_type !== 'api' || !canExportApiRows;
-        apiExportButton.title = report && report.source_type === 'cached_api_summary'
-            ? 'Detailed API response rows are not retained in the compact report cache. Run report to collect them.'
-            : report && report.source_type !== 'api'
-                ? 'Detailed API response rows are not present in a unified summary CSV.'
-            : !canExportApiRows
-                ? 'Connect to an ExtraHop deployment to export detailed API rows.'
-                : '';
+        apiExportButton.title = systemHealthApiExportTitle(report, canExportApiRows);
     }
     if (pdfButton) pdfButton.disabled = !systemHealthState.currentReport || !canExportLocal;
     if (pptxButton) pptxButton.disabled = !systemHealthState.currentReport || !canExportLocal;
@@ -2871,7 +2878,7 @@ function buildSystemHealthCachePayload(report) {
             column === 'report_errors_json' ? '' : row[column] ?? ''
         ])
     ));
-    const target = report && report.target || {};
+    const target = report?.target || {};
     return {
         projectionVersion: SYSTEM_HEALTH_CACHE_PROJECTION_VERSION,
         target: {
@@ -3095,7 +3102,7 @@ function systemHealthPptxOptionsFromForm() {
 }
 
 function systemHealthPptxTargetLabel(report) {
-    const target = report && report.target || {};
+    const target = report?.target || {};
     if (target.type === 'csv') return '';
     if (target.tenant) return String(target.tenant);
     if (target.host) return String(target.host);

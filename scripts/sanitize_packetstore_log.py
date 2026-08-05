@@ -40,6 +40,22 @@ def endpoint(v):
     return str(v or "").split("?", 1)[0].rstrip("/") or "/"
 
 
+class StatBudget:
+    """Caps how many metric stat rows the whole document may emit."""
+
+    def __init__(self, remaining) -> None:
+        self.remaining = remaining
+        self.omitted = 0
+
+    def take(self) -> bool:
+        """Claim one stat slot, or record an omission when the budget is spent."""
+        if self.remaining == 0:
+            self.omitted += 1
+            return False
+        self.remaining -= 1
+        return True
+
+
 class Aliases:
     def __init__(self) -> None:
         self.systems, self.objects, self.queries = {}, {}, {}
@@ -231,8 +247,7 @@ def response(row, names, start, aliases, budget):
         objects = [x for x in stats if isinstance(x, dict)]
         safe = []
         for stat in objects:
-            if budget[0] == 0:
-                budget[1] += 1
+            if not budget.take():
                 continue
             safe.append({
                 "metric_object": aliases.obj(stat.get("oid")),
@@ -240,7 +255,6 @@ def response(row, names, start, aliases, budget):
                 "duration_ms": num(stat.get("duration")),
                 "tuple": metric_tuple(stat.get("values"), names),
             })
-            budget[0] -= 1
         out["stats"] = safe
         out["non_object_stat_count_omitted"] = len(stats) - len(objects)
     return out
@@ -273,7 +287,7 @@ def build(base):
 
     dropped_queries = max(0, len(selected) - MAX_QUERIES)
     selected = selected[:MAX_QUERIES]
-    aliases, budget = Aliases(), [MAX_STATS, 0]
+    aliases, budget = Aliases(), StatBudget(MAX_STATS)
     for _, _, body, _, _ in selected:
         for raw in body.get("object_ids", []) if isinstance(body.get("object_ids"), list) else []:
             aliases.system(raw)
@@ -313,7 +327,7 @@ def build(base):
         warnings.append("packetstore_query_limit_reached")
     if next_limit:
         warnings.append("continuation_limit_reached")
-    if budget[1]:
+    if budget.omitted:
         warnings.append("stat_limit_reached")
     all_next = sum(len(x) for x in next_rows.values())
     return {
@@ -331,7 +345,7 @@ def build(base):
             "correlated_continuations_included": next_count,
             "correlated_continuations_omitted_by_limit": max(0, len(matched) - next_count),
             "uncorrelated_metric_continuations_omitted": max(0, all_next - len(matched)),
-            "stats_omitted_by_limit": budget[1], "warnings": warnings,
+            "stats_omitted_by_limit": budget.omitted, "warnings": warnings,
         },
         "queries": queries,
     }

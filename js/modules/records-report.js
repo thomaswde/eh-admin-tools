@@ -398,48 +398,47 @@ async function generateCRSReport() {
 
 function renderCRSReport(report, cachedAt = '') {
     const capacityData = report.capacityData;
-    const summary = report;
-    const compressionRatio = summary.compressionRatio === null ? null : summary.compressionRatio.toFixed(2);
-    const utilizationPercent = summary.utilizationPercent === null ? null : summary.utilizationPercent.toFixed(1);
-    const compressedData = summary.applianceData;
-        
-        // Update KPIs
-        if (compressionRatio !== null) {
-            document.getElementById('compressionRatio').textContent = compressionRatio;
-            document.getElementById('compressionRatioSubtext').textContent = '1 GB stored : ' + compressionRatio + ' GB ingested';
-        } else {
-            document.getElementById('compressionRatio').textContent = 'N/A';
-            document.getElementById('compressionRatioSubtext').textContent = summary.compressionUnavailableReason;
-        }
-        
-        document.getElementById('recordBytesLabel').textContent = summary.recordBytesLabel;
-        document.getElementById('totalRecordBytes').textContent = formatGBWithUnits(summary.recordBytesDisplayGB);
-        document.getElementById('totalRecordBytesSubtext').textContent = summary.recordBytesSubtext;
-        
-        if (utilizationPercent !== null) {
-            document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
-            const subtext = capacityData.isAveraged ? 'Of reserved (selected-window daily average)' : 'Of reserved capacity';
-            document.getElementById('capacityUtilizationSubtext').textContent = subtext;
-        } else {
-            document.getElementById('capacityUtilization').textContent = 'N/A';
-            document.getElementById('capacityUtilizationSubtext').textContent = 'Add capacity data to calculate';
-        }
-        
-        // Update chart title based on whether we have capacity data
-        const stackedChartTitle = document.getElementById('stackedChartTitle');
-        const barChartTitle = document.getElementById('barChartTitle');
-        if (compressionRatio !== null) {
-            stackedChartTitle.textContent = 'Capacity Consumption by Sensor';
-            barChartTitle.textContent = 'Utilization by Sensor';
-        } else {
-            stackedChartTitle.textContent = 'Record Bytes by Sensor';
-            barChartTitle.textContent = 'Record Bytes by Sensor';
-        }
-        
-        // Render charts
-        renderStackedBarChart(compressedData, compressionRatio !== null ? capacityData.reserved : null);
-        renderSensorBarChart(compressedData);
-        renderDataTable(compressedData, compressionRatio);
+    const compressionRatio = report.compressionRatio === null ? null : report.compressionRatio.toFixed(2);
+    const utilizationPercent = report.utilizationPercent === null ? null : report.utilizationPercent.toFixed(1);
+    const compressedData = report.applianceData;
+
+    // Update KPIs
+    if (compressionRatio !== null) {
+        document.getElementById('compressionRatio').textContent = compressionRatio;
+        document.getElementById('compressionRatioSubtext').textContent = '1 GB stored : ' + compressionRatio + ' GB ingested';
+    } else {
+        document.getElementById('compressionRatio').textContent = 'N/A';
+        document.getElementById('compressionRatioSubtext').textContent = report.compressionUnavailableReason;
+    }
+
+    document.getElementById('recordBytesLabel').textContent = report.recordBytesLabel;
+    document.getElementById('totalRecordBytes').textContent = formatGBWithUnits(report.recordBytesDisplayGB);
+    document.getElementById('totalRecordBytesSubtext').textContent = report.recordBytesSubtext;
+
+    if (utilizationPercent !== null) {
+        document.getElementById('capacityUtilization').textContent = `${utilizationPercent}%`;
+        const subtext = capacityData.isAveraged ? 'Of reserved (selected-window daily average)' : 'Of reserved capacity';
+        document.getElementById('capacityUtilizationSubtext').textContent = subtext;
+    } else {
+        document.getElementById('capacityUtilization').textContent = 'N/A';
+        document.getElementById('capacityUtilizationSubtext').textContent = 'Add capacity data to calculate';
+    }
+
+    // Update chart title based on whether we have capacity data
+    const stackedChartTitle = document.getElementById('stackedChartTitle');
+    const barChartTitle = document.getElementById('barChartTitle');
+    if (compressionRatio !== null) {
+        stackedChartTitle.textContent = 'Capacity Consumption by Sensor';
+        barChartTitle.textContent = 'Utilization by Sensor';
+    } else {
+        stackedChartTitle.textContent = 'Record Bytes by Sensor';
+        barChartTitle.textContent = 'Record Bytes by Sensor';
+    }
+
+    // Render charts
+    renderStackedBarChart(compressedData, compressionRatio !== null ? capacityData.reserved : null);
+    renderSensorBarChart(compressedData);
+    renderDataTable(compressedData, compressionRatio);
 
     const cacheStatus = document.getElementById('crsCacheStatus');
     if (cacheStatus) {

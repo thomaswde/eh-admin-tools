@@ -36,7 +36,7 @@ function loadDeviceDiscovery(overrides = {}) {
         stateIndicatorColor: () => '#f59e0b',
         escapeHtml: value => String(value)
     });
-    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, getPeriodRange, fetchDevicesBatch, renderDeviceDiscoveryTable, buildDeviceDiscoveryCachedResult, stopDeviceDiscoveryLoad };`, context);
+    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, getPeriodRange, fetchDevicesBatch, renderDeviceDiscoveryTable, buildDeviceDiscoveryResult, stopDeviceDiscoveryLoad };`, context);
     return { api: window.__deviceDiscoveryTest, elements };
 }
 
@@ -143,7 +143,7 @@ test('completed device cache payload keeps one window and the active connection 
         'flow-1': api.deviceDiscoveryState.appliances[1]
     };
     const range = { label: 'Yesterday', displayRange: 'Aug 4, 2026', activeFrom: 1, activeUntil: 2 };
-    const payload = api.buildDeviceDiscoveryCachedResult({
+    const payload = api.buildDeviceDiscoveryResult({
         aggregate: {
             'sensor-1': { advanced: 2, standard: 0, discovery: 1, flow_log: 0, total: 3 },
             'flow-1': { advanced: 0, standard: 0, discovery: 0, flow_log: 5, total: 5 }
