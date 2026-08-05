@@ -164,6 +164,47 @@ class ExtraHopAPI {
         });
     }
 
+    async createNetworkLocalityImport(file) {
+        const filename = encodeURIComponent(file?.name || 'network-localities.csv');
+        const response = await ExtraHopAPI.backendFetch(
+            `/backend/network-localities/imports?filename=${filename}`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': file?.type || 'text/csv',
+                    'Accept': 'application/json'
+                },
+                body: file,
+                timeoutMs: 90 * 1000
+            }
+        );
+        return this.parseResponse(response);
+    }
+
+    async listNetworkLocalityImports() {
+        const response = await ExtraHopAPI.backendFetch('/backend/network-localities/imports', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+        });
+        return this.parseResponse(response);
+    }
+
+    async getNetworkLocalityImport(jobId) {
+        const response = await ExtraHopAPI.backendFetch(
+            `/backend/network-localities/imports/${encodeURIComponent(jobId)}`,
+            { method: 'GET', headers: { 'Accept': 'application/json' } }
+        );
+        return this.parseResponse(response);
+    }
+
+    async cancelNetworkLocalityImport(jobId) {
+        const response = await ExtraHopAPI.backendFetch(
+            `/backend/network-localities/imports/${encodeURIComponent(jobId)}`,
+            { method: 'DELETE', headers: { 'Accept': 'application/json' } }
+        );
+        return this.parseResponse(response);
+    }
+
     async parseResponse(response) {
         return ExtraHopAPI.parseStaticResponse(response);
     }

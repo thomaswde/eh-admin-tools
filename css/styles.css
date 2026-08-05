@@ -1140,6 +1140,7 @@ input[type="color"] {
 .btn-block { width: 100%; }
 
 button:disabled { opacity: .45; cursor: not-allowed; }
+.btn.disabled { opacity: .45; pointer-events: none; }
 
 .btn-link {
     padding: 0;

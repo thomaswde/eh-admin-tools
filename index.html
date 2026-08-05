@@ -1352,7 +1352,7 @@
                 <button type="button" id="addLocalityRow" class="btn" style="display: none;">Add row</button>
                 <button type="button" id="saveLocalityChanges" class="btn-primary" style="display: none;">Save changes</button>
                 <label class="btn" id="uploadCsvLabel" style="display: none; cursor: pointer;">
-                    Upload CSV
+                    Import CSV
                     <input type="file" id="localityCsvInput" accept=".csv" class="hidden">
                 </label>
                 <div class="grow">
@@ -1371,6 +1371,25 @@
 
             <div id="localityStatus" style="display: none; margin-bottom: 14px;">
                 <div class="notice"><span id="localityStatusText"></span></div>
+            </div>
+
+            <div id="localityImportPanel" class="card" style="display: none; margin-bottom: 14px;">
+                <div class="card-head row">
+                    <div>
+                        <h2 class="card-title">CSV import outcomes</h2>
+                        <p class="small muted">Imports apply immediately. Per-row outcomes are retained locally for up to 90 days and can be exported at any time.</p>
+                    </div>
+                    <div class="spacer"></div>
+                    <a id="downloadLocalityImportResults" class="btn" href="#" download>Download outcome CSV</a>
+                    <button type="button" id="cancelLocalityImport" class="btn-danger btn-sm">Cancel import</button>
+                </div>
+                <div class="field" style="margin-bottom: 10px;">
+                    <label for="localityImportHistory">Import history</label>
+                    <select id="localityImportHistory"></select>
+                </div>
+                <p id="localityImportStatus" style="margin: 0 0 8px;"></p>
+                <progress id="localityImportProgress" max="1" value="0" style="width: 100%;"></progress>
+                <p id="localityImportSummary" class="small muted" style="margin: 8px 0 0;"></p>
             </div>
 
             <div id="localitiesLoading" class="loading-state" style="display: none;">
@@ -1392,6 +1411,13 @@
                     </thead>
                     <tbody id="localitiesTableBody"></tbody>
                 </table>
+            </div>
+            <div id="localitiesPagination" class="row" style="display: none; margin-top: 10px;">
+                <span class="small muted">Only 200 editable rows are rendered at a time.</span>
+                <div class="spacer"></div>
+                <span id="localitiesPageSummary" class="small muted">0–0 of 0</span>
+                <button type="button" id="previousLocalitiesPage" class="btn btn-sm">Previous</button>
+                <button type="button" id="nextLocalitiesPage" class="btn btn-sm">Next</button>
             </div>
         </div>
 

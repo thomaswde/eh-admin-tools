@@ -5,8 +5,18 @@ const localitiesState = {
     deletedIds: new Set(),   // Track deleted entries
     selectedKeys: new Set(),
     filterTerm: '',
-    isLoaded: false
+    isLoaded: false,
+    page: 0,
+    pageSize: 200,
+    importJobs: [],
+    selectedImportJobId: null,
+    importPollTimer: null
 };
+
+const LOCALITY_CSV_MAX_BYTES = 25 * 1024 * 1024;
+const LOCALITY_IMPORT_TERMINAL_STATES = new Set([
+    'completed', 'completed_with_errors', 'failed', 'timed_out', 'cancelled', 'interrupted'
+]);
 
 let nextLocalityDraftId = 1;
 
@@ -25,6 +35,7 @@ function replaceLocalityState(localities) {
     localitiesState.currentLocalities = localities.map(cloneLocality);
     localitiesState.deletedIds.clear();
     localitiesState.selectedKeys.clear();
+    localitiesState.page = 0;
     localitiesState.isLoaded = true;
 }
 
@@ -45,10 +56,18 @@ function localityMatchesFilter(locality) {
     ].some(value => String(value || '').toLowerCase().includes(term));
 }
 
-function getVisibleLocalityEntries() {
+function getFilteredLocalityEntries() {
     return localitiesState.currentLocalities
         .map((locality, index) => ({ locality, index }))
         .filter(({ locality }) => !locality._deleted && localityMatchesFilter(locality));
+}
+
+function getVisibleLocalityEntries() {
+    const filtered = getFilteredLocalityEntries();
+    const pageCount = Math.max(1, Math.ceil(filtered.length / localitiesState.pageSize));
+    localitiesState.page = Math.min(Math.max(0, localitiesState.page), pageCount - 1);
+    const start = localitiesState.page * localitiesState.pageSize;
+    return filtered.slice(start, start + localitiesState.pageSize);
 }
 
 function pruneLocalitySelection() {
@@ -64,6 +83,7 @@ function pruneLocalitySelection() {
 
 function updateLocalitySelectionUi() {
     pruneLocalitySelection();
+    const filteredEntries = getFilteredLocalityEntries();
     const visibleEntries = getVisibleLocalityEntries();
     const activeCount = localitiesState.currentLocalities.filter(locality => !locality._deleted).length;
     const visibleKeys = visibleEntries.map(({ locality }) => localitySelectionKey(locality));
@@ -72,6 +92,9 @@ function updateLocalitySelectionUi() {
     const bulkActions = document.getElementById('localitiesBulkActions');
     const selectedCount = document.getElementById('selectedLocalitiesCount');
     const filterCount = document.getElementById('localitiesFilterCount');
+    const pageSummary = document.getElementById('localitiesPageSummary');
+    const previousPage = document.getElementById('previousLocalitiesPage');
+    const nextPage = document.getElementById('nextLocalitiesPage');
 
     if (selectAll) {
         selectAll.checked = visibleKeys.length > 0 && selectedVisibleCount === visibleKeys.length;
@@ -85,7 +108,21 @@ function updateLocalitySelectionUi() {
         selectedCount.textContent = `${localitiesState.selectedKeys.size} selected`;
     }
     if (filterCount) {
-        filterCount.textContent = `${visibleEntries.length} of ${activeCount} localit${activeCount === 1 ? 'y' : 'ies'} shown`;
+        filterCount.textContent = `${filteredEntries.length} of ${activeCount} localit${activeCount === 1 ? 'y' : 'ies'} match`;
+    }
+    const pageCount = Math.max(1, Math.ceil(filteredEntries.length / localitiesState.pageSize));
+    if (pageSummary) {
+        const first = filteredEntries.length ? localitiesState.page * localitiesState.pageSize + 1 : 0;
+        const last = filteredEntries.length
+            ? Math.min(filteredEntries.length, first + visibleEntries.length - 1)
+            : 0;
+        pageSummary.textContent = `${first.toLocaleString()}–${last.toLocaleString()} of ${filteredEntries.length.toLocaleString()}`;
+    }
+    if (previousPage) {
+        previousPage.disabled = localitiesState.page === 0;
+    }
+    if (nextPage) {
+        nextPage.disabled = localitiesState.page >= pageCount - 1;
     }
 }
 
@@ -114,6 +151,7 @@ async function loadNetworkLocalities() {
         document.getElementById('uploadCsvLabel').style.display = 'inline-block';
         document.getElementById('filterLocalities').style.display = 'inline-block';
         document.getElementById('localitiesFilterCount').style.display = 'inline';
+        document.getElementById('localitiesPagination').style.display = 'flex';
 
         showLocalityStatus(`Loaded ${response.length} network localities`, 'success');
     } catch (error) {
@@ -211,7 +249,14 @@ function handleSelectAllLocalities(e) {
 
 function handleLocalityFilter(e) {
     localitiesState.filterTerm = e.target.value;
+    localitiesState.page = 0;
     renderLocalitiesTable();
+}
+
+function changeLocalitiesPage(delta) {
+    localitiesState.page = Math.max(0, localitiesState.page + delta);
+    renderLocalitiesTable();
+    document.getElementById('localitiesTable')?.scrollIntoView({ block: 'start' });
 }
 
 function clearLocalitySelection() {
@@ -301,6 +346,8 @@ function addLocalityRow() {
     };
     
     localitiesState.currentLocalities.push(newLocality);
+    const activeCount = localitiesState.currentLocalities.filter(locality => !locality._deleted).length;
+    localitiesState.page = Math.max(0, Math.ceil(activeCount / localitiesState.pageSize) - 1);
     renderLocalitiesTable();
     
     // Focus on the name field of the new row
@@ -510,99 +557,152 @@ async function saveLocalityChanges() {
     }
 }
 
-function handleCsvUpload(e) {
+async function handleCsvUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-        try {
-            const importedRows = parseNetworkLocalitiesCsv(event.target.result);
-
-            // Parse rows
-            const newLocalities = [];
-            const duplicates = [];
-
-            for (const imported of importedRows) {
-                const { name, cidrs, external, description, rowNumber } = imported;
-
-                if (!name || cidrs.length === 0) {
-                    console.warn(`Skipping row ${rowNumber}: missing name or CIDR`);
-                    continue;
-                }
-
-                // Check for duplicates in existing localities
-                const isDuplicateName = localitiesState.currentLocalities.some(
-                    loc => !loc._deleted && loc.name.toLowerCase() === name.toLowerCase()
-                );
-                const isDuplicateCidr = localitiesState.currentLocalities.some(
-                    loc => !loc._deleted && loc.networks && loc.networks.some(net => cidrs.includes(net))
-                );
-
-                if (isDuplicateName || isDuplicateCidr) {
-                    duplicates.push({ name, cidrs: cidrs.join(', '), reason: isDuplicateName ? 'name' : 'CIDR' });
-                    continue;
-                }
-
-                newLocalities.push({
-                    name,
-                    networks: cidrs,
-                    external,
-                    description,
-                    _isNew: true,
-                    _clientId: createLocalityDraftId()
-                });
-            }
-
-            // Add new localities to current state
-            localitiesState.currentLocalities.push(...newLocalities);
-            renderLocalitiesTable();
-
-            // Show status
-            let msg = `Loaded ${newLocalities.length} localities from CSV`;
-            if (duplicates.length > 0) {
-                msg += ` (${duplicates.length} duplicates skipped)`;
-                console.warn('Duplicate localities skipped:', duplicates);
-            }
-            showLocalityStatus(msg, duplicates.length > 0 ? 'warning' : 'success');
-
-            // Show duplicate report if any
-            if (duplicates.length > 0) {
-                const report = duplicates.map(d => `${d.name} (${d.reason} collision)`).join('\n');
-                alert(`Duplicate Detection Report:\n\n${report}\n\nThese entries were not added. Please review and modify if needed.`);
-            }
-
-        } catch (error) {
-            showLocalityStatus(`Error parsing CSV: ${error.message}`, 'error');
-        }
-    };
-    reader.readAsText(file);
-    
-    // Reset file input
     e.target.value = '';
+    if (file.size > LOCALITY_CSV_MAX_BYTES) {
+        showLocalityStatus('CSV exceeds the 25 MiB upload limit.', 'error');
+        return;
+    }
+    if (!confirm(
+        `Import "${file.name}" now? CSV imports apply valid, non-duplicate rows immediately. ` +
+        'Every row will be recorded in a downloadable outcome CSV.'
+    )) {
+        return;
+    }
+
+    const label = document.getElementById('uploadCsvLabel');
+    if (label) label.classList.add('disabled');
+    try {
+        const job = await window.apiClient.createNetworkLocalityImport(file);
+        localitiesState.selectedImportJobId = job.id;
+        showLocalityStatus(`Import started for ${file.name}.`, 'success');
+        await loadLocalityImportJobs(job.id);
+        scheduleLocalityImportPoll(job.id);
+    } catch (error) {
+        showLocalityStatus(`Could not start CSV import: ${error.message}`, 'error');
+    } finally {
+        if (label) label.classList.remove('disabled');
+    }
 }
 
-function parseNetworkLocalitiesCsv(csvText) {
-    const rows = CsvUtils.parseRows(csvText, { skipEmptyRows: true });
-    if (rows.length < 2) throw new Error('CSV file appears to be empty');
-    const header = rows[0].map(value => value.trim().toLowerCase());
-    const nameIdx = header.findIndex(value => value.includes('name'));
-    const cidrIdx = header.findIndex(value => value.includes('cidr') || value.includes('ip') || value.includes('network'));
-    const externalIdx = header.findIndex(value => value.includes('external') || value.includes('type'));
-    const descIdx = header.findIndex(value => value.includes('description') || value.includes('desc'));
-    if (nameIdx === -1 || cidrIdx === -1) {
-        throw new Error('CSV must contain Name and CIDR/Network columns');
+function localityImportOutcomeText(job) {
+    const counts = job?.counts || {};
+    const parts = [
+        `Created ${Number(counts.created || 0).toLocaleString()}`,
+        `Failed ${Number(counts.failed || 0).toLocaleString()}`,
+        `Skipped ${Number(counts.skipped || 0).toLocaleString()}`,
+        `Invalid ${Number(counts.invalid || 0).toLocaleString()}`,
+        `Unknown ${Number(counts.unknown || 0).toLocaleString()}`
+    ];
+    if (job?.notAttempted) parts.push(`Not attempted ${Number(job.notAttempted).toLocaleString()}`);
+    return parts.join(' · ');
+}
+
+function renderLocalityImportJob(job) {
+    const panel = document.getElementById('localityImportPanel');
+    if (!panel) return;
+    panel.style.display = job ? 'block' : 'none';
+    if (!job) return;
+    const processed = Number(job.processedRows || 0);
+    const total = Number(job.totalRows || 0);
+    const progress = document.getElementById('localityImportProgress');
+    const status = document.getElementById('localityImportStatus');
+    const summary = document.getElementById('localityImportSummary');
+    const download = document.getElementById('downloadLocalityImportResults');
+    const cancelButton = document.getElementById('cancelLocalityImport');
+    if (progress) {
+        progress.max = Math.max(1, total);
+        progress.value = processed;
     }
-    return rows.slice(1).map((columns, index) => {
-        const externalValue = externalIdx === -1 ? 'false' : String(columns[externalIdx] ?? '').trim().toLowerCase();
-        return {
-            name: String(columns[nameIdx] ?? '').trim(),
-            cidrs: String(columns[cidrIdx] ?? '').split(',').map(value => value.trim()).filter(Boolean),
-            external: ['true', 'external', '1', 'yes'].includes(externalValue),
-            description: descIdx === -1 ? '' : String(columns[descIdx] ?? '').trim(),
-            rowNumber: index + 2
-        };
+    if (status) {
+        status.textContent = `${job.filename} — ${job.state.replaceAll('_', ' ')}. ${job.message || ''}`;
+    }
+    if (summary) {
+        summary.textContent = `${processed.toLocaleString()} of ${total.toLocaleString()} rows tracked · ${localityImportOutcomeText(job)}`;
+    }
+    if (download) {
+        download.href = job.resultsUrl;
+        download.removeAttribute('aria-disabled');
+    }
+    if (cancelButton) {
+        cancelButton.style.display = LOCALITY_IMPORT_TERMINAL_STATES.has(job.state) ? 'none' : 'inline-block';
+    }
+}
+
+function renderLocalityImportHistory() {
+    const select = document.getElementById('localityImportHistory');
+    if (!select) return;
+    select.innerHTML = '';
+    localitiesState.importJobs.forEach(job => {
+        const option = document.createElement('option');
+        option.value = job.id;
+        const created = job.createdAt ? new Date(job.createdAt).toLocaleString() : 'Unknown time';
+        option.textContent = `${created} — ${job.filename} — ${job.state.replaceAll('_', ' ')}`;
+        select.appendChild(option);
     });
+    const selected = localitiesState.importJobs.find(job => job.id === localitiesState.selectedImportJobId)
+        || localitiesState.importJobs[0]
+        || null;
+    localitiesState.selectedImportJobId = selected?.id || null;
+    if (selected) select.value = selected.id;
+    renderLocalityImportJob(selected);
+}
+
+async function loadLocalityImportJobs(preferredJobId = null) {
+    if (!state.connected || !window.apiClient) return;
+    try {
+        const response = await window.apiClient.listNetworkLocalityImports();
+        localitiesState.importJobs = Array.isArray(response.jobs) ? response.jobs : [];
+        if (preferredJobId) localitiesState.selectedImportJobId = preferredJobId;
+        renderLocalityImportHistory();
+    } catch (error) {
+        console.warn('Could not load network locality import history:', error);
+    }
+}
+
+async function pollLocalityImport(jobId) {
+    if (!state.connected || !window.apiClient || localitiesState.selectedImportJobId !== jobId) return;
+    try {
+        const job = await window.apiClient.getNetworkLocalityImport(jobId);
+        const index = localitiesState.importJobs.findIndex(item => item.id === job.id);
+        if (index === -1) localitiesState.importJobs.unshift(job);
+        else localitiesState.importJobs[index] = job;
+        renderLocalityImportHistory();
+        if (!LOCALITY_IMPORT_TERMINAL_STATES.has(job.state)) scheduleLocalityImportPoll(jobId);
+    } catch (error) {
+        console.warn('Could not refresh network locality import:', error);
+    }
+}
+
+function scheduleLocalityImportPoll(jobId) {
+    stopLocalityImportPolling();
+    localitiesState.importPollTimer = setTimeout(() => pollLocalityImport(jobId), 1000);
+}
+
+function stopLocalityImportPolling() {
+    if (localitiesState.importPollTimer) clearTimeout(localitiesState.importPollTimer);
+    localitiesState.importPollTimer = null;
+}
+
+function handleLocalityImportHistoryChange(e) {
+    stopLocalityImportPolling();
+    localitiesState.selectedImportJobId = e.target.value;
+    const job = localitiesState.importJobs.find(item => item.id === e.target.value);
+    renderLocalityImportJob(job || null);
+    if (job && !LOCALITY_IMPORT_TERMINAL_STATES.has(job.state)) scheduleLocalityImportPoll(job.id);
+}
+
+async function cancelSelectedLocalityImport() {
+    const jobId = localitiesState.selectedImportJobId;
+    if (!jobId || !confirm('Cancel this import? Completed row outcomes will remain available for export.')) return;
+    try {
+        await window.apiClient.cancelNetworkLocalityImport(jobId);
+        await loadLocalityImportJobs(jobId);
+    } catch (error) {
+        showLocalityStatus(`Could not cancel import: ${error.message}`, 'error');
+    }
 }
 
 function showLocalityStatus(message, type = 'success') {
@@ -636,6 +736,15 @@ async function activateLocalitiesModule() {
     if (state.connected && !localitiesState.isLoaded) {
         await loadNetworkLocalities();
     }
+    if (state.connected) {
+        await loadLocalityImportJobs();
+        const activeJob = localitiesState.importJobs.find(job => !LOCALITY_IMPORT_TERMINAL_STATES.has(job.state));
+        if (activeJob) {
+            localitiesState.selectedImportJobId = activeJob.id;
+            renderLocalityImportHistory();
+            scheduleLocalityImportPoll(activeJob.id);
+        }
+    }
 }
 
 // Network Localities module initialization function
@@ -652,6 +761,10 @@ function initLocalitiesModule() {
         document.getElementById('selectAllLocalities').addEventListener('change', handleSelectAllLocalities);
         document.getElementById('bulkDeleteLocalities').addEventListener('click', handleBulkDeleteLocalities);
         document.getElementById('clearLocalitySelection').addEventListener('click', clearLocalitySelection);
+        document.getElementById('previousLocalitiesPage').addEventListener('click', () => changeLocalitiesPage(-1));
+        document.getElementById('nextLocalitiesPage').addEventListener('click', () => changeLocalitiesPage(1));
+        document.getElementById('localityImportHistory').addEventListener('change', handleLocalityImportHistoryChange);
+        document.getElementById('cancelLocalityImport').addEventListener('click', cancelSelectedLocalityImport);
         
         document.getElementById('loadLocalities').setAttribute('data-listener-added', 'true');
     }
@@ -660,6 +773,7 @@ function initLocalitiesModule() {
 if (typeof featureRegistry !== 'undefined') {
     featureRegistry.register('localities', {
         initialize: initLocalitiesModule,
-        activate: activateLocalitiesModule
+        activate: activateLocalitiesModule,
+        cancel: stopLocalityImportPolling
     });
 }

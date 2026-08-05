@@ -19,6 +19,7 @@ from backend.build_identity import resolve_runtime_version
 from backend.connection_store import ConnectionStorageError, ConnectionStore
 from backend.dashboard_usage import DashboardUsageError, collect_dashboard_usage
 from backend.extrahop_client import ExtraHopApiError, ExtraHopClient, ExtraHopResponse
+from backend.locality_imports import LocalityImportError, LocalityImportManager
 from backend.pcap_analyzer.jobs import PcapJobError, PcapJobManager
 from backend.report_cache import ReportCache, ReportCacheError, ReportCacheLimitError
 from backend.session_store import SessionStore
@@ -108,12 +109,15 @@ async def app_lifespan(_: FastAPI):
         yield
     finally:
         try:
-            await pcap_jobs.shutdown()
+            await locality_imports.shutdown()
         finally:
             try:
-                await sessions.aclose()
+                await pcap_jobs.shutdown()
             finally:
-                await asyncio.to_thread(api_response_logger.close)
+                try:
+                    await sessions.aclose()
+                finally:
+                    await asyncio.to_thread(api_response_logger.close)
 
 
 app = FastAPI(title="ExtraHop Admin Tools", lifespan=app_lifespan)
@@ -147,7 +151,20 @@ pcap_jobs = PcapJobManager(
     APP_ROOT / ".runtime" / "pcap-analyzer",
     authentication_failure_callback=detach_pcap_client,
 )
-sessions.set_remove_callback(pcap_jobs.cancel_owner)
+locality_imports = LocalityImportManager(
+    resolve_report_cache_dir(),
+    username=os.environ.get("EH_REPORT_CACHE_USER") or None,
+)
+
+
+async def cancel_owner_work(session_id: str) -> None:
+    await asyncio.gather(
+        pcap_jobs.cancel_owner(session_id),
+        locality_imports.cancel_owner(session_id),
+    )
+
+
+sessions.set_remove_callback(cancel_owner_work)
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -328,7 +345,10 @@ async def establish_session(
             },
         ) from error
 
-    await pcap_jobs.cancel_owner_collections(replace_session_id)
+    await asyncio.gather(
+        pcap_jobs.cancel_owner_collections(replace_session_id),
+        locality_imports.cancel_owner(replace_session_id),
+    )
     session_id = await sessions.aattach(replace_session_id, client)
     set_workspace_cookie(response, session_id)
     result: dict[str, Any] = {
@@ -676,7 +696,10 @@ async def dashboard_usage(
         if error.status_code == 401:
             detached = await sessions.adetach_if(eh_admin_session, client)
             if detached:
-                await pcap_jobs.cancel_owner_collections(eh_admin_session)
+                await asyncio.gather(
+                    pcap_jobs.cancel_owner_collections(eh_admin_session),
+                    locality_imports.cancel_owner(eh_admin_session),
+                )
                 exception.detail["code"] = "extrahop_session_expired"
             else:
                 exception.status_code = 409
@@ -730,11 +753,98 @@ async def delete_session(
     response: Response,
     eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> dict[str, bool]:
-    await pcap_jobs.cancel_owner_collections(eh_admin_session)
+    await asyncio.gather(
+        pcap_jobs.cancel_owner_collections(eh_admin_session),
+        locality_imports.cancel_owner(eh_admin_session),
+    )
     workspace_id = await sessions.aensure(eh_admin_session)
     await sessions.adetach(workspace_id)
     set_workspace_cookie(response, workspace_id)
     return {"workspace": True, "connected": False}
+
+
+@app.post("/backend/network-localities/imports", status_code=202)
+async def create_network_locality_import(
+    request: Request,
+    filename: str | None = Query(default=None, max_length=255),
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    owner_session = require_workspace_session(eh_admin_session)
+    client = get_session_client(owner_session)
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type not in {
+        "text/csv",
+        "application/csv",
+        "application/vnd.ms-excel",
+        "application/octet-stream",
+    }:
+        raise HTTPException(
+            status_code=415,
+            detail={"message": "Upload a UTF-8 CSV file."},
+        )
+    body = await read_bounded_body(
+        request,
+        locality_imports.settings.max_upload_bytes,
+        "Network locality CSV upload",
+    )
+    try:
+        return await locality_imports.create(
+            owner_session,
+            client,
+            body,
+            filename=filename,
+        )
+    except LocalityImportError as error:
+        raise locality_import_http_exception(error) from error
+
+
+@app.get("/backend/network-localities/imports")
+async def list_network_locality_imports(
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    client = get_session_client(eh_admin_session)
+    return await locality_imports.list(client.metadata.public_dict())
+
+
+@app.get("/backend/network-localities/imports/{job_id}")
+async def read_network_locality_import(
+    job_id: str,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    client = get_session_client(eh_admin_session)
+    try:
+        return await locality_imports.get(client.metadata.public_dict(), job_id)
+    except LocalityImportError as error:
+        raise locality_import_http_exception(error) from error
+
+
+@app.get("/backend/network-localities/imports/{job_id}/results.csv")
+async def download_network_locality_import_results(
+    job_id: str,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> StreamingResponse:
+    client = get_session_client(eh_admin_session)
+    try:
+        filename, rows = locality_imports.csv_rows(client.metadata.public_dict(), job_id)
+    except LocalityImportError as error:
+        raise locality_import_http_exception(error) from error
+    return StreamingResponse(
+        rows,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.delete("/backend/network-localities/imports/{job_id}")
+async def cancel_network_locality_import(
+    job_id: str,
+    eh_admin_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> dict[str, Any]:
+    client = get_session_client(eh_admin_session)
+    try:
+        return await locality_imports.cancel(client.metadata.public_dict(), job_id)
+    except LocalityImportError as error:
+        raise locality_import_http_exception(error) from error
 
 
 @app.post("/backend/pcap-analyzer/upload", status_code=202)
@@ -893,7 +1003,10 @@ async def proxy_extrahop_request(
         if error.status_code == 401:
             detached = await sessions.adetach_if(eh_admin_session, client)
             if detached:
-                await pcap_jobs.cancel_owner_collections(eh_admin_session)
+                await asyncio.gather(
+                    pcap_jobs.cancel_owner_collections(eh_admin_session),
+                    locality_imports.cancel_owner(eh_admin_session),
+                )
                 exception.detail["code"] = "extrahop_session_expired"
             else:
                 exception.status_code = 409
@@ -1004,6 +1117,13 @@ def pcap_job_http_exception(error: PcapJobError) -> HTTPException:
     return HTTPException(
         status_code=error.status_code,
         detail={"message": error.message, "details": error.details},
+    )
+
+
+def locality_import_http_exception(error: LocalityImportError) -> HTTPException:
+    return HTTPException(
+        status_code=error.status_code,
+        detail={"message": error.message},
     )
 
 
