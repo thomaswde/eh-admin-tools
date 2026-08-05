@@ -75,26 +75,24 @@ function getCatalogInfo(licensePlatform) {
     return nodemapState.catalogData.find(item => item.name === modelName || item.name === licensePlatform);
 }
 
+function licensePlatformIsVirtual(licensePlatform) {
+    const modelName = (licensePlatform || '').toString();
+    return /V(?:_|$)/i.test(modelName) || modelName.toUpperCase().includes('ECA');
+}
+
 // Determine platform type and characteristics
 function getNodeInfo(appliance) {
     const catalogInfo = getCatalogInfo(appliance.license_platform);
 
     let platform = appliance.platform;
-    let isVirtual = false;
+    let isVirtual = licensePlatformIsVirtual(appliance.license_platform);
     let hasIntegratedTrace = false;
 
     if (catalogInfo) {
         platform = catalogInfo.platform;
-        isVirtual = !catalogInfo.is_physical;
 
         if (appliance.license_platform && appliance.license_platform.includes('_TRACE')) {
             hasIntegratedTrace = true;
-        }
-    } else {
-        // Fallback: check if model name has V before underscore or at end
-        const licensePlatform = appliance.license_platform || '';
-        if (licensePlatform.match(/V(_|$)/) || licensePlatform.includes('ECA')) {
-            isVirtual = true;
         }
     }
 
