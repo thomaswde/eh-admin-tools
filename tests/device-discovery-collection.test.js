@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
+const ReportCacheValidation = require('../js/utils/report-cache-validation.js');
 
 function loadDeviceDiscovery(overrides = {}) {
     const source = fs.readFileSync(
@@ -34,9 +35,10 @@ function loadDeviceDiscovery(overrides = {}) {
         Chart: function Chart() {},
         genericChartPaletteColor: () => '#7655c8',
         stateIndicatorColor: () => '#f59e0b',
-        escapeHtml: value => String(value)
+        escapeHtml: value => String(value),
+        ReportCacheValidation
     });
-    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, getPeriodRange, fetchDevicesBatch, renderDeviceDiscoveryTable, buildDeviceDiscoveryResult, stopDeviceDiscoveryLoad };`, context);
+    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, getPeriodRange, fetchDevicesBatch, renderDeviceDiscoveryTable, buildDeviceDiscoveryResult, validateDeviceDiscoveryCachePayload, stopDeviceDiscoveryLoad };`, context);
     return { api: window.__deviceDiscoveryTest, elements };
 }
 
@@ -155,11 +157,39 @@ test('completed device cache payload keeps one window and the active connection 
     }, range);
 
     assert.equal(payload.range, range);
+    assert.equal(payload.projectionVersion, 1);
     assert.equal(payload.totalDevices, undefined);
     assert.equal(payload.totals.totalDevices, 3);
     assert.deepEqual(Array.from(payload.sortedNodes, row => row.id), ['sensor-1']);
     assert.equal(payload.includeDiscovery, true);
     assert.equal(payload.incomplete, false);
+    assert.equal(api.validateDeviceDiscoveryCachePayload(payload), payload);
+});
+
+test('device cache validation rejects nested count corruption before rendering', () => {
+    const { api } = loadDeviceDiscovery();
+    const payload = {
+        projectionVersion: 1,
+        selectedPeriod: 'yesterday',
+        includeEfc: false,
+        includeDiscovery: false,
+        appliances: [{ id: '1', display_name: 'Sensor' }],
+        range: { label: 'Yesterday', displayRange: 'Aug 4, 2026', activeFrom: 1, activeUntil: 2 },
+        totals: {
+            aggregate: { '1': { advanced: 1, standard: 0, discovery: 0, flow_log: 0, total: 1 } },
+            perLevelTotals: { advanced: 1, standard: 0, discovery: 0, flow_log: 0 },
+            totalDevices: 1
+        },
+        sortedNodes: [{
+            id: '1',
+            label: 'Sensor',
+            counts: { advanced: 1, standard: 0, discovery: 0, flow_log: 0, total: 2 }
+        }],
+        incomplete: false,
+        detail: ''
+    };
+
+    assert.throws(() => api.validateDeviceDiscoveryCachePayload(payload), /does not match/);
 });
 
 test('device pagination enforces row and page budgets with explicit partial reasons', async () => {

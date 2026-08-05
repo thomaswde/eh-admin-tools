@@ -8,6 +8,7 @@ const repoRoot = path.join(__dirname, '..');
 const source = fs.readFileSync(path.join(repoRoot, 'js/modules/records-report.js'), 'utf8');
 const SystemHealthCollection = require('../js/modules/system-health-collection.js');
 const CsvUtils = require('../js/utils/csv.js');
+const ReportCacheValidation = require('../js/utils/report-cache-validation.js');
 
 function loadRecords(overrides = {}) {
     const context = vm.createContext({
@@ -19,6 +20,7 @@ function loadRecords(overrides = {}) {
         String,
         SystemHealthCollection,
         CsvUtils,
+        ReportCacheValidation,
         window: {},
         ...overrides
     });
@@ -33,7 +35,8 @@ function recordsApi(context) {
         parseCSV,
         selectCRSCapacityRows,
         buildCRSSummary,
-        fetchCRSData
+        fetchCRSData,
+        validateCRSCachePayload
     })`, context);
 }
 
@@ -50,6 +53,29 @@ test('builds a UTC date window without shifting explicit calendar dates', () => 
         '2026-07-23', '2026-07-24', '2026-07-25'
     ]);
     assert.equal(window.untilMs, Date.parse('2026-07-26T00:00:00.000Z'));
+});
+
+test('records cache validation rejects calculated capacity without its source data', () => {
+    const api = recordsApi(loadRecords());
+    const summary = JSON.parse(JSON.stringify(api.buildCRSSummary([
+        {
+            id: '1',
+            name: 'Sensor',
+            model: 'EDA',
+            recordBytesGB: 100,
+            collectionStatus: { status: 'complete' }
+        }
+    ], { utilized: 50, reserved: 100 }, 1)));
+    const payload = {
+        projectionVersion: 1,
+        report: {
+            reportWindow: { fromMs: 1, untilMs: 2, dayCount: 1 },
+            capacityData: null,
+            ...summary
+        }
+    };
+
+    assert.throws(() => api.validateCRSCachePayload(payload), /capacity data is required/);
 });
 
 test('normalizes CSV dates, filters extra rows, and requires complete selected coverage', () => {

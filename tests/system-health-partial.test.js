@@ -234,7 +234,7 @@ test('probes every eligible sensor separately and keeps clean misses out of the 
         }
     ];
     context.testById = Object.fromEntries(context.testSensors.map(sensor => [String(sensor.id), sensor]));
-    context.testOptions = { untilMs: 300000, signal: controller.signal };
+    context.testOptions = { untilMs: 300000, cycle: '5min', signal: controller.signal };
 
     const result = await vm.runInContext(
         'probeSystemHealthPacketstoreSensors(testSensors, testById, testOptions)',
@@ -257,7 +257,7 @@ test('probes every eligible sensor separately and keeps clean misses out of the 
     assert.deepEqual(requestBodies.map(body => body.object_ids), [[1], [2], [4], [5], [6]]);
     assert.ok(requestBodies.every(body => body.metric_specs.length === 1));
     assert.ok(requestBodies.every(body => body.metric_category === 'cpc'
-        && body.cycle === '30sec' && body.from === 0 && body.until === 300000));
+        && body.cycle === '5min' && body.from === 0 && body.until === 300000));
 });
 
 test('zero-only probes cannot promote unrelated interface drops into Packetstore rows', async () => {

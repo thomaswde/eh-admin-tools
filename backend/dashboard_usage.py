@@ -13,7 +13,7 @@ from backend.extrahop_client import ExtraHopClient
 
 DASHBOARD_VIEW_METRIC = "_bi_dashboard_views_id"
 DASHBOARD_VIEW_CATEGORY = "ui"
-DASHBOARD_VIEW_CYCLE = "1hr"
+DASHBOARD_VIEW_CYCLE = "auto"
 DAY_MS = 24 * 60 * 60 * 1000
 MAX_LOOKBACK_DAYS = 365
 MAX_BUCKET_ROWS = MAX_LOOKBACK_DAYS * 24 + 2
@@ -203,6 +203,15 @@ def _response_window(
     return from_ms, until_ms
 
 
+def _response_cycle(chunks: list[dict[str, Any]]) -> str:
+    cycles = {
+        str(chunk.get("cycle", "")).strip().casefold()
+        for chunk in chunks
+        if str(chunk.get("cycle", "")).strip()
+    }
+    return next(iter(cycles)) if len(cycles) == 1 else DASHBOARD_VIEW_CYCLE
+
+
 async def collect_dashboard_usage(
     client: ExtraHopClient,
     *,
@@ -247,11 +256,11 @@ async def collect_dashboard_usage(
         "fromMs": from_ms,
         "untilMs": until_ms,
         "lookbackDays": days,
-        "cycle": DASHBOARD_VIEW_CYCLE,
+        "cycle": _response_cycle(chunks),
         "metric": DASHBOARD_VIEW_METRIC,
         "lastViewedByDashboardId": by_id,
         "notice": (
-            f"Dashboard views are derived from appliance-relative hourly metric buckets in the last {days} days. "
+            f"Dashboard views are derived from appliance-relative automatically selected metric buckets in the last {days} days. "
             "No recorded view does not prove that a dashboard has never been viewed."
         ),
     }

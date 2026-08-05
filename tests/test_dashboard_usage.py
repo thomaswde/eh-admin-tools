@@ -15,7 +15,7 @@ class FakeClient:
 
 
 class DashboardUsageTests(unittest.IsolatedAsyncioTestCase):
-    async def test_collects_hourly_dashboard_views_with_one_appliance_relative_window(self):
+    async def test_collects_auto_cycle_dashboard_views_with_one_appliance_relative_window(self):
         unsafe_id = 9007199254740993
         client = FakeClient([{
             "cycle": "1hr",
@@ -77,6 +77,7 @@ class DashboardUsageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["object_ids"], [0])
         self.assertEqual(request["metric_category"], "ui")
         self.assertEqual(request["metric_specs"], [{"name": "_bi_dashboard_views_id"}])
+        self.assertEqual(request["cycle"], "auto")
         self.assertEqual(request["from"], -30 * 86_400_000)
         self.assertEqual(request["until"], 0)
 

@@ -491,25 +491,31 @@ test('calculates maximum trigger utilization from aligned buckets', () => {
     assert.equal(utilization.invalid_by_sensor['7'], 'zero_available_capacity');
 });
 
-test('coarsens every fixed UI cycle to the configured bucket budgets', () => {
-    for (const cycle of ['1sec', '30sec', '5min', '1hr', '24hr']) {
-        const policy = health.chooseCyclePolicy({
-            requestedCycle: cycle,
-            windowMs: 30 * health.DAY_MS,
-            sensorCount: 10
-        });
-        assert.ok(policy.estimated_buckets_per_sensor <= health.MAX_BUCKETS_PER_SENSOR);
-        assert.ok(policy.estimated_scalar_points <= health.MAX_SCALAR_POINTS_PER_REPORT);
-    }
+test('honors safe fixed UI cycles and rejects an explicit cycle that exceeds the budget', () => {
+    const policy = health.chooseCyclePolicy({
+        requestedCycle: '1hr',
+        windowMs: 30 * health.DAY_MS,
+        sensorCount: 10
+    });
+    assert.equal(policy.query_cycle, '1hr');
+    assert.equal(policy.policy, 'explicit-selection');
+    assert.throws(() => health.chooseCyclePolicy({
+        requestedCycle: '1sec',
+        windowMs: 30 * health.DAY_MS,
+        sensorCount: 10
+    }), /choose a coarser cycle or shorter window/);
 });
 
-test('resolves auto within the budget and preserves actual response cycles', () => {
+test('sends auto upstream within the budget and preserves actual response cycles', () => {
+    assert.equal(health.PACKETSTORE_PROBE_CYCLE, 'auto');
     const policy = health.chooseCyclePolicy({
         requestedCycle: 'auto',
         windowMs: 7 * health.DAY_MS,
         sensorCount: 4
     });
-    assert.equal(policy.query_cycle, '5min');
+    assert.equal(policy.query_cycle, 'auto');
+    assert.equal(policy.minimum_safe_cycle, '5min');
+    assert.equal(policy.policy, 'upstream-auto');
     const normalized = health.normalizeTimeSeriesChunks([{
         cycle: '30sec',
         node_id: 7,
@@ -519,12 +525,29 @@ test('resolves auto within the budget and preserves actual response cycles', () 
     assert.equal(summary.actual_cycles['7'], '30sec');
 });
 
+test('bounds metric points after upstream auto-cycle selection', () => {
+    const chunks = [{
+        cycle: '1sec',
+        node_id: 7,
+        stats: [
+            { oid: 7, time: 1, duration: 1000, values: [1, 2, 3, 4] },
+            { oid: 7, time: 2, duration: 1000, values: [1, 2, 3, 4] }
+        ]
+    }];
+    assert.throws(
+        () => health.normalizeTimeSeriesChunks(chunks, appliances, health.TIME_SERIES_METRICS, {
+            maxBucketsPerSensor: 1
+        }),
+        /bucket per-sensor limit/
+    );
+});
+
 test('rejects a report that exceeds the whole-report budget even at 24 hours', () => {
     assert.throws(() => health.chooseCyclePolicy({
         requestedCycle: '1sec',
         windowMs: 30 * health.DAY_MS,
         sensorCount: 10_000
-    }), /maximum time-series point budget/);
+    }), /time-series point budget/);
 });
 
 test('prefers licensed analysis capacities and explicitly derives Standard capacity', () => {

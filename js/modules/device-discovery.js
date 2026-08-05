@@ -1,3 +1,4 @@
+/* global ReportCacheValidation */
 // Device Discovery Module
 
 const deviceDiscoveryState = {
@@ -22,6 +23,8 @@ const DEVICE_ANALYSIS = {
 const DEVICE_LIMIT = 5000;
 const DEVICE_MAX_PAGES = 100;
 const DEVICE_MAX_ROWS = 250000;
+const DEVICE_DISCOVERY_CACHE_PROJECTION_VERSION = 1;
+const DEVICE_DISCOVERY_MAX_CACHE_NODES = 10_000;
 
 function formatDateShort(date) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -381,6 +384,7 @@ function buildDeviceDiscoveryResult(data, range) {
         totals = { aggregate, perLevelTotals, totalDevices };
     }
     return {
+        projectionVersion: DEVICE_DISCOVERY_CACHE_PROJECTION_VERSION,
         selectedPeriod: deviceDiscoveryState.selectedPeriod,
         includeEfc: deviceDiscoveryState.includeEfc,
         includeDiscovery: deviceDiscoveryState.includeDiscovery,
@@ -395,6 +399,125 @@ function buildDeviceDiscoveryResult(data, range) {
         incomplete: !!data.incomplete,
         detail: data.detail || ''
     };
+}
+
+function validateDeviceDiscoveryCounts(counts, label) {
+    ReportCacheValidation.requirePlainObject(counts, label);
+    const fields = ['advanced', 'standard', 'discovery', 'flow_log', 'total'];
+    fields.forEach(field => {
+        ReportCacheValidation.requireFiniteNumber(counts[field], `${label}.${field}`, {
+            integer: true,
+            minimum: 0,
+            maximum: DEVICE_MAX_ROWS
+        });
+    });
+    if (counts.total !== counts.advanced + counts.standard + counts.discovery + counts.flow_log) {
+        throw new Error(`${label}.total does not match its analysis counts.`);
+    }
+    return counts;
+}
+
+function validateDeviceDiscoveryCachePayload(payload) {
+    ReportCacheValidation.validateJsonTree(payload, {
+        label: 'Cached Device Discovery report',
+        maxDepth: 10,
+        maxNodes: 250_000,
+        maxArrayLength: DEVICE_DISCOVERY_MAX_CACHE_NODES,
+        maxObjectKeys: DEVICE_DISCOVERY_MAX_CACHE_NODES,
+        maxStringLength: 4096
+    });
+    ReportCacheValidation.requirePlainObject(payload, 'Cached Device Discovery report');
+    if (payload.projectionVersion !== DEVICE_DISCOVERY_CACHE_PROJECTION_VERSION) {
+        throw new Error('Cached Device Discovery report uses an unsupported projection version.');
+    }
+    if (!['yesterday', 'week', 'month'].includes(payload.selectedPeriod)) {
+        throw new Error('Cached Device Discovery report has an invalid period.');
+    }
+    ReportCacheValidation.requireBoolean(payload.includeEfc, 'Cached Device Discovery includeEfc');
+    ReportCacheValidation.requireBoolean(payload.includeDiscovery, 'Cached Device Discovery includeDiscovery');
+    ReportCacheValidation.requireBoolean(payload.incomplete, 'Cached Device Discovery incomplete');
+    ReportCacheValidation.requireString(payload.detail, 'Cached Device Discovery detail', {
+        allowEmpty: true,
+        maxLength: 1000
+    });
+
+    const range = ReportCacheValidation.requirePlainObject(payload.range, 'Cached Device Discovery range');
+    ReportCacheValidation.requireString(range.label, 'Cached Device Discovery range label', { maxLength: 120 });
+    ReportCacheValidation.requireString(range.displayRange, 'Cached Device Discovery display range', { maxLength: 240 });
+    const activeFrom = ReportCacheValidation.requireFiniteNumber(range.activeFrom, 'Cached Device Discovery range start', {
+        integer: true,
+        minimum: 0
+    });
+    const activeUntil = ReportCacheValidation.requireFiniteNumber(range.activeUntil, 'Cached Device Discovery range end', {
+        integer: true,
+        minimum: 0
+    });
+    if (activeUntil < activeFrom) throw new Error('Cached Device Discovery range ends before it starts.');
+
+    const appliances = ReportCacheValidation.requireArray(payload.appliances, 'Cached Device Discovery appliances', {
+        maxLength: DEVICE_DISCOVERY_MAX_CACHE_NODES
+    });
+    const applianceIds = new Set();
+    appliances.forEach((appliance, index) => {
+        const label = `Cached Device Discovery appliance ${index + 1}`;
+        ReportCacheValidation.requirePlainObject(appliance, label);
+        const applianceId = ReportCacheValidation.requireString(appliance.id, `${label} ID`, { maxLength: 64 });
+        if (applianceIds.has(applianceId)) throw new Error(`Cached Device Discovery contains duplicate appliance ID ${applianceId}.`);
+        applianceIds.add(applianceId);
+        ['display_name', 'nickname', 'hostname', 'license_platform', 'platform'].forEach(field => {
+            if (appliance[field] !== null && appliance[field] !== undefined) {
+                ReportCacheValidation.requireString(appliance[field], `${label} ${field}`, {
+                    allowEmpty: true,
+                    maxLength: 500
+                });
+            }
+        });
+    });
+
+    const totals = ReportCacheValidation.requirePlainObject(payload.totals, 'Cached Device Discovery totals');
+    const perLevel = { ...totals.perLevelTotals, total: totals.totalDevices };
+    validateDeviceDiscoveryCounts(perLevel, 'Cached Device Discovery totals');
+    const aggregate = ReportCacheValidation.requirePlainObject(totals.aggregate, 'Cached Device Discovery aggregate');
+    if (Object.keys(aggregate).length > DEVICE_DISCOVERY_MAX_CACHE_NODES) {
+        throw new Error('Cached Device Discovery aggregate exceeds the node limit.');
+    }
+    const aggregateTotals = { advanced: 0, standard: 0, discovery: 0, flow_log: 0, total: 0 };
+    Object.entries(aggregate).forEach(([nodeId, counts]) => {
+        ReportCacheValidation.requireString(nodeId, 'Cached Device Discovery aggregate node ID', { maxLength: 64 });
+        validateDeviceDiscoveryCounts(counts, `Cached Device Discovery aggregate ${nodeId}`);
+        Object.keys(aggregateTotals).forEach(field => {
+            aggregateTotals[field] += counts[field];
+        });
+    });
+    Object.keys(aggregateTotals).forEach(field => {
+        if (aggregateTotals[field] !== perLevel[field]) {
+            throw new Error(`Cached Device Discovery aggregate ${field} does not match its totals.`);
+        }
+    });
+
+    const sortedNodes = ReportCacheValidation.requireArray(payload.sortedNodes, 'Cached Device Discovery nodes', {
+        maxLength: DEVICE_DISCOVERY_MAX_CACHE_NODES
+    });
+    const sortedNodeIds = new Set();
+    sortedNodes.forEach((node, index) => {
+        const label = `Cached Device Discovery node ${index + 1}`;
+        ReportCacheValidation.requirePlainObject(node, label);
+        const nodeId = ReportCacheValidation.requireString(node.id, `${label} ID`, { maxLength: 64 });
+        if (sortedNodeIds.has(nodeId)) throw new Error(`Cached Device Discovery contains duplicate node ID ${nodeId}.`);
+        sortedNodeIds.add(nodeId);
+        ReportCacheValidation.requireString(node.label, `${label} label`, { maxLength: 500 });
+        validateDeviceDiscoveryCounts(node.counts, `${label} counts`);
+        const aggregateCounts = aggregate[nodeId];
+        if (!aggregateCounts || ['advanced', 'standard', 'discovery', 'flow_log', 'total'].some(
+            field => aggregateCounts[field] !== node.counts[field]
+        )) {
+            throw new Error(`${label} does not match the cached aggregate.`);
+        }
+    });
+    if (sortedNodeIds.size !== Object.keys(aggregate).length) {
+        throw new Error('Cached Device Discovery node list does not match its aggregate.');
+    }
+    return payload;
 }
 
 function renderDeviceDiscoveryResult(payload, cachedAt = '') {
@@ -433,7 +556,9 @@ async function restoreDeviceDiscoveryCache() {
     deviceDiscoveryState.cacheRestoreAttempted = true;
     try {
         const cached = await ExtraHopAPI.getReportCache('device-discovery');
-        if (cached?.cached) renderDeviceDiscoveryResult(cached.payload, cached.cachedAt);
+        if (cached?.cached) {
+            renderDeviceDiscoveryResult(validateDeviceDiscoveryCachePayload(cached.payload), cached.cachedAt);
+        }
     } catch (error) {
         console.warn('Could not restore the Device Discovery report cache:', error);
     }

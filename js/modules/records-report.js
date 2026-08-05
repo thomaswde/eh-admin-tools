@@ -1,3 +1,4 @@
+/* global ReportCacheValidation */
 // Records Report (CRS Usage) Module
 
 const crsState = {
@@ -15,6 +16,8 @@ const CRS_PERIOD_DAYS = {
     week: 7,
     month: 30
 };
+const CRS_CACHE_PROJECTION_VERSION = 1;
+const CRS_MAX_CACHE_APPLIANCES = 10_000;
 
 // Update capacity input options based on selected period
 function updateCapacityInputOptions() {
@@ -295,8 +298,8 @@ async function fetchCRSData(reportWindow) {
             : null;
         return {
             id,
-            name: appliance.display_name,
-            model: appliance.license_platform,
+            name: appliance.display_name || appliance.hostname || `Appliance ${id}`,
+            model: appliance.license_platform || appliance.platform || 'Unknown',
             recordBytes,
             recordBytesGB: recordBytes === null ? null : bytesToGB(recordBytes),
             collectionStatus: coverage[id] || { status: 'empty', row_count: 0 },
@@ -382,7 +385,10 @@ async function generateCRSReport() {
         crsState.lastReport = { reportWindow, capacityData, ...summary };
         renderCRSReport(crsState.lastReport);
         try {
-            await ExtraHopAPI.saveReportCache('records-report', { report: crsState.lastReport });
+            await ExtraHopAPI.saveReportCache('records-report', {
+                projectionVersion: CRS_CACHE_PROJECTION_VERSION,
+                report: crsState.lastReport
+            });
         } catch (error) {
             console.warn('Could not save the Records Report cache:', error);
             const cacheStatus = document.getElementById('crsCacheStatus');
@@ -448,13 +454,107 @@ function renderCRSReport(report, cachedAt = '') {
     }
 }
 
+function validateCRSNullableNumber(value, label) {
+    return ReportCacheValidation.requireFiniteNumber(value, label, {
+        nullable: true,
+        minimum: 0
+    });
+}
+
+function validateCRSCachePayload(payload) {
+    ReportCacheValidation.validateJsonTree(payload, {
+        label: 'Cached Records Report',
+        maxDepth: 10,
+        maxNodes: 250_000,
+        maxArrayLength: CRS_MAX_CACHE_APPLIANCES,
+        maxObjectKeys: CRS_MAX_CACHE_APPLIANCES,
+        maxStringLength: 128 * 1024
+    });
+    ReportCacheValidation.requirePlainObject(payload, 'Cached Records Report');
+    if (payload.projectionVersion !== CRS_CACHE_PROJECTION_VERSION) {
+        throw new Error('Cached Records Report uses an unsupported projection version.');
+    }
+    const report = ReportCacheValidation.requirePlainObject(payload.report, 'Cached Records Report payload');
+    const reportWindow = ReportCacheValidation.requirePlainObject(report.reportWindow, 'Cached Records Report window');
+    const fromMs = ReportCacheValidation.requireFiniteNumber(reportWindow.fromMs, 'Cached Records Report window start', {
+        integer: true,
+        minimum: 0
+    });
+    const untilMs = ReportCacheValidation.requireFiniteNumber(reportWindow.untilMs, 'Cached Records Report window end', {
+        integer: true,
+        minimum: 0
+    });
+    if (untilMs <= fromMs) throw new Error('Cached Records Report window must have a positive duration.');
+    ReportCacheValidation.requireFiniteNumber(reportWindow.dayCount, 'Cached Records Report day count', {
+        integer: true,
+        minimum: 1,
+        maximum: 31
+    });
+
+    const compressionRatio = validateCRSNullableNumber(report.compressionRatio, 'Cached Records Report compression ratio');
+    const utilizationPercent = validateCRSNullableNumber(report.utilizationPercent, 'Cached Records Report utilization');
+    validateCRSNullableNumber(report.recordBytesDisplayGB, 'Cached Records Report displayed record bytes');
+    ['recordBytesLabel', 'recordBytesSubtext'].forEach(field => {
+        ReportCacheValidation.requireString(report[field], `Cached Records Report ${field}`, { maxLength: 1000 });
+    });
+    ReportCacheValidation.requireString(
+        report.compressionUnavailableReason,
+        'Cached Records Report compression reason',
+        { nullable: true, allowEmpty: true, maxLength: 1000 }
+    );
+
+    const capacityData = report.capacityData;
+    if (capacityData === null) {
+        if (compressionRatio !== null || utilizationPercent !== null) {
+            throw new Error('Cached Records Report capacity data is required for calculated capacity values.');
+        }
+    } else {
+        ReportCacheValidation.requirePlainObject(capacityData, 'Cached Records Report capacity data');
+        ReportCacheValidation.requireFiniteNumber(capacityData.reserved, 'Cached Records Report reserved capacity', { minimum: 0 });
+        ReportCacheValidation.requireFiniteNumber(capacityData.utilized, 'Cached Records Report utilized capacity', { minimum: 0 });
+        if (capacityData.isAveraged !== undefined) {
+            ReportCacheValidation.requireBoolean(capacityData.isAveraged, 'Cached Records Report averaged-capacity flag');
+        }
+        if (capacityData.aggregationMode !== undefined) {
+            ReportCacheValidation.requireString(capacityData.aggregationMode, 'Cached Records Report capacity aggregation mode', {
+                maxLength: 80
+            });
+        }
+    }
+
+    const applianceData = ReportCacheValidation.requireArray(report.applianceData, 'Cached Records Report appliances', {
+        maxLength: CRS_MAX_CACHE_APPLIANCES
+    });
+    applianceData.forEach((row, index) => {
+        const label = `Cached Records Report appliance ${index + 1}`;
+        ReportCacheValidation.requirePlainObject(row, label);
+        ReportCacheValidation.requireString(row.id, `${label} ID`, { maxLength: 64 });
+        ReportCacheValidation.requireString(row.name, `${label} name`, {
+            nullable: true,
+            allowEmpty: true,
+            maxLength: 500
+        });
+        ReportCacheValidation.requireString(row.model, `${label} model`, {
+            nullable: true,
+            allowEmpty: true,
+            maxLength: 500
+        });
+        ['recordBytesGB', 'averageDailyRecordBytesGB', 'compressedGB'].forEach(field => {
+            validateCRSNullableNumber(row[field], `${label} ${field}`);
+        });
+        const status = ReportCacheValidation.requirePlainObject(row.collectionStatus, `${label} collection status`);
+        ReportCacheValidation.requireString(status.status, `${label} collection status value`, { maxLength: 80 });
+    });
+    return report;
+}
+
 async function restoreCRSReportCache() {
     if (crsState.cacheRestoreAttempted || crsState.lastReport || !window.state?.connected) return;
     crsState.cacheRestoreAttempted = true;
     try {
         const cached = await ExtraHopAPI.getReportCache('records-report');
-        const report = cached?.payload?.report;
-        if (!cached?.cached || !report || !Array.isArray(report.applianceData)) return;
+        if (!cached?.cached) return;
+        const report = validateCRSCachePayload(cached.payload);
         crsState.lastReport = report;
         renderCRSReport(report, cached.cachedAt);
         document.getElementById('crsLoading').style.display = 'none';

@@ -1,3 +1,4 @@
+/* global ReportCacheValidation */
 // System Health Report Module
 
 const SYSTEM_HEALTH_ROWS_PER_PAGE = 22;
@@ -290,6 +291,7 @@ async function generateSystemHealthReport() {
         loadingText.textContent = 'Probing sensors for Packetstore metrics...';
         const packetstoreProbe = await probeSystemHealthPacketstoreSensors(discoverSensors, appliancesById, {
             untilMs,
+            cycle: requestedCycle,
             signal: abortController.signal
         });
         const cyclePolicy = SystemHealthCollection.chooseCyclePolicy({
@@ -343,9 +345,7 @@ async function generateSystemHealthReport() {
                 ...timeSeriesResult.errors,
                 ...(triggerDropResult.errors || []),
                 ...(packetstoreResult.errors || []),
-                ...(cyclePolicy.adjusted
-                    ? [`Metric cycle was automatically changed from ${requestedCycle} to ${cyclePolicy.query_cycle} to stay within the ${SystemHealthCollection.MAX_BUCKETS_PER_SENSOR.toLocaleString()}-bucket per-sensor and ${SystemHealthCollection.MAX_SCALAR_POINTS_PER_REPORT.toLocaleString()}-point report budgets.`]
-                    : [])
+                ...(cyclePolicy.adjusted ? [`Metric cycle changed to ${cyclePolicy.query_cycle}.`] : [])
             ]
         });
 
@@ -404,6 +404,14 @@ async function collectSystemHealthMetrics(metricSensors, allSensors, packetstore
             options
         )
         : { metric_category_used: 'cpc', appliance_ids: [], inventory_appliance_ids: [], probe_status: {}, metrics: {}, errors: [] };
+    const collectedScalarPoints = [
+        ...Object.values(timeSeriesResult.metrics || {}),
+        triggerDropResult,
+        ...Object.values(packetstoreResult.metrics || {})
+    ].reduce((total, metric) => total + (Array.isArray(metric && metric.rows) ? metric.rows.length : 0), 0);
+    if (collectedScalarPoints > SystemHealthCollection.MAX_SCALAR_POINTS_PER_REPORT) {
+        throw new RangeError(`System Health metrics exceeded the ${SystemHealthCollection.MAX_SCALAR_POINTS_PER_REPORT.toLocaleString()}-point report limit after automatic cycle selection.`);
+    }
     return { timeSeriesResult, triggerDropResult, packetstoreResult };
 }
 
@@ -455,7 +463,7 @@ async function probeSystemHealthPacketstoreSensors(sensors, appliancesById, opti
             continue;
         }
         const body = SystemHealthCollection.buildMetricRequest({
-            cycle: SystemHealthCollection.PACKETSTORE_PROBE_CYCLE,
+            cycle: options.cycle || SystemHealthCollection.PACKETSTORE_PROBE_CYCLE,
             fromMs,
             untilMs,
             objectIds: [sensor.id],
@@ -2920,20 +2928,37 @@ function validateSystemHealthCacheRows(rows) {
 }
 
 function systemHealthReportFromCachePayload(payload) {
-    // Read the initial full-report format for a smooth transition. New writes
-    // always use the compact summary projection below.
-    const legacy = payload && payload.report;
-    if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) return legacy;
     if (
         !payload
         || payload.projectionVersion !== SYSTEM_HEALTH_CACHE_PROJECTION_VERSION
         || !Array.isArray(payload.summaryRows)
     ) return null;
+    ReportCacheValidation.validateJsonTree(payload, {
+        label: 'Cached System Health report',
+        maxDepth: 10,
+        maxNodes: 250_000,
+        maxArrayLength: SYSTEM_HEALTH_MAX_CSV_ROWS,
+        maxObjectKeys: SYSTEM_HEALTH_SUMMARY_CSV_COLUMNS.length,
+        maxStringLength: SYSTEM_HEALTH_MAX_CSV_CELL_CHARACTERS * 2
+    });
+    ReportCacheValidation.requirePlainObject(payload, 'Cached System Health report');
     const report = buildSystemHealthReportFromUnifiedCsv(validateSystemHealthCacheRows(payload.summaryRows));
     report.source_type = 'cached_api_summary';
-    report.target = payload.target && typeof payload.target === 'object' && !Array.isArray(payload.target)
-        ? payload.target
-        : {};
+    const target = payload.target === undefined
+        ? {}
+        : ReportCacheValidation.requirePlainObject(payload.target, 'Cached System Health target');
+    ['type', 'tenant', 'host'].forEach(field => {
+        if (target[field] !== undefined) {
+            ReportCacheValidation.requireString(target[field], `Cached System Health target ${field}`, {
+                allowEmpty: true,
+                maxLength: field === 'host' ? 240 : 120
+            });
+        }
+    });
+    if (target.verifyTls !== undefined) {
+        ReportCacheValidation.requireBoolean(target.verifyTls, 'Cached System Health target TLS flag');
+    }
+    report.target = target;
     report.errors = systemHealthCacheErrors(payload.errors);
     return report;
 }

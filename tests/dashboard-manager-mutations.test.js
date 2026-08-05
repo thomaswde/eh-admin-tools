@@ -23,6 +23,12 @@ function loadDashboardManager(apiClient, dashboards = [], elements = {}) {
         currentPage: 1,
         itemsPerPage: 25
     };
+    const genericHelpers = {
+        applyFilters() {},
+        updatePagination() {},
+        updateBulkActions() {},
+        syncSelectAllCheckbox() {}
+    };
     const context = vm.createContext({
         console: { log() {}, warn() {}, error() {} },
         state,
@@ -33,14 +39,23 @@ function loadDashboardManager(apiClient, dashboards = [], elements = {}) {
         escapeAttribute: value => String(value),
         detailItem: () => '',
         showModal() {},
-        hideModal() {}
+        hideModal() {},
+        ...genericHelpers
     });
 
     vm.runInContext(source, context, { filename: 'dashboard-manager.js' });
     context.refreshCount = 0;
     vm.runInContext('loadDashboards = async () => { refreshCount++; return true; }', context);
-    return { context, state };
+    return { context, state, genericHelpers };
 }
+
+test('dashboard script leaves generic helpers in the shared classic-script namespace untouched', () => {
+    const { context, genericHelpers } = loadDashboardManager({});
+
+    Object.entries(genericHelpers).forEach(([name, helper]) => {
+        assert.equal(context[name], helper);
+    });
+});
 
 test('owner changes continue per dashboard and sharing writes merge complete state', async () => {
     const ownerCalls = [];
@@ -178,7 +193,7 @@ test('a second dashboard mutation submission cannot queue while the first is act
         }
     };
     const { context } = loadDashboardManager(api);
-    vm.runInContext('updateBulkActions = () => {}; syncSelectAllCheckbox = () => {};', context);
+    vm.runInContext('updateDashboardBulkActions = () => {}; syncDashboardSelectAllCheckbox = () => {};', context);
 
     const first = vm.runInContext(
         `runDashboardMutation('delete', ['one'], onProgress => performDashboardDeletes(['one'], onProgress))`,
@@ -278,6 +293,7 @@ test('dashboard usage attaches by opaque ID and inactivity filters include unrec
     vm.runInContext(`
         dashboardUsageState.status = 'complete';
         dashboardUsageState.lookbackDays = 365;
+        dashboardUsageState.fromMs = 1_668_664_000_000;
         attachDashboardUsage(testDashboards, testUsage);
     `, context);
 
@@ -304,6 +320,17 @@ test('dashboard inactivity filters do not claim results when usage collection is
     const matches = vm.runInContext(`
         dashboardUsageState.status = 'unavailable';
         dashboardMatchesUsageFilter({ id: '1', _usage: null }, '90', 1700000000000);
+    `, context);
+
+    assert.equal(matches, false);
+});
+
+test('dashboard inactivity filters require enough collected history for unrecorded dashboards', () => {
+    const { context } = loadDashboardManager({});
+    const matches = vm.runInContext(`
+        dashboardUsageState.status = 'complete';
+        dashboardUsageState.fromMs = 1_695_000_000_000;
+        dashboardMatchesUsageFilter({ id: '1', _usage: null }, '90', 1_700_000_000_000);
     `, context);
 
     assert.equal(matches, false);
@@ -366,8 +393,9 @@ test('dashboard name, owner, and activity filters combine in one result set', ()
 
     vm.runInContext(`
         dashboardUsageState.status = 'complete';
+        dashboardUsageState.fromMs = 1_690_000_000_000;
         dashboardUsageState.untilMs = 1_700_000_000_000;
-        applyFilters();
+        applyDashboardFilters();
     `, context);
 
     assert.deepEqual(state.filteredDashboards.map(dashboard => dashboard.id), ['match']);

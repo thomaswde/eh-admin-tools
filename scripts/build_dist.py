@@ -132,6 +132,7 @@ def validate_package(package_root: Path) -> None:
         "app/js/utils/csv.js",
         "app/js/utils/deployment-capabilities.js",
         "app/js/utils/feature-registry.js",
+        "app/js/utils/report-cache-validation.js",
         "app/js/modules/chart-theme.js",
         "app/js/modules/pcap-analyzer.js",
         "app/js/modules/system-health-collection.js",

@@ -80,12 +80,23 @@ function licensePlatformIsVirtual(licensePlatform) {
     return /V(?:_|$)/i.test(modelName) || modelName.toUpperCase().includes('ECA');
 }
 
+function catalogPlatformIsVirtual(catalogInfo) {
+    if (catalogInfo.form_factor && typeof catalogInfo.form_factor === 'object') return false;
+    return !!(
+        catalogInfo.deployments
+        && typeof catalogInfo.deployments === 'object'
+        && Object.keys(catalogInfo.deployments).length
+    );
+}
+
 // Determine platform type and characteristics
 function getNodeInfo(appliance) {
     const catalogInfo = getCatalogInfo(appliance.license_platform);
 
     let platform = appliance.platform;
-    let isVirtual = licensePlatformIsVirtual(appliance.license_platform);
+    let isVirtual = catalogInfo
+        ? catalogPlatformIsVirtual(catalogInfo)
+        : licensePlatformIsVirtual(appliance.license_platform);
     let hasIntegratedTrace = false;
 
     if (catalogInfo) {

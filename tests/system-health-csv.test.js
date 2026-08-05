@@ -9,6 +9,7 @@ const source = fs.readFileSync(
     'utf8'
 );
 const SystemHealthViewModel = require('../js/modules/system-health-view-model.js');
+const ReportCacheValidation = require('../js/utils/report-cache-validation.js');
 const context = vm.createContext({
     console,
     window: {},
@@ -16,7 +17,8 @@ const context = vm.createContext({
     state: { apiConfig: {} },
     CsvUtils: require('../js/utils/csv.js'),
     SystemHealthCollection: require('../js/modules/system-health-collection.js'),
-    SystemHealthViewModel
+    SystemHealthViewModel,
+    ReportCacheValidation
 });
 vm.runInContext(source, context);
 
@@ -298,6 +300,10 @@ test('System Health cache rejects oversized or structured scalar cells', () => {
         () => csvApi.systemHealthReportFromCachePayload(structured),
         /must be a scalar/
     );
+});
+
+test('System Health cache ignores the unvalidated legacy full-report format', () => {
+    assert.equal(csvApi.systemHealthReportFromCachePayload({ report: fixtureReport() }), null);
 });
 
 test('unified CSV preserves opaque IDs and legitimate zero values', () => {

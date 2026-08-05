@@ -8,6 +8,7 @@ const CsvUtils = require('../js/utils/csv.js');
 test('browser loads the shared CSV utility before the dynamic feature loader', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
     assert.ok(html.indexOf('js/utils/csv.js') < html.indexOf('js/utils/module-loader.js'));
+    assert.ok(html.indexOf('js/utils/report-cache-validation.js') < html.indexOf('js/utils/module-loader.js'));
 });
 
 test('RFC 4180 parser handles commas, doubled quotes, CRLF, and embedded newlines', () => {

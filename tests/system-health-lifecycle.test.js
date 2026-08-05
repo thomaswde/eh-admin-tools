@@ -133,7 +133,7 @@ test('connected System Health activation restores the cached canonical report on
             async getReportCache(reportId) {
                 cacheReads += 1;
                 assert.equal(reportId, 'system-health');
-                return { cached: true, cachedAt: '2026-08-05T12:01:00Z', payload: { report } };
+                return { cached: true, cachedAt: '2026-08-05T12:01:00Z', payload: { canonicalReport: report } };
             }
         },
         window: {
@@ -151,6 +151,7 @@ test('connected System Health activation restores the cached canonical report on
     vm.runInContext(source, context);
     context.__capture = value => { rendered = value; };
     vm.runInContext(`
+        systemHealthReportFromCachePayload = payload => payload.canonicalReport;
         renderSystemHealthReport = report => __capture(report);
         resetSystemHealthPages = () => {};
         updateSystemHealthCsvButtons = () => {};

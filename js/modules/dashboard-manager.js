@@ -8,7 +8,7 @@ const dashboardUsageState = {
     fromMs: null,
     untilMs: null,
     lookbackDays: DASHBOARD_USAGE_LOOKBACK_DAYS,
-    cycle: '1hr',
+    cycle: 'auto',
     notice: '',
     error: ''
 };
@@ -40,7 +40,7 @@ function isDashboardMutationRunning() {
     return dashboardMutationState.promise !== null;
 }
 
-function finiteTimestamp(value) {
+function dashboardFiniteTimestamp(value) {
     const timestamp = Number(value);
     return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
 }
@@ -51,8 +51,8 @@ function attachDashboardUsage(dashboards, usage) {
         const activity = byId[String(dashboard.id)];
         dashboard._usage = activity && typeof activity === 'object'
             ? {
-                lastViewedBucketStartMs: finiteTimestamp(activity.lastViewedBucketStartMs),
-                lastViewedBucketEndMs: finiteTimestamp(activity.lastViewedBucketEndMs),
+                lastViewedBucketStartMs: dashboardFiniteTimestamp(activity.lastViewedBucketStartMs),
+                lastViewedBucketEndMs: dashboardFiniteTimestamp(activity.lastViewedBucketEndMs),
                 viewsInWindow: Number(activity.viewsInWindow) || 0
             }
             : null;
@@ -71,13 +71,15 @@ function dashboardMatchesUsageFilter(
 
     const days = Number(normalized);
     const cutoff = nowMs - days * 24 * 60 * 60 * 1000;
-    const lastBucketEnd = finiteTimestamp(dashboard?._usage?.lastViewedBucketEndMs);
-    return lastBucketEnd === null || lastBucketEnd <= cutoff;
+    const lastBucketEnd = dashboardFiniteTimestamp(dashboard?._usage?.lastViewedBucketEndMs);
+    if (lastBucketEnd !== null) return lastBucketEnd <= cutoff;
+    const coverageFrom = dashboardFiniteTimestamp(dashboardUsageState.fromMs);
+    return coverageFrom !== null && coverageFrom <= cutoff;
 }
 
 function formatDashboardLastViewed(dashboard) {
     if (dashboardUsageState.status !== 'complete') return 'Unavailable';
-    const bucketStart = finiteTimestamp(dashboard?._usage?.lastViewedBucketStartMs);
+    const bucketStart = dashboardFiniteTimestamp(dashboard?._usage?.lastViewedBucketStartMs);
     if (bucketStart === null) return `No recorded views (${dashboardUsageState.lookbackDays}d)`;
     return new Date(bucketStart).toLocaleString();
 }
@@ -159,10 +161,10 @@ async function loadDashboardUsage(dashboards) {
     try {
         const usage = await window.apiClient.getDashboardUsage(DASHBOARD_USAGE_LOOKBACK_DAYS);
         dashboardUsageState.status = usage?.status === 'complete' ? 'complete' : 'unavailable';
-        dashboardUsageState.fromMs = finiteTimestamp(usage?.fromMs);
-        dashboardUsageState.untilMs = finiteTimestamp(usage?.untilMs);
+        dashboardUsageState.fromMs = dashboardFiniteTimestamp(usage?.fromMs);
+        dashboardUsageState.untilMs = dashboardFiniteTimestamp(usage?.untilMs);
         dashboardUsageState.lookbackDays = Number(usage?.lookbackDays) || DASHBOARD_USAGE_LOOKBACK_DAYS;
-        dashboardUsageState.cycle = String(usage?.cycle || '1hr');
+        dashboardUsageState.cycle = String(usage?.cycle || 'auto');
         dashboardUsageState.notice = String(usage?.notice || '');
         dashboardUsageState.error = dashboardUsageState.status === 'complete'
             ? ''
@@ -226,8 +228,8 @@ function setDashboardMutationBusy(operation, busy) {
         document.querySelectorAll?.('.dashboard-mutation-progress').forEach(element => {
             element.style.display = 'none';
         });
-        updateBulkActions();
-        syncSelectAllCheckbox();
+        updateDashboardBulkActions();
+        syncDashboardSelectAllCheckbox();
     }
 }
 
@@ -292,10 +294,10 @@ async function loadDashboards() {
         state.allUsers = Array.from(userSet).sort().map(u => ({ username: u }));
 
         // Populate user dropdowns
-        populateUserDropdowns();
+        populateDashboardUserDropdowns();
 
         // Initial render
-        applyFilters();
+        applyDashboardFilters();
         renderDashboards();
 
         loadingDiv.style.display = 'none';
@@ -484,7 +486,7 @@ async function performDashboardDeletes(dashboardIds, onProgress) {
     return results;
 }
 
-function populateUserDropdowns() {
+function populateDashboardUserDropdowns() {
     const newOwnerSelect = document.getElementById('newOwnerSelect');
     const additionalEditorsSelect = document.getElementById('additionalEditorsSelect');
 
@@ -506,7 +508,7 @@ function populateUserDropdowns() {
     });
 }
 
-function applyFilters() {
+function applyDashboardFilters() {
     const searchTerm = document.getElementById('searchDashboards').value.toLowerCase();
     const ownerFilter = document.getElementById('filterOwner').value.toLowerCase();
     const usageFilter = document.getElementById('filterDashboardActivity').value;
@@ -536,7 +538,7 @@ function pruneSelectedDashboards() {
     });
 }
 
-function syncSelectAllCheckbox() {
+function syncDashboardSelectAllCheckbox() {
     const selectAllCheckbox = document.getElementById('selectAll');
     const pageDashboards = getCurrentPageDashboards();
     const selectedOnPage = pageDashboards.filter(dashboard => state.selectedDashboards.has(dashboard.id)).length;
@@ -570,15 +572,15 @@ function clearDashboardSelection() {
 }
 
 // Editor is the notable role, so it gets the emphasised badge; viewer stays neutral.
-function roleBadge(name, role) {
+function dashboardRoleBadge(name, role) {
     const isEditor = (role || '').toString().toLowerCase() === 'editor';
     return `<span class="badge${isEditor ? ' badge-editor' : ''}">${escapeHtml(name)}<span class="muted">${isEditor ? 'Editor' : 'Viewer'}</span></span>`;
 }
 
-function renderRoleBadges(entries) {
+function renderDashboardRoleBadges(entries) {
     const list = Object.entries(entries || {});
     if (list.length === 0) return '<span class="small muted">None</span>';
-    return list.map(([name, role]) => roleBadge(name, role)).join('');
+    return list.map(([name, role]) => dashboardRoleBadge(name, role)).join('');
 }
 
 function renderDashboardSharingSection(dashboard) {
@@ -596,10 +598,10 @@ function renderDashboardSharingSection(dashboard) {
 
     const sharing = dashboard.sharing;
     const anyoneBubble = sharing.anyone
-        ? roleBadge('All users', sharing.anyone)
+        ? dashboardRoleBadge('All users', sharing.anyone)
         : '<span class="small muted">No public access</span>';
-    const userBubbles = renderRoleBadges(sharing.users);
-    const groupBubbles = renderRoleBadges(sharing.groups);
+    const userBubbles = renderDashboardRoleBadges(sharing.users);
+    const groupBubbles = renderDashboardRoleBadges(sharing.groups);
 
     return `
         <div class="stack-sm">
@@ -620,9 +622,9 @@ function renderDashboards() {
 
     if (pageData.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5"><div class="empty-inline">No dashboards found</div></td></tr>';
-        updatePagination();
-        updateBulkActions();
-        syncSelectAllCheckbox();
+        updateDashboardPagination();
+        updateDashboardBulkActions();
+        syncDashboardSelectAllCheckbox();
         return;
     }
 
@@ -700,12 +702,12 @@ function renderDashboards() {
         }
     });
 
-    updatePagination();
-    updateBulkActions();
-    syncSelectAllCheckbox();
+    updateDashboardPagination();
+    updateDashboardBulkActions();
+    syncDashboardSelectAllCheckbox();
 }
 
-function updatePagination() {
+function updateDashboardPagination() {
     const totalPages = Math.ceil(state.filteredDashboards.length / state.itemsPerPage);
     const paginationInfo = document.getElementById('paginationInfo');
     const prevBtn = document.getElementById('prevPageBtn');
@@ -735,7 +737,7 @@ function updatePagination() {
     nextBtn.disabled = state.currentPage >= totalPages;
 }
 
-function updateBulkActions() {
+function updateDashboardBulkActions() {
     const bulkActions = document.getElementById('bulkActions');
     const selectedCount = document.getElementById('selectedCount');
     const selectAllFilteredBtn = document.getElementById('selectAllFilteredBtn');
@@ -762,12 +764,12 @@ function updateBulkActions() {
     }
 }
 
-async function handleBulkChangeOwner() {
+async function handleDashboardBulkChangeOwner() {
     if (isDashboardMutationRunning()) return;
     showModal('changeOwnerModal');
 }
 
-async function confirmChangeOwner() {
+async function confirmDashboardChangeOwner() {
     const newOwner = document.getElementById('newOwnerSelect').value;
     const grantAccess = document.getElementById('grantEditAccess').checked;
 
@@ -793,12 +795,12 @@ async function confirmChangeOwner() {
     alert(`Changed owner for ${results.ownerChanges} of ${dashboardIds.length} dashboard(s)${accessSummary}.${errorSummary}`);
 }
 
-async function handleBulkShare() {
+async function handleDashboardBulkShare() {
     if (isDashboardMutationRunning()) return;
     showModal('modifySharingModal');
 }
 
-async function confirmModifySharing() {
+async function confirmDashboardModifySharing() {
     const shareWithAll = document.getElementById('shareWithAll').checked;
     const editorsSelect = document.getElementById('additionalEditorsSelect');
     const selectedEditors = Array.from(editorsSelect.selectedOptions).map(opt => opt.value);
@@ -824,14 +826,14 @@ async function confirmModifySharing() {
     alert(`Updated sharing for ${results.sharingChanges} of ${dashboardIds.length} dashboard(s).${errorSummary}`);
 }
 
-async function handleBulkDelete() {
+async function handleDashboardBulkDelete() {
     if (isDashboardMutationRunning()) return;
     const count = state.selectedDashboards.size;
     document.getElementById('deleteCount').textContent = `${count} dashboard${count > 1 ? 's' : ''}`;
     showModal('deleteConfirmModal');
 }
 
-async function confirmDelete() {
+async function confirmDashboardDelete() {
     const dashboardIds = Array.from(state.selectedDashboards);
     const results = await runDashboardMutation(
         'delete',
@@ -894,7 +896,7 @@ async function activateDashboardsModule() {
 
     // If we already have dashboards loaded, just ensure filters and table are in sync
     if (state.dashboards && state.dashboards.length > 0) {
-        applyFilters();
+        applyDashboardFilters();
         renderDashboards();
         document.getElementById('dashboardsTableContainer').style.display = 'block';
         document.getElementById('paginationContainer').style.display = 'flex';
@@ -915,17 +917,17 @@ function initDashboardsModule() {
         document.getElementById('loadDashboardsBtn').setAttribute('data-listener-added', 'true');
         
         document.getElementById('searchDashboards').addEventListener('input', () => {
-            applyFilters();
+            applyDashboardFilters();
             renderDashboards();
         });
         
         document.getElementById('filterOwner').addEventListener('input', () => {
-            applyFilters();
+            applyDashboardFilters();
             renderDashboards();
         });
 
         document.getElementById('filterDashboardActivity').addEventListener('change', () => {
-            applyFilters();
+            applyDashboardFilters();
             renderDashboards();
         });
 
@@ -935,7 +937,7 @@ function initDashboardsModule() {
             const activityFilter = document.getElementById('filterDashboardActivity');
             activityFilter.value = '';
             window.refreshCustomSelect?.(activityFilter);
-            applyFilters();
+            applyDashboardFilters();
             renderDashboards();
         });
 
@@ -959,8 +961,8 @@ function initDashboardsModule() {
                 } else {
                     state.selectedDashboards.delete(id);
                 }
-                updateBulkActions();
-                syncSelectAllCheckbox();
+                updateDashboardBulkActions();
+                syncDashboardSelectAllCheckbox();
             }
         });
 
@@ -978,16 +980,16 @@ function initDashboardsModule() {
                 const id = changeOwnerBtn.dataset.id;
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
-                updateBulkActions();
-                syncSelectAllCheckbox();
-                handleBulkChangeOwner();
+                updateDashboardBulkActions();
+                syncDashboardSelectAllCheckbox();
+                handleDashboardBulkChangeOwner();
             } else if (deleteBtn) {
                 const id = deleteBtn.dataset.id;
                 state.selectedDashboards.clear();
                 state.selectedDashboards.add(id);
-                updateBulkActions();
-                syncSelectAllCheckbox();
-                handleBulkDelete();
+                updateDashboardBulkActions();
+                syncDashboardSelectAllCheckbox();
+                handleDashboardBulkDelete();
             } else {
                 const row = e.target.closest('tr');
                 if (!row || !row.dataset.id) return;
@@ -996,9 +998,9 @@ function initDashboardsModule() {
             }
         });
 
-        document.getElementById('bulkChangeOwnerBtn').addEventListener('click', handleBulkChangeOwner);
-        document.getElementById('bulkShareBtn').addEventListener('click', handleBulkShare);
-        document.getElementById('bulkDeleteBtn').addEventListener('click', handleBulkDelete);
+        document.getElementById('bulkChangeOwnerBtn').addEventListener('click', handleDashboardBulkChangeOwner);
+        document.getElementById('bulkShareBtn').addEventListener('click', handleDashboardBulkShare);
+        document.getElementById('bulkDeleteBtn').addEventListener('click', handleDashboardBulkDelete);
         document.getElementById('selectAllFilteredBtn').addEventListener('click', selectAllFilteredDashboards);
         document.getElementById('clearDashboardSelectionBtn').addEventListener('click', clearDashboardSelection);
 
@@ -1019,13 +1021,13 @@ function initDashboardsModule() {
 
         // Modal event listeners
         document.getElementById('cancelChangeOwner').addEventListener('click', () => hideModal('changeOwnerModal'));
-        document.getElementById('confirmChangeOwner').addEventListener('click', confirmChangeOwner);
+        document.getElementById('confirmChangeOwner').addEventListener('click', confirmDashboardChangeOwner);
 
         document.getElementById('cancelModifySharing').addEventListener('click', () => hideModal('modifySharingModal'));
-        document.getElementById('confirmModifySharing').addEventListener('click', confirmModifySharing);
+        document.getElementById('confirmModifySharing').addEventListener('click', confirmDashboardModifySharing);
 
         document.getElementById('cancelDelete').addEventListener('click', () => hideModal('deleteConfirmModal'));
-        document.getElementById('confirmDelete').addEventListener('click', confirmDelete);
+        document.getElementById('confirmDelete').addEventListener('click', confirmDashboardDelete);
     }
 }
 

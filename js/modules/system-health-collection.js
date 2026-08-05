@@ -16,7 +16,7 @@
     const ORDERED_CYCLES = ['1sec', '30sec', '5min', '1hr', '24hr'];
     const TIME_SERIES_METRICS = ['bytes', 'pkts', 'trigger_cycles', 'trigger_cycles_avail'];
     const PACKETSTORE_PROBE_METRIC = 'est_lookback_sec';
-    const PACKETSTORE_PROBE_CYCLE = '30sec';
+    const PACKETSTORE_PROBE_CYCLE = 'auto';
     const PACKETSTORE_PROBE_WINDOW_MS = 5 * 60 * 1000;
     const PACKETSTORE_TIME_SERIES_METRICS = ['est_lookback_sec', 'input_load', 'compress_load', 'disk_write_load'];
     const PACKETSTORE_TOTAL_METRICS = [
@@ -87,7 +87,7 @@
         maxBucketsPerSensor = MAX_BUCKETS_PER_SENSOR,
         maxScalarPoints = MAX_SCALAR_POINTS_PER_REPORT
     }) {
-        const requested = String(requestedCycle || '1hr');
+        const requested = String(requestedCycle || 'auto');
         const sensors = Math.max(0, Number(sensorCount) || 0);
         const metrics = Math.max(1, Number(metricCount) || 1);
         const scalarSeries = scalarSeriesCount === null
@@ -105,33 +105,30 @@
             }
             return {
                 requested_cycle: requested,
-                query_cycle: minimumSafeCycle,
+                query_cycle: 'auto',
                 minimum_safe_cycle: minimumSafeCycle,
                 estimated_buckets_per_sensor: estimateBucketCount(windowMs, minimumSafeCycle),
                 estimated_scalar_points: estimateBucketCount(windowMs, minimumSafeCycle) * scalarSeries,
-                adjusted: true,
-                policy: 'deterministic-auto-resolution'
+                adjusted: false,
+                policy: 'upstream-auto'
             };
         }
 
-        const requestedIndex = Math.max(0, ORDERED_CYCLES.indexOf(requested));
-        const queryCycle = ORDERED_CYCLES.slice(requestedIndex).find(cycle => {
-            const buckets = estimateBucketCount(windowMs, cycle);
-            return buckets <= maxBucketsPerSensor
-                && buckets * scalarSeries <= maxScalarPoints;
-        });
-        if (!queryCycle) {
-            throw new RangeError('The requested report exceeds the maximum time-series point budget even at the 24-hour cycle.');
+        if (!ORDERED_CYCLES.includes(requested)) {
+            throw new RangeError(`Unsupported metric cycle: ${requested}`);
         }
-        const buckets = estimateBucketCount(windowMs, queryCycle);
+        const buckets = estimateBucketCount(windowMs, requested);
+        if (buckets > maxBucketsPerSensor || buckets * scalarSeries > maxScalarPoints) {
+            throw new RangeError('The selected metric cycle exceeds the time-series point budget; choose a coarser cycle or shorter window.');
+        }
         return {
             requested_cycle: requested,
-            query_cycle: queryCycle,
-            minimum_safe_cycle: queryCycle,
+            query_cycle: requested,
+            minimum_safe_cycle: requested,
             estimated_buckets_per_sensor: buckets,
             estimated_scalar_points: buckets * scalarSeries,
-            adjusted: queryCycle !== requested,
-            policy: 'deterministic-coarsening'
+            adjusted: false,
+            policy: 'explicit-selection'
         };
     }
 
@@ -641,16 +638,29 @@
         return { ...shapeStatuses, ...(sensorStatuses || {}) };
     }
 
-    function normalizeTimeSeriesChunks(chunks, appliancesById, metricNames) {
+    function normalizeTimeSeriesChunks(chunks, appliancesById, metricNames, options = {}) {
         const rows = [];
         const metadata = [];
         const shapeErrorsBySource = new Map();
+        const bucketsBySensor = new Map();
+        const maxBucketsPerSensor = options.maxBucketsPerSensor ?? MAX_BUCKETS_PER_SENSOR;
+        const maxScalarPoints = options.maxScalarPoints ?? MAX_SCALAR_POINTS_PER_REPORT;
+        let scalarPoints = 0;
         (chunks || []).forEach(chunk => {
             const chunkMetadata = responseMetadata(chunk);
             metadata.push(chunkMetadata);
             const stats = Array.isArray(chunk && chunk.stats) ? chunk.stats : [];
             stats.forEach(stat => {
                 const sensorId = resolveSensorId(stat, chunk, appliancesById);
+                const bucketCount = (bucketsBySensor.get(sensorId) || 0) + 1;
+                if (bucketCount > maxBucketsPerSensor) {
+                    throw new RangeError(`Metric response exceeded the ${maxBucketsPerSensor.toLocaleString()}-bucket per-sensor limit.`);
+                }
+                bucketsBySensor.set(sensorId, bucketCount);
+                scalarPoints += Math.max(1, metricNames.length);
+                if (scalarPoints > maxScalarPoints) {
+                    throw new RangeError(`Metric response exceeded the ${maxScalarPoints.toLocaleString()}-point report limit.`);
+                }
                 if (!Array.isArray(stat && stat.values) || stat.values.length !== metricNames.length) {
                     recordMetricShapeError(shapeErrorsBySource, stat, chunk, appliancesById, metricNames.length);
                     return;
@@ -680,16 +690,22 @@
         return { rows, metadata, shape_errors: Array.from(shapeErrorsBySource.values()) };
     }
 
-    function normalizeAggregateChunks(chunks, appliancesById, metricNames) {
+    function normalizeAggregateChunks(chunks, appliancesById, metricNames, options = {}) {
         const rows = [];
         const metadata = [];
         const shapeErrorsBySource = new Map();
+        const maxScalarPoints = options.maxScalarPoints ?? MAX_SCALAR_POINTS_PER_REPORT;
+        let scalarPoints = 0;
         (chunks || []).forEach(chunk => {
             const chunkMetadata = responseMetadata(chunk);
             metadata.push(chunkMetadata);
             const stats = Array.isArray(chunk && chunk.stats) ? chunk.stats : [];
             stats.forEach(stat => {
                 const sensorId = resolveSensorId(stat, chunk, appliancesById);
+                scalarPoints += Math.max(1, metricNames.length);
+                if (scalarPoints > maxScalarPoints) {
+                    throw new RangeError(`Metric response exceeded the ${maxScalarPoints.toLocaleString()}-point report limit.`);
+                }
                 if (!Array.isArray(stat && stat.values) || stat.values.length !== metricNames.length) {
                     recordMetricShapeError(shapeErrorsBySource, stat, chunk, appliancesById, metricNames.length);
                     return;

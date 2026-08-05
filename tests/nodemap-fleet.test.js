@@ -118,20 +118,20 @@ test('role comes from platform and model, and is derived once for every view', (
     assert.equal(record.name, 'Appliance 42', 'falls back when the appliance has no name');
 });
 
-test('catalog matches classify physical and virtual ETA license platforms correctly', () => {
+test('catalog matches classify form factors and deployments without model-name heuristics', () => {
     const { nodemapState, describeAppliance } = loadNodemap();
 
     nodemapState.catalogData = [
-        { name: 'ETA9350', platform: 'packetstore', form_factor: { rack_units: 1 } },
-        { name: 'ETA6150v', platform: 'packetstore', deployments: { hypervisors: ['vmware'] } }
+        { name: 'ETA9350V', platform: 'packetstore', form_factor: { rack_units: 1 } },
+        { name: 'ETA-CLOUD', platform: 'packetstore', deployments: { clouds: ['aws'] } }
     ];
 
     const physical = describeAppliance(appliance({
-        license_platform: 'ETA9350',
+        license_platform: 'ETA9350V',
         platform: 'trace'
     }));
     const virtual = describeAppliance(appliance({
-        license_platform: 'ETA6150v',
+        license_platform: 'ETA-CLOUD',
         platform: 'trace'
     }));
 
