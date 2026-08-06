@@ -408,10 +408,14 @@ test('slow-write packet drops count as Packetstore capture loss', () => {
 
 test('Packetstore packet and secret drop severity is independent and monotonic', () => {
     assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0, 0), 'clean');
+    assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.0001, 1), 'clean');
+    assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.000999, 1), 'clean');
+    assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.001, 1), 'warning');
     assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.005, 5), 'warning');
     assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.0075, 7), 'warning');
     assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.01, 10), 'warning');
     assert.equal(csvApi.systemHealthPacketstoreDropSeverity(0.01001, 11), 'critical');
+    assert.equal(csvApi.systemHealthPacketstoreDropSeverity(null, 1), 'warning');
     assert.equal(csvApi.systemHealthPacketstoreLossSeverity({
         packetDropRatio: 0, packetDropsTotal: 0,
         secretDropRatio: 0.02, secretDropsTotal: 2

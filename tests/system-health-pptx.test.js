@@ -658,13 +658,13 @@ test('PowerPoint presents sensor capacity evidence before Packetstore evidence',
     assert.ok(packetstoreIndex > sensorIndex);
 });
 
-test('small drop rates never round to zero, and the highlight follows the actual loss', () => {
+test('small drop rates never round to zero, and caution starts at one tenth of a percent', () => {
     const model = pptxApi.buildDeckModel({
         meta,
         rows: [sensorRow({ id: 'sensor', name: 'Sensor' })],
         packetstore_rows: [
-            // Loses 0.017% of packets: rounding this to 0% beside a loss warning
-            // would read as a contradiction.
+            // Loses 0.017% of packets: preserve the measured value without
+            // applying a caution color below the 0.1% threshold.
             packetstoreRow({ id: 'tiny', name: 'Tiny loss', packetDropsTotal: 1400000, packetDropRatio: 0.00017 }),
             // Loses only interface frames, so the ratio line is honestly 0%.
             packetstoreRow({ id: 'frames', name: 'Frame loss', interfaceDropsTotal: 3100 })
@@ -676,7 +676,7 @@ test('small drop rates never round to zero, and the highlight follows the actual
 
     const microLossLine = find(/packets 0\.02%/);
     assert.match(microLossLine.text, /packets 0\.02%/);
-    assert.equal(microLossLine.options.color, 'F59E0B');
+    assert.equal(microLossLine.options.color, '16151F');
 
     // The frame-loss store keeps a plain 0% ratio line and moves the highlight
     // to the counter line that carries the loss.

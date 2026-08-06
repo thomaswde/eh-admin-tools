@@ -6,6 +6,7 @@
     'use strict';
 
     const PROCESSING_LOAD_GUIDE = 0.8;
+    const PACKETSTORE_WARNING_DROP_RATIO = 0.001;
     const PACKETSTORE_CRITICAL_DROP_RATIO = 0.01;
     const PACKETSTORE_TIME_SERIES_METRICS = ['est_lookback_sec', 'input_load', 'compress_load', 'disk_write_load'];
     const PACKETSTORE_TOTAL_METRICS = [
@@ -512,7 +513,10 @@
     function packetstoreDropSeverity(ratio, droppedTotal = 0) {
         const value = finiteNumber(ratio);
         if (value !== null && value > PACKETSTORE_CRITICAL_DROP_RATIO) return 'critical';
-        if ((value !== null && value > 0) || (finiteNumber(droppedTotal) || 0) > 0) return 'warning';
+        if (value !== null) return value >= PACKETSTORE_WARNING_DROP_RATIO ? 'warning' : 'clean';
+        // A positive counter without an offered-total denominator cannot be
+        // compared with the percentage threshold, so keep it visible.
+        if ((finiteNumber(droppedTotal) || 0) > 0) return 'warning';
         return 'clean';
     }
 
@@ -528,7 +532,7 @@
             (finiteNumber(row && row.blocksDroppedTotal) || 0) > 0
         )
             return 'warning';
-        return packetstoreLossStatus(row) === 'clean' ? 'clean' : 'unavailable';
+        return packetstoreLossStatus(row) === 'unavailable' ? 'unavailable' : 'clean';
     }
 
     function peakProcessingLoad(row) {
@@ -541,6 +545,11 @@
     function hasProcessingPressure(row) {
         const load = peakProcessingLoad(row);
         return load !== null && load >= PROCESSING_LOAD_GUIDE;
+    }
+
+    function isPacketstoreRowHighlighted(row) {
+        const lossSeverity = packetstoreLossSeverity(row);
+        return ['warning', 'critical'].includes(lossSeverity) || hasProcessingPressure(row);
     }
 
     function hasReportedPacketstoreLookback(row) {
@@ -842,6 +851,7 @@
 
     return {
         PROCESSING_LOAD_GUIDE,
+        PACKETSTORE_WARNING_DROP_RATIO,
         PACKETSTORE_CRITICAL_DROP_RATIO,
         PACKETSTORE_TIME_SERIES_METRICS,
         PACKETSTORE_TOTAL_METRICS,
@@ -872,6 +882,7 @@
         packetstoreLossSeverity,
         peakProcessingLoad,
         hasProcessingPressure,
+        isPacketstoreRowHighlighted,
         hasReportedPacketstoreLookback,
         averagePacketstoreLookback,
         verdictFor,

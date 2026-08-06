@@ -213,6 +213,14 @@ test('shared capacity and loss thresholds preserve exact boundary semantics', ()
         ]
     );
     assert.equal(
+        SystemHealthViewModel.packetstoreLossSeverity(lossCounters({ packetDropsTotal: 1, packetDropRatio: 0.0001 })),
+        'clean'
+    );
+    assert.equal(
+        SystemHealthViewModel.packetstoreLossSeverity(lossCounters({ packetDropsTotal: 1, packetDropRatio: 0.001 })),
+        'warning'
+    );
+    assert.equal(
         SystemHealthViewModel.packetstoreLossSeverity(lossCounters({ packetDropsTotal: 1, packetDropRatio: 0.01 })),
         'warning'
     );
@@ -220,6 +228,26 @@ test('shared capacity and loss thresholds preserve exact boundary semantics', ()
         SystemHealthViewModel.packetstoreLossSeverity(lossCounters({ packetDropsTotal: 2, packetDropRatio: 0.010001 })),
         'critical'
     );
+});
+
+test('Packetstore row highlighting ignores measured drop rates below one tenth of a percent', () => {
+    assert.equal(
+        SystemHealthViewModel.isPacketstoreRowHighlighted(
+            lossCounters({ packetDropsTotal: 1, packetDropRatio: 0.000999 })
+        ),
+        false
+    );
+    assert.equal(
+        SystemHealthViewModel.isPacketstoreRowHighlighted(
+            lossCounters({ packetDropsTotal: 1, packetDropRatio: 0.001 })
+        ),
+        true
+    );
+    assert.equal(
+        SystemHealthViewModel.isPacketstoreRowHighlighted(lossCounters({ packetDropsTotal: 1, packetDropRatio: null })),
+        true
+    );
+    assert.equal(SystemHealthViewModel.isPacketstoreRowHighlighted(lossCounters({ diskWriteLoadPeak: 80 })), true);
 });
 
 test('PowerPoint model narrative is identical to the shared renderer-independent model', () => {

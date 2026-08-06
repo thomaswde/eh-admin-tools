@@ -1146,10 +1146,6 @@ function systemHealthPacketstoreRows(report) {
     return SystemHealthViewModel.projectPacketstoreRows(report);
 }
 
-function systemHealthPacketstoreHasLoss(row) {
-    return SystemHealthViewModel.hasCaptureLoss(row);
-}
-
 // Drop percentages are scored independently so packet loss never changes the
 // secret series (or vice versa). Raw cause counters have no denominator and
 // therefore remain warnings rather than being promoted to a critical rate.
@@ -1618,14 +1614,13 @@ function renderSystemHealthPacketstoreTable(rows) {
     const body = document.getElementById('systemHealthPacketstoreTableBody');
     if (!body) return;
     body.innerHTML = rows.map(row => {
-        const dropped = systemHealthPacketstoreHasLoss(row);
-        const hot = Math.max(row.inputLoadPeak || 0, row.compressionLoadPeak || 0, row.diskWriteLoadPeak || 0) >= 80;
+        const highlighted = SystemHealthViewModel.isPacketstoreRowHighlighted(row);
         const packetSeverity = systemHealthPacketstoreDropSeverity(row.packetDropRatio, row.packetDropsTotal);
         const secretSeverity = systemHealthPacketstoreDropSeverity(row.secretDropRatio, row.secretDropsTotal);
         const severityCell = severity => severity === 'critical' ? ' class="system-health-critical-cell"'
             : severity === 'warning' ? ' class="system-health-warning-cell"' : '';
         const counterCell = value => Number(value) > 0 ? ' class="system-health-warning-cell"' : '';
-        return `<tr class="${dropped || hot ? 'system-health-overflow-row' : ''}">
+        return `<tr class="${highlighted ? 'system-health-overflow-row' : ''}">
             <td>${escapeSystemHealthHtml(row.name || row.id)}</td>
             <td>${escapeSystemHealthHtml(systemHealthPacketstoreRoleLabel(row))}</td>
             <td>${escapeSystemHealthHtml(row.license_platform || '')}</td>
