@@ -293,7 +293,7 @@ test('dashboard usage attaches by opaque ID and inactivity filters include unrec
     vm.runInContext(`
         dashboardUsageState.status = 'complete';
         dashboardUsageState.lookbackDays = 365;
-        dashboardUsageState.fromMs = 1_668_664_000_000;
+        dashboardUsageState.coverageFromMs = 1_668_664_000_000;
         attachDashboardUsage(testDashboards, testUsage);
     `, context);
 
@@ -329,17 +329,26 @@ test('dashboard inactivity filters require enough collected history for unrecord
     const { context } = loadDashboardManager({});
     const matches = vm.runInContext(`
         dashboardUsageState.status = 'complete';
-        dashboardUsageState.fromMs = 1_695_000_000_000;
+        dashboardUsageState.coverageFromMs = 1_695_000_000_000;
         dashboardMatchesUsageFilter({ id: '1', _usage: null }, '90', 1_700_000_000_000);
     `, context);
 
     assert.equal(matches, false);
+
+    const recordedMatches = vm.runInContext(`
+        dashboardMatchesUsageFilter({
+            id: '2',
+            _usage: { lastViewedBucketEndMs: 1_690_000_000_000 }
+        }, '90', 1_700_000_000_000);
+    `, context);
+    assert.equal(recordedMatches, false, 'a recorded view cannot bypass incomplete coverage');
 });
 
 test('dashboard inactivity filtering uses the appliance metric clock', () => {
     const { context } = loadDashboardManager({});
     const matches = vm.runInContext(`
         dashboardUsageState.status = 'complete';
+        dashboardUsageState.coverageFromMs = 1_690_000_000_000;
         dashboardUsageState.untilMs = 1_700_200_000_000;
         dashboardMatchesUsageFilter({
             id: '1',
@@ -393,7 +402,7 @@ test('dashboard name, owner, and activity filters combine in one result set', ()
 
     vm.runInContext(`
         dashboardUsageState.status = 'complete';
-        dashboardUsageState.fromMs = 1_690_000_000_000;
+        dashboardUsageState.coverageFromMs = 1_690_000_000_000;
         dashboardUsageState.untilMs = 1_700_000_000_000;
         applyDashboardFilters();
     `, context);
@@ -412,4 +421,43 @@ test('dashboard activity filter survives the loading phase of refresh', () => {
 
     assert.equal(elements.filterDashboardActivity.value, '365');
     assert.equal(elements.filterDashboardActivity.disabled, true);
+});
+
+test('dashboard usage disables lookbacks beyond retained metric coverage', () => {
+    const options = [
+        { value: '', textContent: 'All dashboard activity', disabled: false },
+        { value: '30', textContent: 'No view recorded in 30 days', disabled: false },
+        { value: '90', textContent: 'No view recorded in 90 days', disabled: false },
+        { value: '180', textContent: 'No view recorded in 180 days', disabled: false },
+        { value: '365', textContent: 'No view recorded in 365 days', disabled: false }
+    ];
+    const elements = {
+        dashboardUsageStatus: { textContent: '' },
+        filterDashboardActivity: {
+            value: '365',
+            disabled: false,
+            options
+        }
+    };
+    const { context } = loadDashboardManager({}, [], elements);
+
+    vm.runInContext(`
+        dashboardUsageState.status = 'complete';
+        dashboardUsageState.coverageFromMs = 1_700_000_000_000 - 89 * DASHBOARD_USAGE_DAY_MS;
+        dashboardUsageState.untilMs = 1_700_000_000_000;
+        dashboardUsageState.notice = 'Retained coverage is shorter than requested.';
+        renderDashboardUsageStatus();
+    `, context);
+
+    assert.equal(elements.filterDashboardActivity.disabled, false);
+    assert.equal(elements.filterDashboardActivity.value, '');
+    assert.equal(options[1].disabled, false);
+    assert.equal(options[2].disabled, true);
+    assert.equal(options[3].disabled, true);
+    assert.equal(options[4].disabled, true);
+    assert.match(options[2].textContent, /unavailable/);
+    assert.equal(
+        vm.runInContext(`formatDashboardLastViewed({ id: '1', _usage: null })`, context),
+        'No recorded views (89d retained)'
+    );
 });

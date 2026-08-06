@@ -15,11 +15,12 @@ class FakeClient:
 
 
 class DashboardUsageTests(unittest.IsolatedAsyncioTestCase):
-    async def test_collects_auto_cycle_dashboard_views_with_one_appliance_relative_window(self):
+    async def test_collects_daily_dashboard_views_with_retained_bucket_coverage(self):
         unsafe_id = 9007199254740993
+        requested_from = 1_780_200_000_000 - 30 * 86_400_000
         client = FakeClient([{
-            "cycle": "1hr",
-            "from": 1_780_200_000_000 - 30 * 86_400_000,
+            "cycle": "24hr",
+            "from": requested_from,
             "until": 1_780_200_000_000,
             "clock": 1_780_200_000_500,
             "node_id": "0",
@@ -57,9 +58,12 @@ class DashboardUsageTests(unittest.IsolatedAsyncioTestCase):
             now_ms=1_780_200_000_000,
         )
 
-        self.assertEqual(result["fromMs"], 1_780_200_000_000 - 30 * 86_400_000)
+        self.assertEqual(result["requestedFromMs"], requested_from)
+        self.assertEqual(result["fromMs"], 1_780_000_000_000)
+        self.assertEqual(result["coverageFromMs"], 1_780_000_000_000)
+        self.assertEqual(result["coverageDays"], 2)
         self.assertEqual(result["untilMs"], 1_780_200_000_500)
-        self.assertEqual(result["cycle"], "1hr")
+        self.assertEqual(result["cycle"], "24hr")
         self.assertEqual(
             result["lastViewedByDashboardId"][str(unsafe_id)],
             {
@@ -77,20 +81,20 @@ class DashboardUsageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request["object_ids"], [0])
         self.assertEqual(request["metric_category"], "ui")
         self.assertEqual(request["metric_specs"], [{"name": "_bi_dashboard_views_id"}])
-        self.assertEqual(request["cycle"], "auto")
+        self.assertEqual(request["cycle"], "24hr")
         self.assertEqual(request["from"], -30 * 86_400_000)
         self.assertEqual(request["until"], 0)
 
     async def test_uses_appliance_window_when_workstation_clock_differs(self):
         appliance_until = 1_700_086_400_000
         client = FakeClient([{
-            "cycle": "1hr",
+            "cycle": "24hr",
             "from": appliance_until - 86_400_000,
             "until": appliance_until,
             "clock": appliance_until + 500,
             "stats": [{
-                "time": appliance_until - 3_600_000,
-                "duration": 3_600_000,
+                "time": appliance_until - 86_400_000,
+                "duration": 86_400_000,
                 "values": [[{
                     "key": {"key_type": "intval", "intval": 42},
                     "value": 1,
@@ -107,9 +111,97 @@ class DashboardUsageTests(unittest.IsolatedAsyncioTestCase):
         request = json.loads(client.calls[0][2]["body"])
         self.assertEqual(request["from"], -86_400_000)
         self.assertEqual(request["until"], 0)
+        self.assertEqual(request["cycle"], "24hr")
         self.assertEqual(result["fromMs"], appliance_until - 86_400_000)
+        self.assertEqual(result["requestedFromMs"], appliance_until - 86_400_000)
         self.assertEqual(result["untilMs"], appliance_until + 500)
         self.assertIn("42", result["lastViewedByDashboardId"])
+
+    async def test_declared_window_does_not_overstate_retained_history(self):
+        appliance_until = 1_780_200_000_000
+        requested_from = appliance_until - 365 * 86_400_000
+        retained_from = appliance_until - 89 * 86_400_000
+        client = FakeClient([{
+            "cycle": "24hr",
+            "from": requested_from,
+            "until": appliance_until,
+            "clock": appliance_until,
+            "stats": [{
+                "time": retained_from,
+                "duration": 86_400_000,
+                "values": [[]],
+            }],
+        }])
+
+        result = await collect_dashboard_usage(
+            client,
+            lookback_days=365,
+            now_ms=appliance_until,
+        )
+
+        self.assertEqual(result["requestedFromMs"], requested_from)
+        self.assertEqual(result["coverageFromMs"], retained_from)
+        self.assertEqual(result["fromMs"], retained_from)
+        self.assertEqual(result["coverageDays"], 89)
+        self.assertIn("longer inactivity filters are disabled", result["notice"])
+
+    async def test_continuation_coverage_uses_shortest_retained_source_window(self):
+        appliance_until = 1_780_200_000_000
+        requested_from = appliance_until - 365 * 86_400_000
+        shorter_coverage = appliance_until - 90 * 86_400_000
+        client = FakeClient([
+            {"xid": "17", "num_results": 2},
+            {
+                "cycle": "24hr",
+                "from": requested_from,
+                "until": appliance_until,
+                "stats": [{
+                    "time": requested_from,
+                    "duration": 86_400_000,
+                    "values": [[]],
+                }],
+            },
+            {
+                "cycle": "24hr",
+                "from": requested_from,
+                "until": appliance_until,
+                "stats": [{
+                    "time": shorter_coverage,
+                    "duration": 86_400_000,
+                    "values": [[]],
+                }],
+            },
+        ])
+
+        result = await collect_dashboard_usage(
+            client,
+            lookback_days=365,
+            now_ms=appliance_until,
+        )
+
+        self.assertEqual(result["coverageFromMs"], shorter_coverage)
+        self.assertEqual(result["coverageDays"], 90)
+
+    async def test_empty_metric_rows_leave_retained_coverage_unknown(self):
+        appliance_until = 1_780_200_000_000
+        client = FakeClient([{
+            "cycle": "24hr",
+            "from": appliance_until - 365 * 86_400_000,
+            "until": appliance_until,
+            "clock": appliance_until,
+            "stats": [],
+        }])
+
+        result = await collect_dashboard_usage(
+            client,
+            lookback_days=365,
+            now_ms=appliance_until,
+        )
+
+        self.assertIsNone(result["coverageFromMs"])
+        self.assertIsNone(result["fromMs"])
+        self.assertIsNone(result["coverageDays"])
+        self.assertIn("coverage could not be established", result["notice"])
 
     async def test_drains_bounded_continuation_results(self):
         client = FakeClient([

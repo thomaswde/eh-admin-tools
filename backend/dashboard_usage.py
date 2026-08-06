@@ -13,7 +13,7 @@ from backend.extrahop_client import ExtraHopClient
 
 DASHBOARD_VIEW_METRIC = "_bi_dashboard_views_id"
 DASHBOARD_VIEW_CATEGORY = "ui"
-DASHBOARD_VIEW_CYCLE = "auto"
+DASHBOARD_VIEW_CYCLE = "24hr"
 DAY_MS = 24 * 60 * 60 * 1000
 MAX_LOOKBACK_DAYS = 365
 MAX_BUCKET_ROWS = MAX_LOOKBACK_DAYS * 24 + 2
@@ -186,7 +186,7 @@ def _response_window(
     *,
     lookback_days: int,
     fallback_until_ms: int,
-) -> tuple[int, int]:
+) -> tuple[int, int | None, int]:
     response_from = [
         chunk["from"]
         for chunk in chunks
@@ -199,8 +199,31 @@ def _response_window(
         if isinstance(value, int) and value > 0
     ]
     until_ms = max(response_until, default=fallback_until_ms)
-    from_ms = min(response_from, default=until_ms - lookback_days * DAY_MS)
-    return from_ms, until_ms
+    requested_from_ms = min(response_from, default=until_ms - lookback_days * DAY_MS)
+
+    # The response-level `from` value describes the requested window even when
+    # older rollups have aged out. A no-view conclusion is only supportable for
+    # the common window represented by actual buckets from every returned
+    # source chunk.
+    coverage_starts: list[int] = []
+    for chunk in chunks:
+        stats = chunk.get("stats")
+        if not isinstance(stats, list) or not stats:
+            return requested_from_ms, None, until_ms
+        starts = [
+            stat["time"]
+            for stat in stats
+            if isinstance(stat, dict)
+            and isinstance(stat.get("time"), int)
+            and not isinstance(stat.get("time"), bool)
+            and stat["time"] > 0
+        ]
+        if len(starts) != len(stats):
+            return requested_from_ms, None, until_ms
+        coverage_starts.append(min(starts))
+
+    coverage_from_ms = max(coverage_starts) if coverage_starts else None
+    return requested_from_ms, coverage_from_ms, until_ms
 
 
 def _response_cycle(chunks: list[dict[str, Any]]) -> str:
@@ -246,21 +269,46 @@ async def collect_dashboard_usage(
         sleep=sleep,
     )
     by_id = summarize_dashboard_views(chunks)
-    from_ms, until_ms = _response_window(
+    requested_from_ms, coverage_from_ms, until_ms = _response_window(
         chunks,
         lookback_days=days,
         fallback_until_ms=fallback_until_ms,
     )
+    cycle = _response_cycle(chunks)
+    coverage_days = (
+        max(0, (until_ms - coverage_from_ms) // DAY_MS)
+        if coverage_from_ms is not None
+        else None
+    )
+    if coverage_days is None:
+        coverage_notice = (
+            "Retained dashboard-view metric coverage could not be established, "
+            "so inactivity filters are unavailable."
+        )
+    elif coverage_from_ms <= requested_from_ms:
+        coverage_notice = f"Retained coverage spans the requested {days} days."
+    else:
+        coverage_notice = (
+            f"Retained coverage spans {coverage_days} complete days of the requested {days}; "
+            "longer inactivity filters are disabled."
+        )
     return {
         "status": "complete",
-        "fromMs": from_ms,
+        # `fromMs` remains the browser-facing coverage boundary. Keep the
+        # explicit field as well so the contract cannot be confused with the
+        # independently reported requested window again.
+        "fromMs": coverage_from_ms,
+        "requestedFromMs": requested_from_ms,
+        "coverageFromMs": coverage_from_ms,
         "untilMs": until_ms,
         "lookbackDays": days,
-        "cycle": _response_cycle(chunks),
+        "coverageDays": coverage_days,
+        "cycle": cycle,
         "metric": DASHBOARD_VIEW_METRIC,
         "lastViewedByDashboardId": by_id,
         "notice": (
-            f"Dashboard views are derived from appliance-relative automatically selected metric buckets in the last {days} days. "
+            f"Dashboard views are derived from appliance-relative {cycle} metric buckets. "
+            f"{coverage_notice} "
             "No recorded view does not prove that a dashboard has never been viewed."
         ),
     }

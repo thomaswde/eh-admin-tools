@@ -48,6 +48,8 @@ Aggregation modes remain distinct:
 
 Metric requests use ExtraHop's `auto` cycle unless the page exposes an explicit cycle control. A cycle control defaults to Auto; Auto is sent upstream unchanged, while a supported explicit selection is honored when it fits the report's point budgets. Returned bucket counts and scalar points remain bounded after the upstream cycle is known, so automatic rollup selection cannot create unbounded browser work.
 
+Dashboard administration is a narrow exception: its inactivity workflow asks a day-scale question over a fixed maximum of 365 days, so it requests the documented `24hr` rollup to favor retained history over hourly display precision. The collector reports the requested window separately from the common window represented by actual returned buckets across all response chunks. Browser filtering must use that retained coverage boundary, disable lookback choices it cannot support, and label view totals with the retained window rather than the requested window.
+
 Every expected object carries a collection status. Measured zero is valid data and remains distinct from empty, offline, inaccessible, unauthorized, invalid, timed out, rate-limit exhausted, failed, or partial. UI, CSV, PDF, and PowerPoint consumers should project one canonical domain result rather than re-derive incompatible rules.
 
 Packetstore capability requires affirmative evidence. A positive Packetstore lookback confirms a paired source, while an inventory-confirmed integrated Packetstore remains eligible even when its lookback is zero or unavailable. A zero-only `cpc` probe on an otherwise ordinary sensor is indeterminate, not detected, and must not promote generic interface-drop counters into Packetstore rows or findings.

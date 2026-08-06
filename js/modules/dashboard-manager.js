@@ -2,10 +2,12 @@
 
 const DASHBOARD_USAGE_LOOKBACK_DAYS = 365;
 const DASHBOARD_USAGE_FILTER_DAYS = new Set(['30', '90', '180', '365']);
+const DASHBOARD_USAGE_DAY_MS = 24 * 60 * 60 * 1000;
 
 const dashboardUsageState = {
     status: 'not_loaded',
-    fromMs: null,
+    requestedFromMs: null,
+    coverageFromMs: null,
     untilMs: null,
     lookbackDays: DASHBOARD_USAGE_LOOKBACK_DAYS,
     cycle: 'auto',
@@ -67,21 +69,63 @@ function dashboardMatchesUsageFilter(
     const normalized = String(filterValue || '');
     if (!normalized) return true;
     if (!DASHBOARD_USAGE_FILTER_DAYS.has(normalized)) return true;
-    if (dashboardUsageState.status !== 'complete') return false;
+    if (!dashboardUsageCoversFilter(normalized, nowMs)) return false;
 
     const days = Number(normalized);
-    const cutoff = nowMs - days * 24 * 60 * 60 * 1000;
+    const cutoff = nowMs - days * DASHBOARD_USAGE_DAY_MS;
     const lastBucketEnd = dashboardFiniteTimestamp(dashboard?._usage?.lastViewedBucketEndMs);
-    if (lastBucketEnd !== null) return lastBucketEnd <= cutoff;
-    const coverageFrom = dashboardFiniteTimestamp(dashboardUsageState.fromMs);
-    return coverageFrom !== null && coverageFrom <= cutoff;
+    return lastBucketEnd === null || lastBucketEnd <= cutoff;
+}
+
+function dashboardUsageCoversFilter(
+    filterValue,
+    nowMs = dashboardUsageState.untilMs || Date.now()
+) {
+    const normalized = String(filterValue || '');
+    if (!DASHBOARD_USAGE_FILTER_DAYS.has(normalized)) return false;
+    if (dashboardUsageState.status !== 'complete') return false;
+
+    const coverageFrom = dashboardFiniteTimestamp(dashboardUsageState.coverageFromMs);
+    if (coverageFrom === null) return false;
+    const cutoff = nowMs - Number(normalized) * DASHBOARD_USAGE_DAY_MS;
+    return coverageFrom <= cutoff;
+}
+
+function dashboardUsageRetainedDays() {
+    const coverageFrom = dashboardFiniteTimestamp(dashboardUsageState.coverageFromMs);
+    const until = dashboardFiniteTimestamp(dashboardUsageState.untilMs);
+    if (coverageFrom === null || until === null || coverageFrom > until) return null;
+    return Math.floor((until - coverageFrom) / DASHBOARD_USAGE_DAY_MS);
+}
+
+function dashboardUsageCoverageLabel() {
+    const retainedDays = dashboardUsageRetainedDays();
+    return retainedDays === null ? 'retained coverage' : `${retainedDays}d retained`;
 }
 
 function formatDashboardLastViewed(dashboard) {
     if (dashboardUsageState.status !== 'complete') return 'Unavailable';
     const bucketStart = dashboardFiniteTimestamp(dashboard?._usage?.lastViewedBucketStartMs);
-    if (bucketStart === null) return `No recorded views (${dashboardUsageState.lookbackDays}d)`;
+    if (bucketStart === null) return `No recorded views (${dashboardUsageCoverageLabel()})`;
     return new Date(bucketStart).toLocaleString();
+}
+
+function updateDashboardUsageFilterOptions(filter) {
+    let supportedOptions = 0;
+    Array.from(filter?.options || []).forEach(option => {
+        const value = String(option.value || '');
+        if (!DASHBOARD_USAGE_FILTER_DAYS.has(value)) return;
+        const baseLabel = `No view recorded in ${value} days`;
+        const supported = dashboardUsageCoversFilter(value);
+        option.disabled = !supported;
+        option.textContent = supported ? baseLabel : `${baseLabel} — unavailable`;
+        if (supported) supportedOptions++;
+    });
+
+    const selected = Array.from(filter?.options || [])
+        .find(option => String(option.value || '') === String(filter?.value || ''));
+    if (selected?.disabled) filter.value = '';
+    return supportedOptions;
 }
 
 function describeDashboardFilters(searchValue, ownerValue, usageValue, usageLabel = '') {
@@ -135,8 +179,8 @@ function renderDashboardUsageStatus() {
 
     if (dashboardUsageState.status === 'complete') {
         status.textContent = dashboardUsageState.notice
-            || `Last viewed is derived from hourly dashboard-view metrics over ${dashboardUsageState.lookbackDays} days.`;
-        filter.disabled = false;
+            || `Last viewed is derived from retained ${dashboardUsageState.cycle} dashboard-view metrics.`;
+        filter.disabled = updateDashboardUsageFilterOptions(filter) === 0;
         window.refreshCustomSelect?.(filter);
         return;
     }
@@ -161,7 +205,10 @@ async function loadDashboardUsage(dashboards) {
     try {
         const usage = await window.apiClient.getDashboardUsage(DASHBOARD_USAGE_LOOKBACK_DAYS);
         dashboardUsageState.status = usage?.status === 'complete' ? 'complete' : 'unavailable';
-        dashboardUsageState.fromMs = dashboardFiniteTimestamp(usage?.fromMs);
+        dashboardUsageState.requestedFromMs = dashboardFiniteTimestamp(usage?.requestedFromMs);
+        dashboardUsageState.coverageFromMs = dashboardFiniteTimestamp(
+            usage?.coverageFromMs ?? usage?.fromMs
+        );
         dashboardUsageState.untilMs = dashboardFiniteTimestamp(usage?.untilMs);
         dashboardUsageState.lookbackDays = Number(usage?.lookbackDays) || DASHBOARD_USAGE_LOOKBACK_DAYS;
         dashboardUsageState.cycle = String(usage?.cycle || 'auto');
@@ -172,6 +219,9 @@ async function loadDashboardUsage(dashboards) {
         attachDashboardUsage(dashboards, usage);
     } catch (error) {
         dashboardUsageState.status = 'unavailable';
+        dashboardUsageState.requestedFromMs = null;
+        dashboardUsageState.coverageFromMs = null;
+        dashboardUsageState.untilMs = null;
         dashboardUsageState.error = error?.message || 'metric query failed';
         attachDashboardUsage(dashboards, null);
     }
@@ -675,7 +725,7 @@ function renderDashboards() {
             }
             if (dashboard._usage) {
                 metaItems.push(detailItem(
-                    `Views in ${dashboardUsageState.lookbackDays}d`,
+                    `Views in ${dashboardUsageCoverageLabel()}`,
                     Number(dashboard._usage.viewsInWindow || 0).toLocaleString()
                 ));
             }
