@@ -1,6 +1,6 @@
 # ExtraHop Admin Tools
 
-FastAPI-backed ExtraHop administration tools. The browser UI talks only to a local Python service; ExtraHop API calls and credentials do not pass through a third-party proxy.
+FastAPI-backed ExtraHop administration tools for managing complex ExtraHop deployments with support for multi-tenancy. 
 
 ## Recommended local start
 
@@ -10,7 +10,7 @@ Requires Python 3.10 or newer and internet access on the first launch.
 ./start.sh
 ```
 
-The launcher creates a private, versioned Python environment outside the repository, installs the locked dependencies, installs Chromium for PDF export when possible, selects a free local port, opens the browser, and keeps the server in the foreground. Never open `index.html` directly.
+The launcher creates a private, versioned Python environment, installs the locked dependencies, installs Chromium for PDF export when possible, selects a free local port, opens the browser, and keeps the server in the foreground.
 
 Useful options:
 
@@ -43,18 +43,12 @@ Open <http://127.0.0.1:8000>.
 
 ## Local workspace and connected mode
 
-The local service creates a bounded workspace as soon as the app opens; connecting to ExtraHop is
-optional. Without a connection, **Datafeed Analysis** can analyze and export a local classic PCAP,
+The local service creates a workspace as soon as the app opens. 
+Without a connection, **Datafeed Analysis** can analyze and export a local classic PCAP,
 and **System Health** can load a unified summary CSV and use the same charts, findings, detail
 table, CSV, PNG, PDF, and PowerPoint projections as a collected report. Packetstore retrieval,
 live System Health collection, detailed API-row export, and the administration tools require an
-authenticated RevealX Enterprise or RevealX 360 connection. Unsupported tools remain visible with
-an explanation instead of disappearing.
-
-`Offline` describes the app's current runtime context, not an ExtraHop deployment type and not
-evidence that a connected Enterprise deployment is air-gapped. The browser still uses the local
-FastAPI service for PCAP processing, product-catalog reads, PDF rendering, ownership, and limits;
-opening `index.html` directly is not supported.
+authenticated RevealX Enterprise or RevealX 360 connection. 
 
 ## Saved ExtraHop connections
 
@@ -65,16 +59,16 @@ workspace identifier remains in use when an ExtraHop client is attached or detac
 operating-system credential service is unavailable, the active connection still works and the UI
 shows that it could not be saved.
 
-The app also reads a local `.env` file at startup. Copy `.env.example` to `.env`, replace the
-example values, and restart:
+The app can also read credentials from a local `.env` file at startup. 
+Copy `.env.example` to `.env`, replace the example values, and restart:
 
 ```bash
 cp .env.example .env
 ```
 
 Connections use numbered variables, so additional RevealX 360 or Enterprise entries can use
-indexes `2`, `3`, and so on. `.env` is ignored by Git, but it contains plaintext secrets; prefer
-the connection form and operating-system credential store for normal use.
+indexes `2`, `3`, and so on. `.env`. 
+It's recommended to use the connection form and operating-system credential store for normal use.
 
 ## Cached reports
 
@@ -96,32 +90,7 @@ Set `EH_REPORT_CACHE_DIR`, `EH_REPORT_CACHE_MAX_ENTRY_BYTES`,
 those defaults. Cached report data can contain sensitive operational details; protect it and
 review it before sharing.
 
-## Tests
-
-```bash
-python -m unittest discover -s tests -v
-node --test tests/*.test.js
-for file in $(find js -name '*.js'); do node --check "$file"; done
 ```
-
-## System Health collection limits
-
-System Health uses one absolute report window and balanced metric requests of no more than 40
-sensors for packet, byte, aligned trigger-cycle, and per-object trigger-drop metrics. If a batch
-fails after returning partial data, the collector retains conclusive sensors and recursively
-isolates unresolved sensors within one deadline and a bounded recovery-query budget. Authorization
-and rate-limit failures are not multiplied by batch recovery. The client also coarsens the selected
-cycle to keep each sensor at or below 10,000 buckets and the whole time-series response at or below
-500,000 scalar points. A request that still exceeds the report-wide budget at the 24-hour cycle is
-rejected before it reaches ExtraHop.
-
-Unified summary CSV import is also bounded because imported files are untrusted input. The browser
-rejects files larger than 5 MiB before reading them, more than 1,000 sensor rows, columns outside
-the canonical schema, cells larger than 128 KiB, and oversized or deeply nested JSON-bearing
-cells. Duplicate identifiers, inconsistent schema versions, and inconsistent report windows are
-rejected without replacing the current report. Imported reports use the canonical System Health
-domain model, but do not synthesize raw API time series; **All API data** remains unavailable for
-an imported report.
 
 ## API response logging
 
@@ -130,17 +99,17 @@ Use the API Logging control in the sidebar to write proxied ExtraHop API respons
 - `Off`: no response log entries.
 - `Errors`: failed API responses and network errors only.
 - `Metadata`: every response with status, timing, byte count, and response shape.
-- `Full`: every response with bounded request and response previews and credential-shaped fields redacted.
+- `Full`: every response with request and response previews and credential-shaped fields redacted.
 
-Full response logs can still contain sensitive operational data. Review them before sharing. Preview and entry sizes are bounded, oversized JSON is not parsed solely for logging, and the log rotates by bytes with a fixed backup count. API response logging defaults to `Errors`; the default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
+Full response logs can still contain sensitive operational data. Preview and entry sizes are bounded, oversized JSON is not parsed solely for logging, and the log rotates by bytes with a fixed backup count. API response logging defaults to `Errors`; the default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
 
 ## Datafeed Analysis
 
-Datafeed Analysis accepts a local classic PCAP without ExtraHop credentials or retrieves bounded
+Datafeed Analysis accepts a local classic PCAP without ExtraHop credentials or retrieves
 PCAP windows from a connected ExtraHop system. Connected collection uses the same authenticated
-server-side client for RevealX Enterprise and RevealX 360; packet bytes never pass through the
-browser-facing JSON proxy. Local uploads remain complete without device enrichment; when a client
-is attached, any enrichment is best effort and never changes analytical completeness.
+server-side client for RevealX Enterprise and RevealX 360. 
+Local uploads remain complete without device enrichment; when a client is attached, 
+any enrichment is best effort and never changes analytical completeness.
 
 The results report directional TCP flows where the reverse direction was not observed, capture
 records that were truncated or sliced, and observed TCP sequence gaps. These are capture-level
