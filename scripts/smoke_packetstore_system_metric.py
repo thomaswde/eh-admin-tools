@@ -8,6 +8,7 @@ import os
 import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 MAX_RESPONSE = 1 << 20
@@ -35,15 +36,34 @@ def main():
     if base.endswith("/api/v1"):
         base = base[:-7]
 
-    key = os.environ.get("EXTRAHOP_API_KEY") or getpass.getpass("API key: ")
     context = ssl.create_default_context(cafile=args.ca_file)
+
+    client_id = os.environ.get("EXTRAHOP_CLIENT_ID") or input("Client ID: ")
+    client_secret = os.environ.get("EXTRAHOP_CLIENT_SECRET") or getpass.getpass("Client secret: ")
+    token_data = urllib.parse.urlencode(
+        {"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret}
+    ).encode()
+    token_req = urllib.request.Request(
+        f"{base}/oauth2/token",
+        data=token_data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urllib.request.urlopen(token_req, context=context, timeout=30) as response:
+            raw = response.read(MAX_RESPONSE + 1)
+        auth = json.loads(raw) if len(raw) <= MAX_RESPONSE else None
+        token = auth.get("access_token") if isinstance(auth, dict) else None
+    except (urllib.error.URLError, json.JSONDecodeError) as error:
+        raise SystemExit("Authentication failed") from error
+    if not isinstance(token, str) or not token:
+        raise SystemExit("Authentication failed")
 
     def request(path, body=None):
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(
             f"{base}/api/v1{path}",
             data=data,
-            headers={"Authorization": f"ExtraHop apikey={key}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             method="POST" if body is not None else "GET",
         )
         try:
