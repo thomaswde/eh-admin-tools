@@ -1254,10 +1254,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     margin: 0 0 8px;
 }
 
-.filter-chip {
+.badge.filter-chip {
     padding-right: 3px;
-    background-color: var(--chip-bg);
-    border-color: var(--chip-border);
+    background-color: var(--cyan);
+    border-color: var(--cyan);
+    color: #16151f;
 }
 
 .filter-chip-remove {
@@ -1269,7 +1270,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     padding: 0;
     border: 0;
     border-radius: 50%;
-    color: var(--gray);
+    color: #16151f;
     background-color: transparent;
     font: inherit;
     font-size: 15px;
@@ -1279,9 +1280,30 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 
 .filter-chip-remove:hover,
 .filter-chip-remove:focus-visible {
-    color: var(--ink);
-    background-color: var(--surface-hover);
+    color: #16151f;
+    background-color: rgba(255, 255, 255, .42);
     outline: none;
+}
+
+.dashboard-backup-option {
+    display: grid;
+    justify-items: start;
+    gap: 6px;
+    padding-top: 12px;
+    border-top: 1px solid var(--hairline);
+}
+
+.dashboard-backup-status {
+    margin: 0;
+    color: var(--gray);
+}
+
+.dashboard-backup-status.is-success { color: var(--ok-text); }
+.dashboard-backup-status.is-error { color: var(--danger-text); }
+
+.dashboard-high-impact-summary strong {
+    font-size: 13px;
+    color: inherit;
 }
 
 .dashboard-activity-heading {

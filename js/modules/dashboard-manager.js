@@ -4,6 +4,8 @@ const DASHBOARD_USAGE_LOOKBACK_DAYS = 365;
 const DASHBOARD_USAGE_DAY_MS = 24 * 60 * 60 * 1000;
 const DASHBOARD_USAGE_FILTER_PRESETS = [7, 14, 30, 60, 90, 180, 365];
 const MAX_DASHBOARD_FILTERS = 20;
+const DASHBOARD_PAGE_SIZE = 100;
+const DASHBOARD_HIGH_IMPACT_THRESHOLD = 100;
 
 const DASHBOARD_FILTER_DEFINITIONS = {
     name: {
@@ -50,6 +52,28 @@ const dashboardFilterState = {
 const dashboardMutationState = {
     promise: null,
     operation: null
+};
+
+const dashboardConfigurationBackupState = {
+    promise: null,
+    action: null
+};
+
+const dashboardHighImpactState = {
+    pending: null
+};
+
+const dashboardBackupUi = {
+    owner: {
+        buttonId: 'backupBeforeOwnerChange',
+        statusId: 'ownerBackupStatus',
+        confirmButtonId: 'confirmChangeOwner'
+    },
+    delete: {
+        buttonId: 'backupBeforeDelete',
+        statusId: 'deleteBackupStatus',
+        confirmButtonId: 'confirmDelete'
+    }
 };
 
 const dashboardMutationUi = {
@@ -250,13 +274,13 @@ function removeDashboardFilter(filterId) {
     return true;
 }
 
-function dashboardFilterCountText(matchedCount, totalCount, appliedFilterCount) {
+function dashboardFilterCountMarkup(matchedCount, totalCount, appliedFilterCount) {
     const totalLabel = Number(totalCount || 0).toLocaleString();
     if (appliedFilterCount === 0) {
-        return `Showing all ${totalLabel} dashboard${totalCount === 1 ? '' : 's'}`;
+        return `Showing all <strong>${totalLabel}</strong> dashboard${totalCount === 1 ? '' : 's'}`;
     }
     const matchedLabel = Number(matchedCount || 0).toLocaleString();
-    return `${matchedLabel} of ${totalLabel} dashboard${totalCount === 1 ? '' : 's'} match ${appliedFilterCount} applied filter${appliedFilterCount === 1 ? '' : 's'}`;
+    return `<strong>${matchedLabel}</strong> of <strong>${totalLabel}</strong> dashboard${totalCount === 1 ? '' : 's'} match <strong>${appliedFilterCount}</strong> applied filter${appliedFilterCount === 1 ? '' : 's'}`;
 }
 
 function renderDashboardAppliedFilters(filters = dashboardFilterState.filters) {
@@ -291,8 +315,7 @@ function renderDashboardAppliedFilters(filters = dashboardFilterState.filters) {
 
 function dashboardUsageStatusText() {
     if (dashboardUsageState.status === 'complete') {
-        return dashboardUsageState.notice
-            || `Recorded activity is derived from ${dashboardUsageState.cycle} System User Interface Top-N metric buckets over ${dashboardUsageCoverageLabel()}. No record is not proof of non-use.`;
+        return '';
     }
     if (dashboardUsageState.status === 'loading') {
         return 'Loading dashboard usage metrics…';
@@ -305,7 +328,10 @@ function dashboardUsageStatusText() {
 
 function renderDashboardUsageStatus() {
     const status = document.getElementById('dashboardUsageStatus');
-    if (status) status.textContent = dashboardUsageStatusText();
+    if (status) {
+        status.textContent = dashboardUsageStatusText();
+        status.hidden = !status.textContent;
+    }
     updateDashboardFilterBuilder({ preserveOperator: true, preserveOperand: true });
 }
 
@@ -479,6 +505,160 @@ async function loadDashboardUsage(dashboards) {
     renderDashboardUsageStatus();
 }
 
+function dashboardConfigurationBackupCapability() {
+    const runtimeContext = typeof runtimeContextForState === 'function'
+        ? runtimeContextForState(state)
+        : (state?.connected && state?.apiConfig?.type === 'enterprise' ? 'enterprise' : 'offline');
+    const supported = typeof deploymentSupportsApiFamily === 'function'
+        ? deploymentSupportsApiFamily(runtimeContext, 'configurationBackups')
+        : runtimeContext === 'enterprise';
+    return {
+        supported,
+        reason: supported
+            ? ''
+            : 'Configuration backups are available only with RevealX Enterprise.'
+    };
+}
+
+function dashboardConfigurationBackupName(now = Date.now()) {
+    const timestamp = new Date(now).toISOString().replace(/\D/g, '').slice(0, 17);
+    return `eh-admin-tools-dashboard-backup-${timestamp}`;
+}
+
+function setDashboardBackupStatus(action, message, tone = '') {
+    const status = document.getElementById(dashboardBackupUi[action]?.statusId);
+    if (!status) return;
+    status.textContent = message;
+    status.hidden = !message;
+    status.classList.remove('is-success', 'is-error');
+    if (tone) status.classList.add(`is-${tone}`);
+}
+
+function syncDashboardBackupButtonAvailability(action, forceBusy = false) {
+    const ui = dashboardBackupUi[action];
+    const button = document.getElementById(ui?.buttonId);
+    if (!button) return;
+    const capability = dashboardConfigurationBackupCapability();
+    const busy = forceBusy || Boolean(dashboardConfigurationBackupState.promise) || isDashboardMutationRunning();
+    button.disabled = !capability.supported || busy || button.dataset.backupCreated === 'true';
+    button.title = capability.reason;
+}
+
+function prepareDashboardBackupControl(action) {
+    const ui = dashboardBackupUi[action];
+    const button = document.getElementById(ui?.buttonId);
+    if (!button) return;
+    const capability = dashboardConfigurationBackupCapability();
+    button.textContent = 'Take a configuration backup before applying change';
+    delete button.dataset.backupCreated;
+    setDashboardBackupStatus(action, capability.reason);
+    syncDashboardBackupButtonAvailability(action);
+}
+
+async function takeDashboardConfigurationBackup(action) {
+    const ui = dashboardBackupUi[action];
+    const button = document.getElementById(ui?.buttonId);
+    const confirmButton = document.getElementById(ui?.confirmButtonId);
+    const capability = dashboardConfigurationBackupCapability();
+    if (!ui || !button || !capability.supported || dashboardConfigurationBackupState.promise) return false;
+
+    const backupName = dashboardConfigurationBackupName();
+    button.disabled = true;
+    button.textContent = 'Creating configuration backup…';
+    if (confirmButton) confirmButton.disabled = true;
+    setDashboardBackupStatus(action, `Creating ${backupName}…`);
+    dashboardConfigurationBackupState.action = action;
+    dashboardConfigurationBackupState.promise = Promise.resolve().then(() => (
+        window.apiClient.createConfigurationBackup(backupName)
+    ));
+
+    try {
+        await dashboardConfigurationBackupState.promise;
+        button.dataset.backupCreated = 'true';
+        button.textContent = 'Configuration backup created';
+        setDashboardBackupStatus(action, `${backupName} was created.`, 'success');
+        return true;
+    } catch (error) {
+        button.textContent = 'Retry configuration backup';
+        setDashboardBackupStatus(
+            action,
+            `Configuration backup failed: ${error?.message || error}`,
+            'error'
+        );
+        return false;
+    } finally {
+        dashboardConfigurationBackupState.promise = null;
+        dashboardConfigurationBackupState.action = null;
+        syncDashboardBackupButtonAvailability(action);
+        if (confirmButton && !isDashboardMutationRunning()) confirmButton.disabled = false;
+    }
+}
+
+function dashboardNeedsHighImpactConfirmation(dashboardCount) {
+    return Number(dashboardCount) > DASHBOARD_HIGH_IMPACT_THRESHOLD;
+}
+
+function dashboardOwnerChangeConfirmationText(dashboardIds, newOwner) {
+    const owners = new Set((dashboardIds || []).map(id => dashboardOwnerValue(findDashboardById(id))));
+    let currentOwners = 'their current owners';
+    if (owners.size === 1) currentOwners = Array.from(owners)[0];
+    if (owners.size > 1) currentOwners = `${owners.size} current owners`;
+    const count = dashboardIds?.length || 0;
+    return `Type "confirm" to change owner of ${count} dashboards from ${currentOwners} to ${newOwner}.`;
+}
+
+function dashboardDeleteConfirmationText(dashboardIds) {
+    return `Type "confirm" to delete ${dashboardIds?.length || 0} dashboards.`;
+}
+
+function dashboardConfirmationPhraseIsValid(value) {
+    return String(value || '').trim() === 'confirm';
+}
+
+function showDashboardHighImpactConfirmation(pending) {
+    dashboardHighImpactState.pending = pending;
+    const description = pending.action === 'owner'
+        ? dashboardOwnerChangeConfirmationText(pending.dashboardIds, pending.newOwner)
+        : dashboardDeleteConfirmationText(pending.dashboardIds);
+    const input = document.getElementById('dashboardHighImpactInput');
+    const confirmButton = document.getElementById('confirmDashboardHighImpact');
+    document.getElementById('dashboardHighImpactDescription').textContent = description;
+    input.value = '';
+    confirmButton.disabled = true;
+    hideModal(pending.sourceModalId);
+    showModal('dashboardHighImpactConfirmModal');
+    input.focus?.();
+}
+
+function syncDashboardHighImpactConfirmation() {
+    const input = document.getElementById('dashboardHighImpactInput');
+    const confirmButton = document.getElementById('confirmDashboardHighImpact');
+    if (!input || !confirmButton) return;
+    confirmButton.disabled = !dashboardConfirmationPhraseIsValid(input.value);
+}
+
+function cancelDashboardHighImpactConfirmation() {
+    const pending = dashboardHighImpactState.pending;
+    dashboardHighImpactState.pending = null;
+    hideModal('dashboardHighImpactConfirmModal');
+    if (pending?.sourceModalId) showModal(pending.sourceModalId);
+}
+
+async function confirmDashboardHighImpactChange() {
+    const input = document.getElementById('dashboardHighImpactInput');
+    const pending = dashboardHighImpactState.pending;
+    if (!pending || !dashboardConfirmationPhraseIsValid(input.value)) return;
+
+    dashboardHighImpactState.pending = null;
+    hideModal('dashboardHighImpactConfirmModal');
+    showModal(pending.sourceModalId);
+    if (pending.action === 'owner') {
+        await executeDashboardOwnerChange(pending);
+    } else {
+        await executeDashboardDelete(pending.dashboardIds);
+    }
+}
+
 function setDashboardMutationProgress(operation, completed, total, phase = 'mutating') {
     const ui = dashboardMutationUi[operation];
     if (!ui) return;
@@ -518,6 +698,10 @@ function setDashboardMutationBusy(operation, busy) {
     ].forEach(id => {
         const control = document.getElementById(id);
         if (control) control.disabled = busy;
+    });
+
+    Object.keys(dashboardBackupUi).forEach(action => {
+        syncDashboardBackupButtonAvailability(action, busy);
     });
 
     const module = document.getElementById('dashboardsModule');
@@ -819,8 +1003,8 @@ function applyDashboardFilters() {
 }
 
 function getCurrentPageDashboards() {
-    const start = (state.currentPage - 1) * state.itemsPerPage;
-    const end = start + state.itemsPerPage;
+    const start = (state.currentPage - 1) * DASHBOARD_PAGE_SIZE;
+    const end = start + DASHBOARD_PAGE_SIZE;
     return state.filteredDashboards.slice(start, end);
 }
 
@@ -970,7 +1154,7 @@ function renderDashboards() {
             }
             if (dashboard._usage) {
                 metaItems.push(detailItem(
-                    `Recorded views (${dashboardUsageCoverageLabel()}; lower bound)`,
+                    'Recorded views',
                     Number(dashboard._usage.viewsInWindow || 0).toLocaleString()
                 ));
             }
@@ -1003,13 +1187,13 @@ function renderDashboards() {
 }
 
 function updateDashboardPagination() {
-    const totalPages = Math.ceil(state.filteredDashboards.length / state.itemsPerPage);
+    const totalPages = Math.ceil(state.filteredDashboards.length / DASHBOARD_PAGE_SIZE);
     const paginationInfo = document.getElementById('paginationInfo');
     const prevBtn = document.getElementById('prevPageBtn');
     const nextBtn = document.getElementById('nextPageBtn');
     const filterCount = document.getElementById('dashboardFilterCount');
     renderDashboardAppliedFilters();
-    filterCount.textContent = dashboardFilterCountText(
+    filterCount.innerHTML = dashboardFilterCountMarkup(
         state.filteredDashboards.length,
         state.dashboards.length,
         dashboardFilterState.filters.length
@@ -1022,8 +1206,8 @@ function updateDashboardPagination() {
         return;
     }
 
-    const start = (state.currentPage - 1) * state.itemsPerPage + 1;
-    const end = Math.min(start + state.itemsPerPage - 1, state.filteredDashboards.length);
+    const start = (state.currentPage - 1) * DASHBOARD_PAGE_SIZE + 1;
+    const end = Math.min(start + DASHBOARD_PAGE_SIZE - 1, state.filteredDashboards.length);
 
     paginationInfo.textContent = `Showing ${start}-${end} of ${state.filteredDashboards.length}`;
 
@@ -1060,6 +1244,7 @@ function updateDashboardBulkActions() {
 
 async function handleDashboardBulkChangeOwner() {
     if (isDashboardMutationRunning()) return;
+    prepareDashboardBackupControl('owner');
     showModal('changeOwnerModal');
 }
 
@@ -1073,6 +1258,20 @@ async function confirmDashboardChangeOwner() {
     }
 
     const dashboardIds = Array.from(state.selectedDashboards);
+    if (dashboardNeedsHighImpactConfirmation(dashboardIds.length)) {
+        showDashboardHighImpactConfirmation({
+            action: 'owner',
+            sourceModalId: 'changeOwnerModal',
+            dashboardIds,
+            newOwner,
+            grantAccess
+        });
+        return;
+    }
+    await executeDashboardOwnerChange({ dashboardIds, newOwner, grantAccess });
+}
+
+async function executeDashboardOwnerChange({ dashboardIds, newOwner, grantAccess }) {
     const results = await runDashboardMutation(
         'owner',
         dashboardIds,
@@ -1124,11 +1323,24 @@ async function handleDashboardBulkDelete() {
     if (isDashboardMutationRunning()) return;
     const count = state.selectedDashboards.size;
     document.getElementById('deleteCount').textContent = `${count} dashboard${count > 1 ? 's' : ''}`;
+    prepareDashboardBackupControl('delete');
     showModal('deleteConfirmModal');
 }
 
 async function confirmDashboardDelete() {
     const dashboardIds = Array.from(state.selectedDashboards);
+    if (dashboardNeedsHighImpactConfirmation(dashboardIds.length)) {
+        showDashboardHighImpactConfirmation({
+            action: 'delete',
+            sourceModalId: 'deleteConfirmModal',
+            dashboardIds
+        });
+        return;
+    }
+    await executeDashboardDelete(dashboardIds);
+}
+
+async function executeDashboardDelete(dashboardIds) {
     const results = await runDashboardMutation(
         'delete',
         dashboardIds,
@@ -1147,8 +1359,9 @@ async function confirmDashboardDelete() {
             });
     }
 
-    const errorSummary = results.errors.length > 0 ? ` ${results.errors.length} deletion(s) failed.` : '';
-    alert(`Deleted ${results.deletions} of ${dashboardIds.length} dashboard(s).${errorSummary}`);
+    if (results.errors.length > 0) {
+        alert(`${results.errors.length} deletion operation(s) failed. Review the refreshed dashboard list before retrying.`);
+    }
 }
 
 function handleDashboardRowClick(dashboardId) {
@@ -1297,7 +1510,7 @@ function initDashboardsModule() {
         });
 
         document.getElementById('nextPageBtn').addEventListener('click', () => {
-            const totalPages = Math.ceil(state.filteredDashboards.length / state.itemsPerPage);
+            const totalPages = Math.ceil(state.filteredDashboards.length / DASHBOARD_PAGE_SIZE);
             if (state.currentPage < totalPages) {
                 state.currentPage++;
                 renderDashboards();
@@ -1307,12 +1520,27 @@ function initDashboardsModule() {
         // Modal event listeners
         document.getElementById('cancelChangeOwner').addEventListener('click', () => hideModal('changeOwnerModal'));
         document.getElementById('confirmChangeOwner').addEventListener('click', confirmDashboardChangeOwner);
+        document.getElementById('backupBeforeOwnerChange').addEventListener('click', () => {
+            takeDashboardConfigurationBackup('owner');
+        });
 
         document.getElementById('cancelModifySharing').addEventListener('click', () => hideModal('modifySharingModal'));
         document.getElementById('confirmModifySharing').addEventListener('click', confirmDashboardModifySharing);
 
         document.getElementById('cancelDelete').addEventListener('click', () => hideModal('deleteConfirmModal'));
         document.getElementById('confirmDelete').addEventListener('click', confirmDashboardDelete);
+        document.getElementById('backupBeforeDelete').addEventListener('click', () => {
+            takeDashboardConfigurationBackup('delete');
+        });
+
+        document.getElementById('dashboardHighImpactInput').addEventListener('input', syncDashboardHighImpactConfirmation);
+        document.getElementById('dashboardHighImpactInput').addEventListener('keydown', event => {
+            if (event.key !== 'Enter' || !dashboardConfirmationPhraseIsValid(event.currentTarget.value)) return;
+            event.preventDefault();
+            confirmDashboardHighImpactChange();
+        });
+        document.getElementById('cancelDashboardHighImpact').addEventListener('click', cancelDashboardHighImpactConfirmation);
+        document.getElementById('confirmDashboardHighImpact').addEventListener('click', confirmDashboardHighImpactChange);
     }
     updateDashboardFilterBuilder({ preserveOperator: true, preserveOperand: true });
 }

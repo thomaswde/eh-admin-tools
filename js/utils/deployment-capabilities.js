@@ -7,7 +7,8 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
             applianceFirmware: false,
             localApplianceFirmware: false,
             applianceCloudServices: false,
-            applianceProductKeys: false
+            applianceProductKeys: false,
+            configurationBackups: false
         }),
         modules: Object.freeze({
             'audit-logs': false,
@@ -35,7 +36,8 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
             applianceFirmware: true,
             localApplianceFirmware: true,
             applianceCloudServices: true,
-            applianceProductKeys: true
+            applianceProductKeys: true,
+            configurationBackups: true
         }),
         modules: Object.freeze({
             'audit-logs': true,
@@ -63,7 +65,8 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
             applianceFirmware: true,
             localApplianceFirmware: false,
             applianceCloudServices: false,
-            applianceProductKeys: false
+            applianceProductKeys: false,
+            configurationBackups: false
         }),
         modules: Object.freeze({
             'audit-logs': true,

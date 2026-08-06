@@ -14,6 +14,7 @@ function plain(value) {
 }
 
 function loadDashboardManager(apiClient, dashboards = [], elements = {}) {
+    const alerts = [];
     const state = {
         connected: true,
         dashboards,
@@ -34,7 +35,7 @@ function loadDashboardManager(apiClient, dashboards = [], elements = {}) {
         state,
         window: { apiClient },
         document: { getElementById: id => elements[id] || null },
-        alert() {},
+        alert(message) { alerts.push(message); },
         escapeHtml: value => String(value),
         escapeAttribute: value => String(value),
         detailItem: () => '',
@@ -46,7 +47,7 @@ function loadDashboardManager(apiClient, dashboards = [], elements = {}) {
     vm.runInContext(source, context, { filename: 'dashboard-manager.js' });
     context.refreshCount = 0;
     vm.runInContext('loadDashboards = async () => { refreshCount++; return true; }', context);
-    return { context, state, genericHelpers };
+    return { context, state, genericHelpers, alerts };
 }
 
 test('dashboard script leaves generic helpers in the shared classic-script namespace untouched', () => {
@@ -177,6 +178,20 @@ test('bulk deletion attempts every item and reloads after any confirmed deletion
         [[1, 'failed'], [2, 'succeeded'], [3, 'failed']]
     );
     assert.equal(context.refreshCount, 1);
+});
+
+test('successful dashboard deletion completes without a native success alert', async () => {
+    const api = {
+        async deleteDashboard() {
+            return true;
+        }
+    };
+    const { context, alerts } = loadDashboardManager(api, [{ id: 'one' }]);
+    vm.runInContext('updateDashboardBulkActions = () => {}; syncDashboardSelectAllCheckbox = () => {};', context);
+
+    await vm.runInContext(`executeDashboardDelete(['one'])`, context);
+
+    assert.deepEqual(alerts, []);
 });
 
 test('a second dashboard mutation submission cannot queue while the first is active', async () => {
@@ -377,13 +392,64 @@ test('dashboard filter labels distinguish fields, operators, and operands', () =
         'Owner is “stand@example.com”'
     );
     assert.equal(
-        vm.runInContext(`dashboardFilterCountText(5475, 5475, 0)`, context),
-        'Showing all 5,475 dashboards'
+        vm.runInContext(`dashboardFilterCountMarkup(5475, 5475, 3)`, context),
+        '<strong>5,475</strong> of <strong>5,475</strong> dashboards match <strong>3</strong> applied filters'
+    );
+});
+
+test('dashboard pagination is fixed at 100 rows per page', () => {
+    const dashboards = Array.from({ length: 250 }, (_, index) => ({ id: String(index) }));
+    const { context, state } = loadDashboardManager({}, dashboards);
+    state.currentPage = 2;
+
+    const page = vm.runInContext('getCurrentPageDashboards()', context);
+
+    assert.equal(page.length, 100);
+    assert.equal(page[0].id, '100');
+    assert.equal(page[99].id, '199');
+});
+
+test('large owner changes and deletions require the exact typed confirmation after 100 dashboards', () => {
+    const dashboards = Array.from({ length: 101 }, (_, index) => ({
+        id: String(index),
+        owner: index < 50 ? 'alice@example.com' : 'bob@example.com'
+    }));
+    const { context } = loadDashboardManager({}, dashboards);
+    context.dashboardIds = dashboards.map(dashboard => dashboard.id);
+
+    assert.equal(vm.runInContext('dashboardNeedsHighImpactConfirmation(100)', context), false);
+    assert.equal(vm.runInContext('dashboardNeedsHighImpactConfirmation(101)', context), true);
+    assert.equal(vm.runInContext(`dashboardConfirmationPhraseIsValid('confirm')`, context), true);
+    assert.equal(vm.runInContext(`dashboardConfirmationPhraseIsValid(' confirm ')`, context), true);
+    assert.equal(vm.runInContext(`dashboardConfirmationPhraseIsValid('Confirm')`, context), false);
+    assert.equal(vm.runInContext(`dashboardConfirmationPhraseIsValid('yes')`, context), false);
+    assert.equal(
+        vm.runInContext(`dashboardOwnerChangeConfirmationText(dashboardIds, 'new@example.com')`, context),
+        'Type "confirm" to change owner of 101 dashboards from 2 current owners to new@example.com.'
     );
     assert.equal(
-        vm.runInContext(`dashboardFilterCountText(5475, 5475, 1)`, context),
-        '5,475 of 5,475 dashboards match 1 applied filter'
+        vm.runInContext('dashboardDeleteConfirmationText(dashboardIds)', context),
+        'Type "confirm" to delete 101 dashboards.'
     );
+});
+
+test('dashboard backup names are unique timestamped appliance customization names', () => {
+    const { context } = loadDashboardManager({});
+    assert.equal(
+        vm.runInContext(`dashboardConfigurationBackupName(Date.UTC(2026, 7, 6, 12, 34, 56, 789))`, context),
+        'eh-admin-tools-dashboard-backup-20260806123456789'
+    );
+});
+
+test('complete dashboard usage does not render explanatory subtext', () => {
+    const { context } = loadDashboardManager({});
+    const status = vm.runInContext(`
+        dashboardUsageState.status = 'complete';
+        dashboardUsageState.notice = 'Long appliance metric explanation';
+        dashboardUsageStatusText();
+    `, context);
+
+    assert.equal(status, '');
 });
 
 test('dashboard name, owner, and activity filters combine in one result set', () => {

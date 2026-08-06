@@ -64,6 +64,9 @@ test('capability matrix marks User Manager self-managed-only', () => {
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('360', 'applianceCloudServices')", context), false);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('enterprise', 'applianceProductKeys')", context), true);
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('360', 'applianceProductKeys')", context), false);
+    assert.equal(vm.runInContext("deploymentSupportsApiFamily('enterprise', 'configurationBackups')", context), true);
+    assert.equal(vm.runInContext("deploymentSupportsApiFamily('360', 'configurationBackups')", context), false);
+    assert.equal(vm.runInContext("deploymentSupportsApiFamily('offline', 'configurationBackups')", context), false);
 });
 
 test('navigation keeps unsupported modules visible with a concise reason', () => {

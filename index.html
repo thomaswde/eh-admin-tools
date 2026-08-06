@@ -406,7 +406,7 @@
                 </div>
                 <span id="dashboardFilterCount" class="small muted"></span>
             </div>
-            <p id="dashboardUsageStatus" class="small muted dashboard-usage-status" role="status" aria-live="polite"></p>
+            <p id="dashboardUsageStatus" class="small muted dashboard-usage-status" role="status" aria-live="polite" hidden></p>
             <div id="dashboardAppliedFilters" class="applied-filters row-tight" style="margin: 0 0 14px;" hidden>
                 <span class="small muted">Applied filters:</span>
                 <div id="dashboardAppliedFilterChips" class="row-tight"></div>
@@ -1744,6 +1744,10 @@
                 <input type="checkbox" id="grantEditAccess">
                 <span>Grant previous owner edit access</span>
             </label>
+            <div class="dashboard-backup-option">
+                <button type="button" id="backupBeforeOwnerChange" class="btn btn-sm">Take a configuration backup before applying change</button>
+                <p id="ownerBackupStatus" class="small dashboard-backup-status" role="status" aria-live="polite" hidden></p>
+            </div>
             <div class="dashboard-mutation-progress notice" role="status" aria-live="polite" style="display: none;">
                 <div class="spinner spinner-sm"></div>
                 <span class="dashboard-mutation-progress-text"></span>
@@ -1786,14 +1790,42 @@
 <div id="deleteConfirmModal" class="modal">
     <div class="modal-content">
         <h2 class="modal-title modal-title-danger">Confirm deletion</h2>
-        <p class="modal-desc">Are you sure you want to delete <strong id="deleteCount"></strong>? This cannot be undone.</p>
-        <div class="dashboard-mutation-progress notice" role="status" aria-live="assertive" style="display: none; margin-top: 14px;">
-            <div class="spinner spinner-sm"></div>
-            <span class="dashboard-mutation-progress-text"></span>
+        <div class="modal-body">
+            <p class="modal-desc" style="margin: 0;">Are you sure you want to delete <strong id="deleteCount"></strong>? This cannot be undone.</p>
+            <div class="dashboard-backup-option">
+                <button type="button" id="backupBeforeDelete" class="btn btn-sm">Take a configuration backup before applying change</button>
+                <p id="deleteBackupStatus" class="small dashboard-backup-status" role="status" aria-live="polite" hidden></p>
+            </div>
+            <div class="dashboard-mutation-progress notice" role="status" aria-live="assertive" style="display: none;">
+                <div class="spinner spinner-sm"></div>
+                <span class="dashboard-mutation-progress-text"></span>
+            </div>
         </div>
-        <div class="modal-foot" style="margin-top: 20px;">
+        <div class="modal-foot">
             <button type="button" id="cancelDelete" class="btn">Cancel</button>
             <button type="button" id="confirmDelete" class="btn-danger">Delete</button>
+        </div>
+    </div>
+</div>
+
+<!-- Additional confirmation for large dashboard changes -->
+<div id="dashboardHighImpactConfirmModal" class="modal">
+    <div class="modal-content">
+        <h2 class="modal-title modal-title-danger">Confirm large dashboard change</h2>
+        <div class="modal-body">
+            <p class="modal-desc" style="margin: 0;">Changes to more than 100 dashboards require an additional confirmation.</p>
+            <div class="notice notice-warn dashboard-high-impact-summary">
+                <strong id="dashboardHighImpactDescription"></strong>
+            </div>
+            <div class="field">
+                <label for="dashboardHighImpactInput">Confirmation phrase</label>
+                <input type="text" id="dashboardHighImpactInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type confirm">
+                <span class="field-hint">Type exactly <strong>confirm</strong> to continue.</span>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button type="button" id="cancelDashboardHighImpact" class="btn">Cancel</button>
+            <button type="button" id="confirmDashboardHighImpact" class="btn-danger" disabled>Apply change</button>
         </div>
     </div>
 </div>

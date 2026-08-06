@@ -387,6 +387,19 @@ class ExtraHopAPI {
         return true;
     }
 
+    async createConfigurationBackup(name) {
+        this.assertApiFamilySupported('configurationBackups');
+        const normalizedName = String(name || '').trim();
+        if (!normalizedName) {
+            throw new TypeError('Configuration backup name is required.');
+        }
+        await this.request('/customizations', {
+            method: 'POST',
+            body: JSON.stringify({ name: normalizedName })
+        });
+        return { name: normalizedName };
+    }
+
     async listUsers({ suppressErrors = false } = {}) {
         try {
             this.assertApiFamilySupported('users');
