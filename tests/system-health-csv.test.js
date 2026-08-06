@@ -34,7 +34,7 @@ const csvApi = vm.runInContext(`({
     systemHealthAveragePacketstoreLookback,
     systemHealthHorizontalChartLayout,
     systemHealthFidelityBarRatio,
-    systemHealthPacketstoreHasLoss,
+    systemHealthPacketstoreHasLoss: SystemHealthViewModel.hasCaptureLoss,
     systemHealthPacketstoreDropSeverity,
     systemHealthPacketstoreLossSeverity,
     systemHealthSensorDetailCsv,

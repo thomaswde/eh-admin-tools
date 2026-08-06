@@ -1,5 +1,7 @@
 from unittest.mock import Mock, patch
 
+import pytest
+
 from scripts import build_dist
 
 
@@ -44,3 +46,16 @@ def test_git_worktree_dirty_ignores_untracked_distribution_artifacts(run):
         capture_output=True,
         text=True,
     )
+
+
+def test_release_build_version_can_add_a_same_day_sequence(monkeypatch):
+    monkeypatch.setenv(build_dist.BUILD_VERSION_ENV, "2026.08.06.1")
+
+    assert build_dist.resolved_build_version("2026.08.06") == "2026.08.06.1"
+
+
+def test_release_build_version_cannot_claim_a_different_calendar_date(monkeypatch):
+    monkeypatch.setenv(build_dist.BUILD_VERSION_ENV, "2026.08.07")
+
+    with pytest.raises(RuntimeError, match="does not match HEAD commit date"):
+        build_dist.resolved_build_version("2026.08.06")

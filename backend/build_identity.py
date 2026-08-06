@@ -9,7 +9,7 @@ import re
 import subprocess
 
 
-VERSION_PATTERN = re.compile(r"^\d{4}\.\d{2}\.\d{2}$")
+VERSION_PATTERN = re.compile(r"^(\d{4}\.\d{2}\.\d{2})(?:\.([1-9]\d*))?$")
 GIT_REVISION_PATTERN = re.compile(r"^(?:HEAD|[0-9a-fA-F]{7,40})$")
 
 
@@ -21,9 +21,10 @@ class BuildIdentity:
 
 def normalize_version(value: str) -> str:
     candidate = value.strip()
-    if not VERSION_PATTERN.fullmatch(candidate):
-        raise ValueError(f"Application version must use YYYY.MM.DD: {candidate!r}")
-    date.fromisoformat(candidate.replace(".", "-"))
+    match = VERSION_PATTERN.fullmatch(candidate)
+    if not match:
+        raise ValueError(f"Application version must use YYYY.MM.DD or YYYY.MM.DD.N: {candidate!r}")
+    date.fromisoformat(match.group(1).replace(".", "-"))
     return candidate
 
 

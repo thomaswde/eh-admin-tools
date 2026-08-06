@@ -124,11 +124,13 @@ import re
 import sys
 
 value = sys.argv[1]
-if not re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", value):
-    raise SystemExit("error: VERSION must use YYYY.MM.DD")
-year, month, day = map(int, value.split("."))
+match = re.fullmatch(r"(\d{4})\.(\d{2})\.(\d{2})(?:\.([1-9]\d*))?", value)
+if not match:
+    raise SystemExit("error: VERSION must use YYYY.MM.DD or YYYY.MM.DD.N")
+year, month, day = map(int, match.groups()[:3])
 date(year, month, day)
-print(f"{year}.{month}.{day}")
+sequence = match.group(4)
+print(f"{year}.{month}.{day}" + (f"-{sequence}" if sequence else ""))
 PY
 )
 
@@ -171,7 +173,7 @@ python3 -m venv "$release_venv"
 "$release_venv/bin/python" -m ruff check main.py backend tests
 
 printf '%s\n' 'Building distribution...'
-"$release_venv/bin/python" scripts/build_dist.py
+EH_ADMIN_TOOLS_BUILD_VERSION="$version" "$release_venv/bin/python" scripts/build_dist.py
 git diff --check
 
 zip_path="dist/eh-admin-tools-$version.zip"

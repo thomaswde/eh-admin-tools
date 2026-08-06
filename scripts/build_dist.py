@@ -2,17 +2,26 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 from datetime import date
+import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+normalize_version = importlib.import_module("backend.build_identity").normalize_version
+
+
 DIST_DIR = REPO_ROOT / "dist"
+BUILD_VERSION_ENV = "EH_ADMIN_TOOLS_BUILD_VERSION"
 
 ROOT_FILES = {
     ".env.example": ".env.example",
@@ -89,6 +98,18 @@ def git_worktree_dirty() -> bool:
             text=True,
         ).stdout.strip()
     )
+
+
+def resolved_build_version(commit_version: str) -> str:
+    requested = os.environ.get(BUILD_VERSION_ENV)
+    if not requested:
+        return commit_version
+    version = normalize_version(requested)
+    if version[:10] != commit_version:
+        raise RuntimeError(
+            f"{BUILD_VERSION_ENV} date {version[:10]} does not match HEAD commit date {commit_version}"
+        )
+    return version
 
 
 def make_checksum_manifest(package_root: Path) -> None:
@@ -190,7 +211,8 @@ def write_zip(package_root: Path, zip_path: Path) -> None:
 
 
 def build() -> Path:
-    commit, version = git_build_identity()
+    commit, commit_version = git_build_identity()
+    version = resolved_build_version(commit_version)
     if git_worktree_dirty():
         commit = f"{commit}-dirty"
     package_name = f"eh-admin-tools-{version}"

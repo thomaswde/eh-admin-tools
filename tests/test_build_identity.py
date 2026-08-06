@@ -17,7 +17,8 @@ from backend.build_identity import (
 class BuildIdentityTests(unittest.TestCase):
     def test_normalizes_real_calendar_dates_only(self):
         self.assertEqual(normalize_version(" 2026.07.30\n"), "2026.07.30")
-        for value in ("2026.7.30", "2026.02.30", "release-2026.07.30"):
+        self.assertEqual(normalize_version("2026.07.30.1"), "2026.07.30.1")
+        for value in ("2026.7.30", "2026.02.30", "2026.07.30.0", "2026.07.30.01", "release-2026.07.30"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 normalize_version(value)
 
@@ -46,6 +47,18 @@ class BuildIdentityTests(unittest.TestCase):
             self.assertEqual(
                 resolve_runtime_version(Path(temp) / "app", version_path, None),
                 "2026.07.30",
+            )
+        identity.assert_not_called()
+
+    @patch("backend.build_identity.git_build_identity")
+    def test_distribution_marker_accepts_a_same_day_release_sequence(self, identity):
+        with tempfile.TemporaryDirectory() as temp:
+            version_path = Path(temp) / "VERSION"
+            version_path.write_text("2026.07.30.2\n", encoding="utf-8")
+
+            self.assertEqual(
+                resolve_runtime_version(Path(temp) / "app", version_path, None),
+                "2026.07.30.2",
             )
         identity.assert_not_called()
 
