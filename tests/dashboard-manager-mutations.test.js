@@ -270,7 +270,7 @@ test('reports an authoritative reload failure after a successful mutation', asyn
     ]);
 });
 
-test('dashboard usage attaches by opaque ID and inactivity filters include unrecorded dashboards', () => {
+test('dashboard usage attaches by opaque ID and separates positive from absent observations', () => {
     const unsafeId = '90071992547409931234';
     const dashboards = [{ id: unsafeId }, { id: '-3' }, { id: 'unused' }];
     const { context } = loadDashboardManager({}, dashboards);
@@ -294,6 +294,7 @@ test('dashboard usage attaches by opaque ID and inactivity filters include unrec
         dashboardUsageState.status = 'complete';
         dashboardUsageState.lookbackDays = 365;
         dashboardUsageState.coverageFromMs = 1_668_664_000_000;
+        dashboardUsageState.untilMs = 1_700_200_000_000;
         attachDashboardUsage(testDashboards, testUsage);
     `, context);
 
@@ -302,35 +303,41 @@ test('dashboard usage attaches by opaque ID and inactivity filters include unrec
     assert.equal(dashboards[2]._usage, null);
     context.nowMs = 1_700_200_000_000;
     assert.equal(
-        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[0], '30', nowMs)`, context),
-        false
-    );
-    assert.equal(
-        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[1], '30', nowMs)`, context),
+        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[0], 'within', '30', nowMs)`, context),
         true
     );
     assert.equal(
-        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[2], '30', nowMs)`, context),
+        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[1], 'not_within', '30', nowMs)`, context),
         true
+    );
+    assert.equal(
+        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[2], 'not_within', '30', nowMs)`, context),
+        true
+    );
+    assert.equal(
+        vm.runInContext(`dashboardMatchesUsageFilter(testDashboards[2], 'within', '30', nowMs)`, context),
+        false,
+        'absence is not positive evidence of a view'
     );
 });
 
-test('dashboard inactivity filters do not claim results when usage collection is unavailable', () => {
+test('recorded-activity filters do not claim results when usage collection is unavailable', () => {
     const { context } = loadDashboardManager({});
     const matches = vm.runInContext(`
         dashboardUsageState.status = 'unavailable';
-        dashboardMatchesUsageFilter({ id: '1', _usage: null }, '90', 1700000000000);
+        dashboardMatchesUsageFilter({ id: '1', _usage: null }, 'not_within', '90', 1700000000000);
     `, context);
 
     assert.equal(matches, false);
 });
 
-test('dashboard inactivity filters require enough collected history for unrecorded dashboards', () => {
+test('not-recorded filters require enough returned metric history', () => {
     const { context } = loadDashboardManager({});
     const matches = vm.runInContext(`
         dashboardUsageState.status = 'complete';
         dashboardUsageState.coverageFromMs = 1_695_000_000_000;
-        dashboardMatchesUsageFilter({ id: '1', _usage: null }, '90', 1_700_000_000_000);
+        dashboardUsageState.untilMs = 1_700_000_000_000;
+        dashboardMatchesUsageFilter({ id: '1', _usage: null }, 'not_within', '90', 1_700_000_000_000);
     `, context);
 
     assert.equal(matches, false);
@@ -339,12 +346,12 @@ test('dashboard inactivity filters require enough collected history for unrecord
         dashboardMatchesUsageFilter({
             id: '2',
             _usage: { lastViewedBucketEndMs: 1_690_000_000_000 }
-        }, '90', 1_700_000_000_000);
+        }, 'not_within', '90', 1_700_000_000_000);
     `, context);
     assert.equal(recordedMatches, false, 'a recorded view cannot bypass incomplete coverage');
 });
 
-test('dashboard inactivity filtering uses the appliance metric clock', () => {
+test('dashboard activity filtering uses the appliance metric clock', () => {
     const { context } = loadDashboardManager({});
     const matches = vm.runInContext(`
         dashboardUsageState.status = 'complete';
@@ -353,24 +360,22 @@ test('dashboard inactivity filtering uses the appliance metric clock', () => {
         dashboardMatchesUsageFilter({
             id: '1',
             _usage: { lastViewedBucketEndMs: 1_700_086_400_000 }
-        }, '30');
+        }, 'within', '30');
     `, context);
 
-    assert.equal(matches, false);
+    assert.equal(matches, true);
 });
 
-test('dashboard filter summary distinguishes no filters from applied filters', () => {
+test('dashboard filter labels distinguish fields, operators, and operands', () => {
     const { context } = loadDashboardManager({});
-    context.filterDescription = vm.runInContext(
-        `describeDashboardFilters(' EDR ', ' stand@example.com ', '365', 'No view recorded in 365 days')`,
-        context
+    assert.equal(
+        vm.runInContext(`describeDashboardFilter({ field: 'name', operator: 'contains', operand: ' EDR ' })`, context),
+        'Name contains “EDR”'
     );
-
-    assert.deepEqual(plain(context.filterDescription), [
-        'Name contains “EDR”',
-        'Owner contains “stand@example.com”',
-        'No view recorded in 365 days'
-    ]);
+    assert.equal(
+        vm.runInContext(`describeDashboardFilter({ field: 'owner', operator: 'is', operand: 'stand@example.com' })`, context),
+        'Owner is “stand@example.com”'
+    );
     assert.equal(
         vm.runInContext(`dashboardFilterCountText(5475, 5475, 0)`, context),
         'Showing all 5,475 dashboards'
@@ -382,11 +387,6 @@ test('dashboard filter summary distinguishes no filters from applied filters', (
 });
 
 test('dashboard name, owner, and activity filters combine in one result set', () => {
-    const elements = {
-        searchDashboards: { value: 'EDR Agent' },
-        filterOwner: { value: 'stand@example.com' },
-        filterDashboardActivity: { value: '90' }
-    };
     const dashboards = [
         { id: 'match', name: 'EDR Agent Tracking', owner: 'stand@example.com', _usage: null },
         { id: 'owner-miss', name: 'EDR Agent Tracking', owner: 'guyr@example.com', _usage: null },
@@ -398,66 +398,57 @@ test('dashboard name, owner, and activity filters combine in one result set', ()
             _usage: { lastViewedBucketEndMs: 1_699_990_000_000 }
         }
     ];
-    const { context, state } = loadDashboardManager({}, dashboards, elements);
+    const { context, state } = loadDashboardManager({}, dashboards);
 
     vm.runInContext(`
         dashboardUsageState.status = 'complete';
         dashboardUsageState.coverageFromMs = 1_690_000_000_000;
         dashboardUsageState.untilMs = 1_700_000_000_000;
+        dashboardFilterState.filters = [
+            { id: 1, field: 'name', operator: 'contains', operand: 'EDR Agent' },
+            { id: 2, field: 'owner', operator: 'is', operand: 'stand@example.com' },
+            { id: 3, field: 'viewed', operator: 'not_within', operand: '90' }
+        ];
         applyDashboardFilters();
     `, context);
 
     assert.deepEqual(state.filteredDashboards.map(dashboard => dashboard.id), ['match']);
 });
 
-test('dashboard activity filter survives the loading phase of refresh', () => {
-    const elements = {
-        dashboardUsageStatus: { textContent: '' },
-        filterDashboardActivity: { value: '365', disabled: false }
-    };
-    const { context } = loadDashboardManager({}, [], elements);
-
-    vm.runInContext(`dashboardUsageState.status = 'loading'; renderDashboardUsageStatus();`, context);
-
-    assert.equal(elements.filterDashboardActivity.value, '365');
-    assert.equal(elements.filterDashboardActivity.disabled, true);
-});
-
-test('dashboard usage disables lookbacks beyond retained metric coverage', () => {
-    const options = [
-        { value: '', textContent: 'All dashboard activity', disabled: false },
-        { value: '30', textContent: 'No view recorded in 30 days', disabled: false },
-        { value: '90', textContent: 'No view recorded in 90 days', disabled: false },
-        { value: '180', textContent: 'No view recorded in 180 days', disabled: false },
-        { value: '365', textContent: 'No view recorded in 365 days', disabled: false }
-    ];
-    const elements = {
-        dashboardUsageStatus: { textContent: '' },
-        filterDashboardActivity: {
-            value: '365',
-            disabled: false,
-            options
-        }
-    };
-    const { context } = loadDashboardManager({}, [], elements);
+test('dashboard usage lookbacks are derived from actual returned metric depth', () => {
+    const { context } = loadDashboardManager({});
 
     vm.runInContext(`
         dashboardUsageState.status = 'complete';
         dashboardUsageState.coverageFromMs = 1_700_000_000_000 - 89 * DASHBOARD_USAGE_DAY_MS;
         dashboardUsageState.untilMs = 1_700_000_000_000;
-        dashboardUsageState.notice = 'Retained coverage is shorter than requested.';
-        renderDashboardUsageStatus();
     `, context);
 
-    assert.equal(elements.filterDashboardActivity.disabled, false);
-    assert.equal(elements.filterDashboardActivity.value, '');
-    assert.equal(options[1].disabled, false);
-    assert.equal(options[2].disabled, true);
-    assert.equal(options[3].disabled, true);
-    assert.equal(options[4].disabled, true);
-    assert.match(options[2].textContent, /unavailable/);
+    assert.deepEqual(plain(vm.runInContext(`dashboardUsageLookbackOptions()`, context)), [7, 14, 30, 60, 89]);
+    assert.equal(
+        vm.runInContext(`dashboardUsageHistoryPlaceholder()`, context),
+        'Usage metrics exist for the last 89 complete days'
+    );
     assert.equal(
         vm.runInContext(`formatDashboardLastViewed({ id: '1', _usage: null })`, context),
-        'No recorded views (89d retained)'
+        'No recorded activity (89d of usage history)'
     );
+});
+
+test('stacked filters reject duplicates and usage lookbacks outside observed history', () => {
+    const { context } = loadDashboardManager({});
+    const results = vm.runInContext(`
+        dashboardUsageState.status = 'complete';
+        dashboardUsageState.coverageFromMs = 1_700_000_000_000 - 30 * DASHBOARD_USAGE_DAY_MS;
+        dashboardUsageState.untilMs = 1_700_000_000_000;
+        [
+            addDashboardFilter({ field: 'name', operator: 'contains', operand: 'DNS' }),
+            addDashboardFilter({ field: 'name', operator: 'contains', operand: 'dns' }),
+            addDashboardFilter({ field: 'viewed', operator: 'not_within', operand: '90' }),
+            addDashboardFilter({ field: 'viewed', operator: 'within', operand: '30' }),
+            dashboardFilterState.filters.length
+        ];
+    `, context);
+
+    assert.deepEqual(plain(results), [true, false, false, true, 2]);
 });

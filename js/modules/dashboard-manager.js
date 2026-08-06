@@ -1,8 +1,35 @@
 // Dashboard Manager Module
 
 const DASHBOARD_USAGE_LOOKBACK_DAYS = 365;
-const DASHBOARD_USAGE_FILTER_DAYS = new Set(['30', '90', '180', '365']);
 const DASHBOARD_USAGE_DAY_MS = 24 * 60 * 60 * 1000;
+const DASHBOARD_USAGE_FILTER_PRESETS = [7, 14, 30, 60, 90, 180, 365];
+const MAX_DASHBOARD_FILTERS = 20;
+
+const DASHBOARD_FILTER_DEFINITIONS = {
+    name: {
+        label: 'Name',
+        operators: [
+            { value: 'contains', label: 'contains (≈)', chipLabel: 'contains' },
+            { value: 'not_contains', label: 'does not contain (≉)', chipLabel: 'does not contain' },
+            { value: 'is', label: 'is (=)', chipLabel: 'is' },
+            { value: 'is_not', label: 'is not (≠)', chipLabel: 'is not' }
+        ]
+    },
+    owner: {
+        label: 'Owner',
+        operators: [
+            { value: 'is', label: 'is (=)', chipLabel: 'is' },
+            { value: 'is_not', label: 'is not (≠)', chipLabel: 'is not' }
+        ]
+    },
+    viewed: {
+        label: 'Last recorded activity',
+        operators: [
+            { value: 'within', label: 'recorded within', chipLabel: 'recorded within' },
+            { value: 'not_within', label: 'not recorded within', chipLabel: 'not recorded within' }
+        ]
+    }
+};
 
 const dashboardUsageState = {
     status: 'not_loaded',
@@ -13,6 +40,11 @@ const dashboardUsageState = {
     cycle: 'auto',
     notice: '',
     error: ''
+};
+
+const dashboardFilterState = {
+    filters: [],
+    nextId: 1
 };
 
 const dashboardMutationState = {
@@ -61,34 +93,32 @@ function attachDashboardUsage(dashboards, usage) {
     });
 }
 
-function dashboardMatchesUsageFilter(
-    dashboard,
-    filterValue,
-    nowMs = dashboardUsageState.untilMs || Date.now()
-) {
-    const normalized = String(filterValue || '');
-    if (!normalized) return true;
-    if (!DASHBOARD_USAGE_FILTER_DAYS.has(normalized)) return true;
-    if (!dashboardUsageCoversFilter(normalized, nowMs)) return false;
-
-    const days = Number(normalized);
-    const cutoff = nowMs - days * DASHBOARD_USAGE_DAY_MS;
-    const lastBucketEnd = dashboardFiniteTimestamp(dashboard?._usage?.lastViewedBucketEndMs);
-    return lastBucketEnd === null || lastBucketEnd <= cutoff;
-}
-
-function dashboardUsageCoversFilter(
-    filterValue,
-    nowMs = dashboardUsageState.untilMs || Date.now()
-) {
-    const normalized = String(filterValue || '');
-    if (!DASHBOARD_USAGE_FILTER_DAYS.has(normalized)) return false;
+function dashboardUsageCoversDays(days, nowMs = dashboardUsageState.untilMs || Date.now()) {
+    const normalizedDays = Number(days);
+    if (!Number.isInteger(normalizedDays) || normalizedDays < 1) return false;
     if (dashboardUsageState.status !== 'complete') return false;
 
     const coverageFrom = dashboardFiniteTimestamp(dashboardUsageState.coverageFromMs);
     if (coverageFrom === null) return false;
-    const cutoff = nowMs - Number(normalized) * DASHBOARD_USAGE_DAY_MS;
+    const cutoff = nowMs - normalizedDays * DASHBOARD_USAGE_DAY_MS;
     return coverageFrom <= cutoff;
+}
+
+function dashboardMatchesUsageFilter(
+    dashboard,
+    operator,
+    days,
+    nowMs = dashboardUsageState.untilMs || Date.now()
+) {
+    if (!['within', 'not_within'].includes(String(operator || ''))) return false;
+    if (!dashboardUsageCoversDays(days, nowMs)) return false;
+
+    const cutoff = nowMs - Number(days) * DASHBOARD_USAGE_DAY_MS;
+    const lastBucketEnd = dashboardFiniteTimestamp(dashboard?._usage?.lastViewedBucketEndMs);
+    if (operator === 'within') {
+        return lastBucketEnd !== null && lastBucketEnd > cutoff;
+    }
+    return lastBucketEnd === null || lastBucketEnd <= cutoff;
 }
 
 function dashboardUsageRetainedDays() {
@@ -100,53 +130,124 @@ function dashboardUsageRetainedDays() {
 
 function dashboardUsageCoverageLabel() {
     const retainedDays = dashboardUsageRetainedDays();
-    return retainedDays === null ? 'retained coverage' : `${retainedDays}d retained`;
+    return retainedDays === null ? 'available usage history' : `${retainedDays}d of usage history`;
+}
+
+function dashboardUsageLookbackOptions() {
+    const retainedDays = dashboardUsageRetainedDays();
+    if (retainedDays === null || retainedDays < 1) return [];
+    const choices = DASHBOARD_USAGE_FILTER_PRESETS.filter(days => days <= retainedDays);
+    choices.push(retainedDays);
+    return Array.from(new Set(choices)).sort((left, right) => left - right);
+}
+
+function dashboardUsageHistoryPlaceholder() {
+    if (dashboardUsageState.status === 'loading') return 'Loading usage metric history…';
+    if (dashboardUsageState.status !== 'complete') return 'Usage metric history unavailable';
+    const retainedDays = dashboardUsageRetainedDays();
+    if (retainedDays === null) return 'Usage metric history unavailable';
+    if (retainedDays < 1) return 'Less than one complete day of usage metrics exists';
+    return `Usage metrics exist for the last ${retainedDays} complete day${retainedDays === 1 ? '' : 's'}`;
 }
 
 function formatDashboardLastViewed(dashboard) {
     if (dashboardUsageState.status !== 'complete') return 'Unavailable';
     const bucketStart = dashboardFiniteTimestamp(dashboard?._usage?.lastViewedBucketStartMs);
-    if (bucketStart === null) return `No recorded views (${dashboardUsageCoverageLabel()})`;
+    if (bucketStart === null && dashboardUsageRetainedDays() === null) return 'Usage history unavailable';
+    if (bucketStart === null) return `No recorded activity (${dashboardUsageCoverageLabel()})`;
     return new Date(bucketStart).toLocaleString();
 }
 
-function updateDashboardUsageFilterOptions(filter) {
-    let supportedOptions = 0;
-    Array.from(filter?.options || []).forEach(option => {
-        const value = String(option.value || '');
-        if (!DASHBOARD_USAGE_FILTER_DAYS.has(value)) return;
-        const baseLabel = `No view recorded in ${value} days`;
-        const supported = dashboardUsageCoversFilter(value);
-        option.disabled = !supported;
-        option.textContent = supported ? baseLabel : `${baseLabel} — unavailable`;
-        if (supported) supportedOptions++;
-    });
-
-    const selected = Array.from(filter?.options || [])
-        .find(option => String(option.value || '') === String(filter?.value || ''));
-    if (selected?.disabled) filter.value = '';
-    return supportedOptions;
+function dashboardOwnerValue(dashboard) {
+    return String(dashboard?.owner || 'System');
 }
 
-function describeDashboardFilters(searchValue, ownerValue, usageValue, usageLabel = '') {
-    const filters = [];
-    const search = String(searchValue || '').trim();
-    const owner = String(ownerValue || '').trim();
-    const usage = String(usageValue || '');
-    if (search) filters.push(`Name contains “${search}”`);
-    if (owner) filters.push(`Owner contains “${owner}”`);
-    if (DASHBOARD_USAGE_FILTER_DAYS.has(usage)) {
-        filters.push(usageLabel || `No view recorded in ${usage} days`);
+function normalizeDashboardFilter(filter) {
+    const field = String(filter?.field || '');
+    const definition = DASHBOARD_FILTER_DEFINITIONS[field];
+    if (!definition) return null;
+    const operator = String(filter?.operator || '');
+    if (!definition.operators.some(candidate => candidate.value === operator)) return null;
+    const operand = String(filter?.operand ?? '').trim();
+    if (!operand) return null;
+    if (field === 'viewed') {
+        const days = Number(operand);
+        if (!Number.isInteger(days) || days < 1 || days > DASHBOARD_USAGE_LOOKBACK_DAYS) return null;
+        return { field, operator, operand: String(days) };
     }
-    return filters;
+    return { field, operator, operand };
 }
 
-function getDashboardFilterDescription() {
-    const search = document.getElementById('searchDashboards');
-    const owner = document.getElementById('filterOwner');
-    const usage = document.getElementById('filterDashboardActivity');
-    const usageLabel = usage?.options?.[usage.selectedIndex]?.textContent || '';
-    return describeDashboardFilters(search?.value, owner?.value, usage?.value, usageLabel);
+function dashboardFilterMatches(dashboard, filter) {
+    const normalized = normalizeDashboardFilter(filter);
+    if (!normalized) return true;
+    if (normalized.field === 'viewed') {
+        return dashboardMatchesUsageFilter(
+            dashboard,
+            normalized.operator,
+            normalized.operand
+        );
+    }
+
+    const actual = normalized.field === 'owner'
+        ? dashboardOwnerValue(dashboard)
+        : String(dashboard?.name || '');
+    const actualFolded = actual.toLocaleLowerCase();
+    const operandFolded = normalized.operand.toLocaleLowerCase();
+    if (normalized.operator === 'contains') return actualFolded.includes(operandFolded);
+    if (normalized.operator === 'not_contains') return !actualFolded.includes(operandFolded);
+    if (normalized.operator === 'is') return actualFolded === operandFolded;
+    if (normalized.operator === 'is_not') return actualFolded !== operandFolded;
+    return false;
+}
+
+function describeDashboardFilter(filter) {
+    const normalized = normalizeDashboardFilter(filter);
+    if (!normalized) return '';
+    const definition = DASHBOARD_FILTER_DEFINITIONS[normalized.field];
+    const operator = definition.operators.find(candidate => candidate.value === normalized.operator);
+    if (normalized.field === 'viewed') {
+        const suffix = dashboardUsageCoversDays(normalized.operand) ? '' : ' — history unavailable';
+        return `${definition.label} ${operator.chipLabel} ${normalized.operand}d${suffix}`;
+    }
+    return `${definition.label} ${operator.chipLabel} “${normalized.operand}”`;
+}
+
+function dashboardFilterValidation(filter) {
+    const normalized = normalizeDashboardFilter(filter);
+    if (!normalized) return { valid: false, reason: 'Choose a field, operator, and value.' };
+    if (normalized.field === 'viewed' && !dashboardUsageCoversDays(normalized.operand)) {
+        return { valid: false, reason: 'That lookback is outside the returned usage metric history.' };
+    }
+    if (dashboardFilterState.filters.length >= MAX_DASHBOARD_FILTERS) {
+        return { valid: false, reason: `Up to ${MAX_DASHBOARD_FILTERS} filters can be applied.` };
+    }
+    const duplicate = dashboardFilterState.filters.some(existing => {
+        const current = normalizeDashboardFilter(existing);
+        return current
+            && current.field === normalized.field
+            && current.operator === normalized.operator
+            && current.operand.toLocaleLowerCase() === normalized.operand.toLocaleLowerCase();
+    });
+    if (duplicate) return { valid: false, reason: 'That filter is already applied.' };
+    return { valid: true, filter: normalized, reason: '' };
+}
+
+function addDashboardFilter(filter) {
+    const validation = dashboardFilterValidation(filter);
+    if (!validation.valid) return false;
+    dashboardFilterState.filters.push({
+        id: dashboardFilterState.nextId++,
+        ...validation.filter
+    });
+    return true;
+}
+
+function removeDashboardFilter(filterId) {
+    const index = dashboardFilterState.filters.findIndex(filter => String(filter.id) === String(filterId));
+    if (index < 0) return false;
+    dashboardFilterState.filters.splice(index, 1);
+    return true;
 }
 
 function dashboardFilterCountText(matchedCount, totalCount, appliedFilterCount) {
@@ -158,44 +259,194 @@ function dashboardFilterCountText(matchedCount, totalCount, appliedFilterCount) 
     return `${matchedLabel} of ${totalLabel} dashboard${totalCount === 1 ? '' : 's'} match ${appliedFilterCount} applied filter${appliedFilterCount === 1 ? '' : 's'}`;
 }
 
-function renderDashboardAppliedFilters(filters = getDashboardFilterDescription()) {
+function renderDashboardAppliedFilters(filters = dashboardFilterState.filters) {
     const summary = document.getElementById('dashboardAppliedFilters');
     const chips = document.getElementById('dashboardAppliedFilterChips');
     if (!summary || !chips) return;
     chips.replaceChildren();
-    filters.forEach(label => {
+    filters.forEach(filter => {
+        const label = describeDashboardFilter(filter);
+        if (!label) return;
         const chip = document.createElement('span');
-        chip.className = 'badge';
-        chip.textContent = label;
+        chip.className = 'badge filter-chip';
+        const text = document.createElement('span');
+        text.textContent = label;
+        chip.appendChild(text);
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'filter-chip-remove';
+        remove.textContent = '×';
+        remove.setAttribute('aria-label', `Remove filter: ${label}`);
+        remove.addEventListener('click', () => {
+            if (!removeDashboardFilter(filter.id)) return;
+            applyDashboardFilters();
+            renderDashboards();
+            syncDashboardFilterApplyButton();
+        });
+        chip.appendChild(remove);
         chips.appendChild(chip);
     });
     summary.hidden = filters.length === 0;
 }
 
-function renderDashboardUsageStatus() {
-    const status = document.getElementById('dashboardUsageStatus');
-    const filter = document.getElementById('filterDashboardActivity');
-    if (!status || !filter) return;
-
+function dashboardUsageStatusText() {
     if (dashboardUsageState.status === 'complete') {
-        status.textContent = dashboardUsageState.notice
-            || `Last viewed is derived from retained ${dashboardUsageState.cycle} dashboard-view metrics.`;
-        filter.disabled = updateDashboardUsageFilterOptions(filter) === 0;
-        window.refreshCustomSelect?.(filter);
-        return;
+        return dashboardUsageState.notice
+            || `Recorded activity is derived from ${dashboardUsageState.cycle} System User Interface Top-N metric buckets over ${dashboardUsageCoverageLabel()}. No record is not proof of non-use.`;
     }
     if (dashboardUsageState.status === 'loading') {
-        status.textContent = 'Loading dashboard usage metrics…';
-    } else if (dashboardUsageState.status === 'unavailable') {
-        status.textContent = `Dashboard usage is unavailable: ${dashboardUsageState.error}`;
-    } else {
-        status.textContent = '';
+        return 'Loading dashboard usage metrics…';
     }
-    if (dashboardUsageState.status !== 'loading') {
-        filter.value = '';
+    if (dashboardUsageState.status === 'unavailable') {
+        return `Dashboard usage is unavailable: ${dashboardUsageState.error}`;
     }
-    filter.disabled = true;
-    window.refreshCustomSelect?.(filter);
+    return '';
+}
+
+function renderDashboardUsageStatus() {
+    const status = document.getElementById('dashboardUsageStatus');
+    if (status) status.textContent = dashboardUsageStatusText();
+    updateDashboardFilterBuilder({ preserveOperator: true, preserveOperand: true });
+}
+
+function setDashboardSelectOptions(select, options, desiredValue = '') {
+    if (!select) return;
+    select.replaceChildren();
+    options.forEach(item => {
+        const option = document.createElement('option');
+        option.value = String(item.value ?? '');
+        option.textContent = String(item.label || '');
+        option.disabled = Boolean(item.disabled);
+        select.appendChild(option);
+    });
+    const desired = String(desiredValue || '');
+    const desiredOption = Array.from(select.options).find(option => option.value === desired && !option.disabled);
+    select.value = desiredOption ? desired : '';
+    window.refreshCustomSelect?.(select);
+}
+
+function dashboardOwnerFilterOptions() {
+    const owners = new Set((state.dashboards || []).map(dashboardOwnerValue));
+    return Array.from(owners).sort((left, right) => left.localeCompare(right, undefined, {
+        sensitivity: 'base'
+    }));
+}
+
+function updateDashboardFilterBuilder({ preserveOperator = true, preserveOperand = true } = {}) {
+    const fieldSelect = document.getElementById('dashboardFilterField');
+    const operatorSelect = document.getElementById('dashboardFilterOperator');
+    if (!fieldSelect || !operatorSelect) return;
+
+    const field = DASHBOARD_FILTER_DEFINITIONS[fieldSelect.value] ? fieldSelect.value : 'name';
+    fieldSelect.value = field;
+    const definition = DASHBOARD_FILTER_DEFINITIONS[field];
+    const desiredOperator = preserveOperator ? operatorSelect.value : '';
+    setDashboardSelectOptions(
+        operatorSelect,
+        definition.operators.map(operator => ({ value: operator.value, label: operator.label })),
+        definition.operators.some(operator => operator.value === desiredOperator)
+            ? desiredOperator
+            : definition.operators[0].value
+    );
+
+    const textWrap = document.getElementById('dashboardFilterTextOperandWrap');
+    const ownerWrap = document.getElementById('dashboardFilterOwnerOperandWrap');
+    const viewedWrap = document.getElementById('dashboardFilterViewedOperandWrap');
+    if (textWrap) textWrap.hidden = field !== 'name';
+    if (ownerWrap) ownerWrap.hidden = field !== 'owner';
+    if (viewedWrap) viewedWrap.hidden = field !== 'viewed';
+
+    if (field === 'owner') {
+        const ownerSelect = document.getElementById('dashboardFilterOwnerOperand');
+        const desiredOwner = preserveOperand ? ownerSelect?.value : '';
+        const owners = dashboardOwnerFilterOptions();
+        setDashboardSelectOptions(ownerSelect, [
+            {
+                value: '',
+                label: owners.length ? 'Select an owner…' : 'Load dashboards to list owners',
+                disabled: true
+            },
+            ...owners.map(owner => ({ value: owner, label: owner }))
+        ], desiredOwner);
+        if (ownerSelect) ownerSelect.disabled = owners.length === 0;
+        ownerWrap?.classList.toggle('is-placeholder', !ownerSelect?.value);
+        window.refreshCustomSelect?.(ownerSelect);
+    } else if (field === 'viewed') {
+        const viewedSelect = document.getElementById('dashboardFilterViewedOperand');
+        const desiredLookback = preserveOperand ? viewedSelect?.value : '';
+        const lookbacks = dashboardUsageLookbackOptions();
+        setDashboardSelectOptions(viewedSelect, [
+            { value: '', label: dashboardUsageHistoryPlaceholder(), disabled: true },
+            ...lookbacks.map(days => ({ value: String(days), label: `${days} days` }))
+        ], desiredLookback);
+        if (viewedSelect) viewedSelect.disabled = lookbacks.length === 0;
+        viewedWrap?.classList.toggle('is-placeholder', !viewedSelect?.value);
+        window.refreshCustomSelect?.(viewedSelect);
+    }
+
+    syncDashboardFilterApplyButton();
+}
+
+function readDashboardFilterBuilder() {
+    const field = document.getElementById('dashboardFilterField')?.value || '';
+    const operator = document.getElementById('dashboardFilterOperator')?.value || '';
+    let operand = '';
+    if (field === 'name') operand = document.getElementById('dashboardFilterTextOperand')?.value || '';
+    if (field === 'owner') operand = document.getElementById('dashboardFilterOwnerOperand')?.value || '';
+    if (field === 'viewed') operand = document.getElementById('dashboardFilterViewedOperand')?.value || '';
+    return { field, operator, operand };
+}
+
+function syncDashboardFilterApplyButton() {
+    const button = document.getElementById('addDashboardFilterBtn');
+    if (!button) return;
+    const validation = dashboardFilterValidation(readDashboardFilterBuilder());
+    button.disabled = !validation.valid;
+    button.title = validation.reason;
+
+    const ownerSelect = document.getElementById('dashboardFilterOwnerOperand');
+    const viewedSelect = document.getElementById('dashboardFilterViewedOperand');
+    document.getElementById('dashboardFilterOwnerOperandWrap')
+        ?.classList.toggle('is-placeholder', !ownerSelect?.value);
+    document.getElementById('dashboardFilterViewedOperandWrap')
+        ?.classList.toggle('is-placeholder', !viewedSelect?.value);
+}
+
+function resetDashboardFilterOperand() {
+    const field = document.getElementById('dashboardFilterField')?.value;
+    if (field === 'name') {
+        const input = document.getElementById('dashboardFilterTextOperand');
+        if (input) input.value = '';
+    }
+    if (field === 'owner') {
+        const select = document.getElementById('dashboardFilterOwnerOperand');
+        if (select) select.value = '';
+        window.refreshCustomSelect?.(select);
+    }
+    if (field === 'viewed') {
+        const select = document.getElementById('dashboardFilterViewedOperand');
+        if (select) select.value = '';
+        window.refreshCustomSelect?.(select);
+    }
+    syncDashboardFilterApplyButton();
+}
+
+function addDashboardFilterFromBuilder() {
+    if (!addDashboardFilter(readDashboardFilterBuilder())) {
+        syncDashboardFilterApplyButton();
+        return false;
+    }
+    resetDashboardFilterOperand();
+    applyDashboardFilters();
+    renderDashboards();
+    return true;
+}
+
+function clearDashboardFilters() {
+    dashboardFilterState.filters.length = 0;
+    applyDashboardFilters();
+    renderDashboards();
+    syncDashboardFilterApplyButton();
 }
 
 async function loadDashboardUsage(dashboards) {
@@ -345,6 +596,7 @@ async function loadDashboards() {
 
         // Populate user dropdowns
         populateDashboardUserDropdowns();
+        updateDashboardFilterBuilder({ preserveOperator: true, preserveOperand: true });
 
         // Initial render
         applyDashboardFilters();
@@ -360,7 +612,7 @@ async function loadDashboards() {
         loadingDiv.style.display = 'none';
         return false;
     } finally {
-        loadBtn.textContent = 'Refresh';
+        loadBtn.textContent = 'Refresh dashboards';
         loadBtn.disabled = false;
     }
 }
@@ -559,16 +811,9 @@ function populateDashboardUserDropdowns() {
 }
 
 function applyDashboardFilters() {
-    const searchTerm = document.getElementById('searchDashboards').value.toLowerCase();
-    const ownerFilter = document.getElementById('filterOwner').value.toLowerCase();
-    const usageFilter = document.getElementById('filterDashboardActivity').value;
-
-    state.filteredDashboards = state.dashboards.filter(dashboard => {
-        const nameMatch = !searchTerm || dashboard.name.toLowerCase().includes(searchTerm);
-        const ownerMatch = !ownerFilter || (dashboard.owner && dashboard.owner.toLowerCase().includes(ownerFilter));
-        const usageMatch = dashboardMatchesUsageFilter(dashboard, usageFilter);
-        return nameMatch && ownerMatch && usageMatch;
-    });
+    state.filteredDashboards = state.dashboards.filter(dashboard => (
+        dashboardFilterState.filters.every(filter => dashboardFilterMatches(dashboard, filter))
+    ));
 
     state.currentPage = 1;
 }
@@ -725,7 +970,7 @@ function renderDashboards() {
             }
             if (dashboard._usage) {
                 metaItems.push(detailItem(
-                    `Views in ${dashboardUsageCoverageLabel()}`,
+                    `Recorded views (${dashboardUsageCoverageLabel()}; lower bound)`,
                     Number(dashboard._usage.viewsInWindow || 0).toLocaleString()
                 ));
             }
@@ -763,12 +1008,11 @@ function updateDashboardPagination() {
     const prevBtn = document.getElementById('prevPageBtn');
     const nextBtn = document.getElementById('nextPageBtn');
     const filterCount = document.getElementById('dashboardFilterCount');
-    const appliedFilters = getDashboardFilterDescription();
-    renderDashboardAppliedFilters(appliedFilters);
+    renderDashboardAppliedFilters();
     filterCount.textContent = dashboardFilterCountText(
         state.filteredDashboards.length,
         state.dashboards.length,
-        appliedFilters.length
+        dashboardFilterState.filters.length
     );
 
     if (state.filteredDashboards.length === 0) {
@@ -946,6 +1190,7 @@ async function activateDashboardsModule() {
 
     // If we already have dashboards loaded, just ensure filters and table are in sync
     if (state.dashboards && state.dashboards.length > 0) {
+        updateDashboardFilterBuilder({ preserveOperator: true, preserveOperand: true });
         applyDashboardFilters();
         renderDashboards();
         document.getElementById('dashboardsTableContainer').style.display = 'block';
@@ -966,30 +1211,20 @@ function initDashboardsModule() {
         document.getElementById('loadDashboardsBtn').addEventListener('click', loadDashboards);
         document.getElementById('loadDashboardsBtn').setAttribute('data-listener-added', 'true');
         
-        document.getElementById('searchDashboards').addEventListener('input', () => {
-            applyDashboardFilters();
-            renderDashboards();
+        document.getElementById('dashboardFilterField').addEventListener('change', () => {
+            updateDashboardFilterBuilder({ preserveOperator: false, preserveOperand: false });
         });
-        
-        document.getElementById('filterOwner').addEventListener('input', () => {
-            applyDashboardFilters();
-            renderDashboards();
+        document.getElementById('dashboardFilterOperator').addEventListener('change', syncDashboardFilterApplyButton);
+        document.getElementById('dashboardFilterTextOperand').addEventListener('input', syncDashboardFilterApplyButton);
+        document.getElementById('dashboardFilterTextOperand').addEventListener('keydown', event => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            addDashboardFilterFromBuilder();
         });
-
-        document.getElementById('filterDashboardActivity').addEventListener('change', () => {
-            applyDashboardFilters();
-            renderDashboards();
-        });
-
-        document.getElementById('clearDashboardFiltersBtn').addEventListener('click', () => {
-            document.getElementById('searchDashboards').value = '';
-            document.getElementById('filterOwner').value = '';
-            const activityFilter = document.getElementById('filterDashboardActivity');
-            activityFilter.value = '';
-            window.refreshCustomSelect?.(activityFilter);
-            applyDashboardFilters();
-            renderDashboards();
-        });
+        document.getElementById('dashboardFilterOwnerOperand').addEventListener('change', syncDashboardFilterApplyButton);
+        document.getElementById('dashboardFilterViewedOperand').addEventListener('change', syncDashboardFilterApplyButton);
+        document.getElementById('addDashboardFilterBtn').addEventListener('click', addDashboardFilterFromBuilder);
+        document.getElementById('clearDashboardFiltersBtn').addEventListener('click', clearDashboardFilters);
 
         document.getElementById('selectAll').addEventListener('change', (e) => {
             getCurrentPageDashboards().forEach(dashboard => {
@@ -1079,6 +1314,7 @@ function initDashboardsModule() {
         document.getElementById('cancelDelete').addEventListener('click', () => hideModal('deleteConfirmModal'));
         document.getElementById('confirmDelete').addEventListener('click', confirmDashboardDelete);
     }
+    updateDashboardFilterBuilder({ preserveOperator: true, preserveOperand: true });
 }
 
 if (typeof featureRegistry !== 'undefined') {

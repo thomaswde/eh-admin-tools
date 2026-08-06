@@ -13,7 +13,7 @@ from backend.extrahop_client import ExtraHopClient
 
 DASHBOARD_VIEW_METRIC = "_bi_dashboard_views_id"
 DASHBOARD_VIEW_CATEGORY = "ui"
-DASHBOARD_VIEW_CYCLE = "24hr"
+DASHBOARD_VIEW_CYCLE = "auto"
 DAY_MS = 24 * 60 * 60 * 1000
 MAX_LOOKBACK_DAYS = 365
 MAX_BUCKET_ROWS = MAX_LOOKBACK_DAYS * 24 + 2
@@ -282,15 +282,15 @@ async def collect_dashboard_usage(
     )
     if coverage_days is None:
         coverage_notice = (
-            "Retained dashboard-view metric coverage could not be established, "
-            "so inactivity filters are unavailable."
+            "Dashboard-view metric history could not be established, "
+            "so recorded-activity filters are unavailable."
         )
     elif coverage_from_ms <= requested_from_ms:
-        coverage_notice = f"Retained coverage spans the requested {days} days."
+        coverage_notice = f"Returned metric history spans the requested {days} days."
     else:
         coverage_notice = (
-            f"Retained coverage spans {coverage_days} complete days of the requested {days}; "
-            "longer inactivity filters are disabled."
+            f"Returned metric history spans {coverage_days} complete days of the requested {days}; "
+            "longer lookbacks are not offered."
         )
     return {
         "status": "complete",
@@ -307,8 +307,10 @@ async def collect_dashboard_usage(
         "metric": DASHBOARD_VIEW_METRIC,
         "lastViewedByDashboardId": by_id,
         "notice": (
-            f"Dashboard views are derived from appliance-relative {cycle} metric buckets. "
+            "Dashboard activity is observed from the System User Interface dashboard-view "
+            f"Top-N metric using appliance-selected {cycle} buckets. "
             f"{coverage_notice} "
-            "No recorded view does not prove that a dashboard has never been viewed."
+            "Each bucket can retain up to 1,000 dashboard IDs; a recorded value is evidence "
+            "of use, but no record is not proof of non-use."
         ),
     }

@@ -368,31 +368,45 @@
 
         <!-- ---------------------- Dashboard Manager ---------------------- -->
         <div id="dashboardsModule" class="module-content page" style="display: none;">
-            <div class="page-head">
-                <h1 class="page-title">Dashboard Manager</h1>
-                <p class="page-desc">Manage dashboard ownership, sharing, and deletion at scale.</p>
+            <div class="page-head dashboard-page-head">
+                <div>
+                    <h1 class="page-title">Dashboard Manager</h1>
+                    <p class="page-desc">Manage dashboard ownership, sharing, and deletion at scale.</p>
+                </div>
+                <button type="button" id="loadDashboardsBtn" class="btn">Load dashboards</button>
             </div>
 
-            <div class="toolbar">
-                <div class="search-wrap">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                        <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>
-                    </svg>
-                    <input type="search" id="searchDashboards" placeholder="Search dashboards…">
+            <div class="dashboard-filter-panel">
+                <div class="dashboard-filter-builder" role="group" aria-label="Add a dashboard filter">
+                    <select id="dashboardFilterField" aria-label="Filter field">
+                        <option value="name">Name</option>
+                        <option value="owner">Owner</option>
+                        <option value="viewed">Last recorded activity</option>
+                    </select>
+                    <select id="dashboardFilterOperator" aria-label="Filter operator">
+                        <option value="contains">contains</option>
+                        <option value="not_contains">does not contain</option>
+                        <option value="is">is</option>
+                        <option value="is_not">is not</option>
+                    </select>
+                    <div id="dashboardFilterTextOperandWrap" class="dashboard-filter-operand">
+                        <input type="text" id="dashboardFilterTextOperand" maxlength="200" placeholder="Enter a dashboard name…" aria-label="Filter value">
+                    </div>
+                    <div id="dashboardFilterOwnerOperandWrap" class="dashboard-filter-operand is-placeholder" hidden>
+                        <select id="dashboardFilterOwnerOperand" aria-label="Filter owner">
+                            <option value="" disabled selected>Load dashboards to list owners</option>
+                        </select>
+                    </div>
+                    <div id="dashboardFilterViewedOperandWrap" class="dashboard-filter-operand is-placeholder" hidden>
+                        <select id="dashboardFilterViewedOperand" aria-label="Recorded activity lookback">
+                            <option value="" disabled selected>Load dashboards to inspect usage history</option>
+                        </select>
+                    </div>
+                    <button type="button" id="addDashboardFilterBtn" class="btn-primary" disabled>Apply filter</button>
                 </div>
-                <div class="grow"><input type="text" id="filterOwner" placeholder="Filter by owner…"></div>
-                <select id="filterDashboardActivity" style="width: 220px;" disabled>
-                    <option value="">All dashboard activity</option>
-                    <option value="30">No view recorded in 30 days</option>
-                    <option value="90">No view recorded in 90 days</option>
-                    <option value="180">No view recorded in 180 days</option>
-                    <option value="365">No view recorded in 365 days</option>
-                </select>
-                <button type="button" id="loadDashboardsBtn" class="btn-primary">Load dashboards</button>
-                <div class="spacer"></div>
                 <span id="dashboardFilterCount" class="small muted"></span>
             </div>
-            <p id="dashboardUsageStatus" class="small muted" style="margin: -8px 0 8px;"></p>
+            <p id="dashboardUsageStatus" class="small muted dashboard-usage-status" role="status" aria-live="polite"></p>
             <div id="dashboardAppliedFilters" class="applied-filters row-tight" style="margin: 0 0 14px;" hidden>
                 <span class="small muted">Applied filters:</span>
                 <div id="dashboardAppliedFilterChips" class="row-tight"></div>
@@ -424,7 +438,12 @@
                             <th class="col-check"><input type="checkbox" id="selectAll" aria-label="Select all on this page"></th>
                             <th>Dashboard name</th>
                             <th style="width: 180px;">Owner</th>
-                            <th style="width: 220px;">Last viewed</th>
+                            <th style="width: 260px;">
+                                <span class="dashboard-activity-heading">
+                                    Last recorded activity
+                                    <span class="info-tooltip tooltip-below" tabindex="0" aria-label="Derived from the System User Interface dashboard-view Top-N metric. A recorded value is evidence of use. No record is not proof that the dashboard was unused, and metric retention varies by deployment.">?</span>
+                                </span>
+                            </th>
                             <th style="width: 200px;" class="actions">Actions</th>
                         </tr>
                     </thead>
