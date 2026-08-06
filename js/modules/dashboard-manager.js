@@ -36,6 +36,8 @@ const DASHBOARD_FILTER_DEFINITIONS = {
 
 const dashboardUsageState = {
     status: 'not_loaded',
+    supported: true,
+    capabilityReason: '',
     requestedFromMs: null,
     coverageFromMs: null,
     untilMs: null,
@@ -374,6 +376,9 @@ function renderDashboardAppliedFilters(filters = dashboardFilterState.filters) {
 }
 
 function dashboardUsageStatusText() {
+    if (!dashboardUsageState.supported) {
+        return dashboardUsageState.capabilityReason;
+    }
     if (dashboardUsageState.status === 'complete') {
         return '';
     }
@@ -423,7 +428,16 @@ function updateDashboardFilterBuilder({ preserveOperator = true, preserveOperand
     const operatorSelect = document.getElementById('dashboardFilterOperator');
     if (!fieldSelect || !operatorSelect) return;
 
-    const field = DASHBOARD_FILTER_DEFINITIONS[fieldSelect.value] ? fieldSelect.value : 'name';
+    const viewedOption = Array.from(fieldSelect.options || [])
+        .find(option => option.value === 'viewed');
+    if (viewedOption) {
+        viewedOption.disabled = !dashboardUsageState.supported;
+        viewedOption.title = dashboardUsageState.supported ? '' : dashboardUsageState.capabilityReason;
+    }
+    const requestedField = DASHBOARD_FILTER_DEFINITIONS[fieldSelect.value] ? fieldSelect.value : 'name';
+    const field = requestedField === 'viewed' && !dashboardUsageState.supported
+        ? 'name'
+        : requestedField;
     fieldSelect.value = field;
     const definition = DASHBOARD_FILTER_DEFINITIONS[field];
     const desiredOperator = preserveOperator ? operatorSelect.value : '';
@@ -565,6 +579,57 @@ async function loadDashboardUsage(dashboards) {
     renderDashboardUsageStatus();
 }
 
+function setDashboardUsageCapability(capability) {
+    dashboardUsageState.supported = Boolean(capability?.supported);
+    dashboardUsageState.capabilityReason = String(capability?.reason || '');
+    document.querySelectorAll?.('.dashboard-usage-column').forEach(element => {
+        element.hidden = !dashboardUsageState.supported;
+    });
+    if (!dashboardUsageState.supported) {
+        dashboardUsageState.status = 'unavailable';
+        dashboardUsageState.requestedFromMs = null;
+        dashboardUsageState.coverageFromMs = null;
+        dashboardUsageState.untilMs = null;
+        dashboardUsageState.error = dashboardUsageState.capabilityReason;
+        dashboardFilterState.filters = dashboardFilterState.filters
+            .filter(filter => filter.field !== 'viewed');
+        attachDashboardUsage(state.dashboards, null);
+    }
+    renderDashboardUsageStatus();
+}
+
+async function resolveDashboardUsageCapability() {
+    const runtimeContext = typeof runtimeContextForState === 'function'
+        ? runtimeContextForState(state)
+        : (state?.apiConfig?.type || 'offline');
+    if (runtimeContext === '360') {
+        return typeof dashboardUsageCapability === 'function'
+            ? dashboardUsageCapability(runtimeContext, [])
+            : { supported: true, reason: '' };
+    }
+    try {
+        const appliances = await window.apiClient.getAppliances();
+        if (typeof dashboardUsageCapability === 'function') {
+            return dashboardUsageCapability(runtimeContext, appliances);
+        }
+        const localAppliance = appliances.find(appliance => String(appliance?.id) === '0');
+        const supported = String(localAppliance?.platform || '').toLowerCase() === 'command';
+        return {
+            supported,
+            reason: supported
+                ? ''
+                : (localAppliance
+                    ? 'Usage metrics are not available on sensors.'
+                    : 'Dashboard usage metrics are unavailable because the connected appliance type could not be determined.')
+        };
+    } catch {
+        return {
+            supported: false,
+            reason: 'Dashboard usage metrics are unavailable because the connected appliance type could not be determined.'
+        };
+    }
+}
+
 function dashboardConfigurationBackupCapability() {
     const runtimeContext = typeof runtimeContextForState === 'function'
         ? runtimeContextForState(state)
@@ -599,6 +664,8 @@ function syncDashboardBackupButtonAvailability(action, forceBusy = false) {
     const button = document.getElementById(ui?.buttonId);
     if (!button) return;
     const capability = dashboardConfigurationBackupCapability();
+    const container = button.closest?.('.dashboard-backup-option');
+    if (container) container.hidden = !capability.supported;
     const busy = forceBusy || Boolean(dashboardConfigurationBackupState.promise) || isDashboardMutationRunning();
     button.disabled = !capability.supported || busy || button.dataset.backupCreated === 'true';
     button.title = capability.reason;
@@ -609,9 +676,11 @@ function prepareDashboardBackupControl(action) {
     const button = document.getElementById(ui?.buttonId);
     if (!button) return;
     const capability = dashboardConfigurationBackupCapability();
+    const container = button.closest?.('.dashboard-backup-option');
+    if (container) container.hidden = !capability.supported;
     button.textContent = 'Take a configuration backup before applying change';
     delete button.dataset.backupCreated;
-    setDashboardBackupStatus(action, capability.reason);
+    setDashboardBackupStatus(action, '');
     syncDashboardBackupButtonAvailability(action);
 }
 
@@ -822,9 +891,13 @@ async function loadDashboards() {
         state.dashboards = await window.apiClient.getDashboards();
 
         // Dashboard usage is advisory and must not make dashboard administration unavailable.
+        const usageCapability = await resolveDashboardUsageCapability();
+        setDashboardUsageCapability(usageCapability);
         const [users] = await Promise.all([
             window.apiClient.getUsers(),
-            loadDashboardUsage(state.dashboards)
+            usageCapability.supported
+                ? loadDashboardUsage(state.dashboards)
+                : Promise.resolve()
         ]);
         state.allUsers = users;
 
@@ -1185,7 +1258,7 @@ function renderDashboards() {
                 </div>
             </td>
             <td>${escapeHtml(dashboard.owner || 'System')}</td>
-            <td>${escapeHtml(formatDashboardLastViewed(dashboard))}</td>
+            <td class="dashboard-usage-column"${dashboardUsageState.supported ? '' : ' hidden'}>${escapeHtml(formatDashboardLastViewed(dashboard))}</td>
             <td class="actions">
                 <button class="btn btn-sm change-owner-btn" data-id="${escapeAttribute(dashboard.id)}">Change owner</button>
                 <button class="btn-danger btn-sm delete-btn" data-id="${escapeAttribute(dashboard.id)}">Delete</button>

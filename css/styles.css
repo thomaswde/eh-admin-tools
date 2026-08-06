@@ -1318,6 +1318,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     border-top: 1px solid var(--hairline);
 }
 
+.dashboard-backup-option[hidden],
+.dashboard-usage-column[hidden] {
+    display: none;
+}
+
 .dashboard-backup-status {
     margin: 0;
     color: var(--gray);

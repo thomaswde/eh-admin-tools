@@ -24,6 +24,7 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
         actions: Object.freeze({
             'datafeed.upload': true,
             'datafeed.collect': false,
+            'dashboards.usage': false,
             'systemHealth.import': true,
             'systemHealth.collect': false,
             'systemHealth.exportLocal': true,
@@ -53,6 +54,7 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
         actions: Object.freeze({
             'datafeed.upload': true,
             'datafeed.collect': true,
+            'dashboards.usage': true,
             'systemHealth.import': true,
             'systemHealth.collect': true,
             'systemHealth.exportLocal': true,
@@ -82,6 +84,7 @@ const DEPLOYMENT_CAPABILITY_MATRIX = Object.freeze({
         actions: Object.freeze({
             'datafeed.upload': true,
             'datafeed.collect': true,
+            'dashboards.usage': true,
             'systemHealth.import': true,
             'systemHealth.collect': true,
             'systemHealth.exportLocal': true,
@@ -116,6 +119,32 @@ function runtimeSupportsAction(runtimeContext, actionName) {
     return capabilities ? capabilities.actions[actionName] === true : false;
 }
 
+function dashboardUsageCapability(runtimeContext, appliances = []) {
+    if (!runtimeSupportsAction(runtimeContext, 'dashboards.usage')) {
+        return {
+            supported: false,
+            reason: 'Dashboard usage metrics are unavailable without an ExtraHop connection.'
+        };
+    }
+    if (runtimeContext === '360') return { supported: true, reason: '' };
+
+    const localAppliance = (Array.isArray(appliances) ? appliances : [])
+        .find(appliance => String(appliance?.id) === '0');
+    if (!localAppliance) {
+        return {
+            supported: false,
+            reason: 'Dashboard usage metrics are unavailable because the connected appliance type could not be determined.'
+        };
+    }
+    if (String(localAppliance.platform || '').toLowerCase() === 'command') {
+        return { supported: true, reason: '' };
+    }
+    return {
+        supported: false,
+        reason: 'Usage metrics are not available on sensors.'
+    };
+}
+
 function moduleCapabilityReason(runtimeContext, moduleName) {
     if (deploymentSupportsModule(runtimeContext, moduleName)) return '';
     if (runtimeContext === 'offline') return '';
@@ -148,5 +177,6 @@ window.deploymentSupportsModule = deploymentSupportsModule;
 window.deploymentSupportsApiFamily = deploymentSupportsApiFamily;
 window.runtimeContextForState = runtimeContextForState;
 window.runtimeSupportsAction = runtimeSupportsAction;
+window.dashboardUsageCapability = dashboardUsageCapability;
 window.moduleCapabilityReason = moduleCapabilityReason;
 window.syncDeploymentCapabilityNavigation = syncDeploymentCapabilityNavigation;

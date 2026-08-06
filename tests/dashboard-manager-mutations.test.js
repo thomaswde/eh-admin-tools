@@ -441,6 +441,35 @@ test('dashboard backup names are unique timestamped appliance customization name
     );
 });
 
+test('RevealX 360 confirmation modals remove configuration backup controls', () => {
+    const container = { hidden: false };
+    const button = {
+        dataset: {},
+        disabled: false,
+        title: '',
+        textContent: '',
+        closest(selector) {
+            return selector === '.dashboard-backup-option' ? container : null;
+        }
+    };
+    const status = {
+        textContent: '',
+        hidden: false,
+        classList: { remove() {}, add() {} }
+    };
+    const { context, state } = loadDashboardManager({}, [], {
+        backupBeforeDelete: button,
+        deleteBackupStatus: status
+    });
+    state.apiConfig = { type: '360' };
+
+    vm.runInContext("prepareDashboardBackupControl('delete')", context);
+
+    assert.equal(container.hidden, true);
+    assert.equal(status.hidden, true);
+    assert.equal(status.textContent, '');
+});
+
 test('complete dashboard usage does not render explanatory subtext', () => {
     const { context } = loadDashboardManager({});
     const status = vm.runInContext(`

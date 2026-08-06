@@ -69,6 +69,26 @@ test('capability matrix marks User Manager self-managed-only', () => {
     assert.equal(vm.runInContext("deploymentSupportsApiFamily('offline', 'configurationBackups')", context), false);
 });
 
+test('dashboard usage is limited to 360 and direct Enterprise console targets', () => {
+    const context = loadCapabilities();
+
+    assert.equal(vm.runInContext("dashboardUsageCapability('360', []).supported", context), true);
+    assert.equal(vm.runInContext(
+        "dashboardUsageCapability('enterprise', [{ id: '0', platform: 'command' }]).supported",
+        context
+    ), true);
+    for (const platform of ['discover', 'flow_collector']) {
+        context.platform = platform;
+        const capability = vm.runInContext(
+            "dashboardUsageCapability('enterprise', [{ id: '0', platform }])",
+            context
+        );
+        assert.equal(capability.supported, false);
+        assert.match(capability.reason, /not available on sensors/i);
+    }
+    assert.equal(vm.runInContext("dashboardUsageCapability('offline', []).supported", context), false);
+});
+
 test('navigation keeps unsupported modules visible with a concise reason', () => {
     const users = navButton('users');
     const systemHealth = navButton('system-health');

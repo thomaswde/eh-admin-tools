@@ -381,7 +381,7 @@
                     <select id="dashboardFilterField" aria-label="Filter field">
                         <option value="name">Name</option>
                         <option value="owner">Owner</option>
-                        <option value="viewed">Last recorded activity</option>
+                        <option value="viewed" title="">Last recorded activity</option>
                     </select>
                     <select id="dashboardFilterOperator" aria-label="Filter operator">
                         <option value="contains">contains</option>
@@ -438,7 +438,7 @@
                             <th class="col-check"><input type="checkbox" id="selectAll" aria-label="Select all on this page"></th>
                             <th>Dashboard name</th>
                             <th style="width: 180px;">Owner</th>
-                            <th style="width: 260px;">
+                            <th class="dashboard-usage-column" style="width: 260px;">
                                 <span class="dashboard-activity-heading">
                                     Last recorded activity
                                     <span class="info-tooltip tooltip-below" tabindex="0" aria-label="Derived from the System User Interface dashboard-view Top-N metric. A recorded value is evidence of use. No record is not proof that the dashboard was unused, and metric retention varies by deployment.">?</span>
