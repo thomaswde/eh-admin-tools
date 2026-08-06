@@ -551,10 +551,11 @@ function addOverview(model, assets) {
         ]
     ];
     if (overview.packetstores) {
-        // These are metric-producing sensors, split by integrated versus paired
-        // Packetstore topology rather than a count of physical storage systems.
+        // Split Packetstore metric sources by the appliance identity that owns
+        // the cpc measurements.
         const composition = [
-            overview.packetstores_paired ? `${formatInteger(overview.packetstores_paired)} paired` : '',
+            overview.packetstores_standalone ? `${formatInteger(overview.packetstores_standalone)} standalone` : '',
+            overview.packetstores_compatibility ? `${formatInteger(overview.packetstores_compatibility)} compatibility-detected` : '',
             overview.packetstores_all_in_one ? `${formatInteger(overview.packetstores_all_in_one)} all-in-one` : ''
         ].filter(Boolean).join(' · ');
         stats.push([

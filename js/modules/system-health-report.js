@@ -288,19 +288,24 @@ async function generateSystemHealthReport() {
         ).values());
         const appliancesById = Object.fromEntries(reportAppliances.map(item => [String(item.id), item]));
 
-        loadingText.textContent = 'Probing sensors for Packetstore metrics...';
-        const packetstoreProbe = await probeSystemHealthPacketstoreSensors(discoverSensors, appliancesById, {
-            untilMs,
-            cycle: requestedCycle,
-            signal: abortController.signal
-        });
+        loadingText.textContent = 'Identifying Packetstore metric sources...';
+        const packetstoreSources = await identifySystemHealthPacketstoreSources(
+            discoverSensors,
+            packetstoreAppliances,
+            appliancesById,
+            {
+                untilMs,
+                cycle: requestedCycle,
+                signal: abortController.signal
+            }
+        );
         const cyclePolicy = SystemHealthCollection.chooseCyclePolicy({
             requestedCycle,
             windowMs: untilMs - fromMs,
             sensorCount: reportAppliances.length,
             scalarSeriesCount: (
                 metricSensors.length * SystemHealthCollection.TIME_SERIES_METRICS.length
-                + packetstoreProbe.detected_sensors.length * SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS.length
+                + packetstoreSources.sources.length * SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS.length
             )
         });
 
@@ -314,7 +319,7 @@ async function generateSystemHealthReport() {
                     error
                 };
             }),
-            collectSystemHealthMetrics(metricSensors, discoverSensors, packetstoreProbe, packetstoreAppliances, appliancesById, {
+            collectSystemHealthMetrics(metricSensors, discoverSensors, packetstoreSources, appliancesById, {
                 fromMs,
                 untilMs,
                 cycle: cyclePolicy.query_cycle,
@@ -379,7 +384,7 @@ async function generateSystemHealthReport() {
     }
 }
 
-async function collectSystemHealthMetrics(metricSensors, allSensors, packetstoreProbe, packetstoreAppliances, appliancesById, options) {
+async function collectSystemHealthMetrics(metricSensors, allSensors, packetstoreSources, appliancesById, options) {
     // A console can return one XID per query and forward each continuation to
     // attached sensors. Drain one query completely before starting the next so
     // time-series and total polling do not contend for the same remote sensors.
@@ -395,15 +400,17 @@ async function collectSystemHealthMetrics(metricSensors, allSensors, packetstore
         appliancesById,
         options
     );
-    const packetstoreResult = packetstoreProbe && Array.isArray(packetstoreProbe.detected_sensors)
+    const packetstoreResult = packetstoreSources && Array.isArray(packetstoreSources.sources)
         ? await collectSystemHealthPacketstoreMetrics(
-            packetstoreProbe.detected_sensors,
-            packetstoreProbe,
-            packetstoreAppliances,
+            packetstoreSources.sources,
+            packetstoreSources,
             appliancesById,
             options
         )
-        : { metric_category_used: 'cpc', appliance_ids: [], inventory_appliance_ids: [], probe_status: {}, metrics: {}, errors: [] };
+        : {
+            metric_category_used: 'cpc', appliance_ids: [], queried_appliance_ids: [],
+            inventory_appliance_ids: [], sources: [], probe_status: {}, metrics: {}, errors: []
+        };
     const collectedScalarPoints = [
         ...Object.values(timeSeriesResult.metrics || {}),
         triggerDropResult,
@@ -443,20 +450,63 @@ function systemHealthApplianceRole(appliance) {
     return isSystemHealthAllInOneAppliance(appliance) ? 'all_in_one' : 'packet_sensor';
 }
 
-async function probeSystemHealthPacketstoreSensors(sensors, appliancesById, options) {
+function systemHealthPacketstoreSource(appliance, role, eligibilityReason, identitySource) {
+    const status = String(appliance && appliance.status_message || '').trim().toLowerCase();
+    return {
+        id: String(appliance.id),
+        appliance,
+        role,
+        eligibility_reason: eligibilityReason,
+        identity_source: identitySource,
+        online: status === 'online',
+        accessible: isSystemHealthMetricSensor(appliance)
+    };
+}
+
+async function identifySystemHealthPacketstoreSources(sensors, packetstoreAppliances, appliancesById, options) {
     const request = window.apiClient.request.bind(window.apiClient);
-    const detectedSensors = [];
+    const sourcesById = new Map();
     const indeterminateSensorIds = [];
     const probeStatus = {};
     const errors = [];
     const untilMs = Number(options.untilMs);
     const fromMs = untilMs - SystemHealthCollection.PACKETSTORE_PROBE_WINDOW_MS;
 
-    // Probe separately so a normal sensor's unsupported cpc category cannot
-    // invalidate the result for an AIO or a sensor paired with a Packetstore.
+    (sensors || []).filter(isSystemHealthAllInOneAppliance).forEach(appliance => {
+        const id = String(appliance.id);
+        sourcesById.set(id, systemHealthPacketstoreSource(
+            appliance,
+            'all_in_one',
+            'integrated_packetstore_inventory',
+            'inventory'
+        ));
+        probeStatus[id] = {
+            status: 'detected',
+            evidence: 'inventory_confirmed',
+            detail: 'Integrated Packetstore capability is confirmed by appliance inventory.'
+        };
+    });
+    (packetstoreAppliances || []).forEach(appliance => {
+        const id = String(appliance.id);
+        sourcesById.set(id, systemHealthPacketstoreSource(
+            appliance,
+            'packetstore',
+            'standalone_packetstore_inventory',
+            'inventory'
+        ));
+        probeStatus[id] = {
+            status: 'detected',
+            evidence: 'inventory_confirmed',
+            detail: 'Standalone Packetstore identity is confirmed by appliance inventory.'
+        };
+    });
+
+    // Inventory is authoritative for all-in-one and standalone Packetstores.
+    // Probe only ordinary sensors as a compatibility fallback so a generic
+    // zero-valued cpc response cannot create a fictitious Packetstore source.
     for (const sensor of sensors || []) {
         const id = String(sensor.id);
-        const inventoryConfirmed = isSystemHealthAllInOneAppliance(sensor);
+        if (sourcesById.has(id)) continue;
         if (!isSystemHealthMetricSensor(sensor)) {
             const status = sensor.data_access === false ? 'data_access_unavailable' : 'offline';
             probeStatus[id] = { status, detail: 'Packetstore capability was not probed because sensor metrics are unavailable.' };
@@ -491,24 +541,26 @@ async function probeSystemHealthPacketstoreSensors(sensors, appliancesById, opti
                     SystemHealthCollection.PACKETSTORE_PROBE_METRIC,
                     id
                 );
-                if (evidence === 'positive' || inventoryConfirmed) {
-                    detectedSensors.push(sensor);
+                if (evidence === 'positive') {
+                    sourcesById.set(id, systemHealthPacketstoreSource(
+                        sensor,
+                        'compatibility_detected',
+                        'positive_lookback_probe',
+                        'compatibility_probe'
+                    ));
                     probeStatus[id] = {
                         status: 'detected',
-                        evidence: evidence === 'positive' ? 'positive_lookback' : 'inventory_confirmed',
+                        evidence: 'positive_lookback',
                         metric: SystemHealthCollection.PACKETSTORE_PROBE_METRIC,
                         row_count: normalized.rows.length,
-                        collection_metadata: normalized.metadata,
-                        ...(evidence === 'positive' ? {} : {
-                            detail: `Integrated Packetstore is confirmed by appliance inventory; probe evidence was ${evidence}.`
-                        })
+                        collection_metadata: normalized.metadata
                     };
                 } else if (evidence === 'zero_only') {
                     indeterminateSensorIds.push(id);
                     probeStatus[id] = {
                         status: 'indeterminate',
                         evidence,
-                        detail: 'The cpc metric reported only zero lookback, which does not confirm a paired Packetstore.'
+                        detail: 'The cpc metric reported only zero lookback, which does not confirm Packetstore capability on an ordinary sensor.'
                     };
                 } else if (evidence === 'invalid') {
                     probeStatus[id] = { status: 'failed', evidence, detail: 'The Packetstore probe returned a negative lookback value.' };
@@ -532,9 +584,10 @@ async function probeSystemHealthPacketstoreSensors(sensors, appliancesById, opti
         errors.push(`Packetstore presence was indeterminate for ${indeterminateSensorIds.length} sensor(s) because the probe returned only zero lookback; those sensors were excluded from Packetstore metrics.`);
     }
 
+    const sources = Array.from(sourcesById.values());
     return {
-        detected_sensors: detectedSensors,
-        sensor_ids: detectedSensors.map(sensor => String(sensor.id)),
+        sources,
+        source_ids: sources.map(source => source.id),
         indeterminate_sensor_ids: indeterminateSensorIds,
         probe_status: probeStatus,
         errors
@@ -696,11 +749,25 @@ async function collectSystemHealthTriggerDrops(metricSensors, allSensors, applia
     }
 }
 
-async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult, inventoryPacketstores, appliancesById, options) {
+async function collectSystemHealthPacketstoreMetrics(packetstoreSources, sourceResult, appliancesById, options) {
     const timeSeriesNames = SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS;
     const totalNames = SystemHealthCollection.PACKETSTORE_TOTAL_METRICS;
     const metrics = {};
     const errors = [];
+    const sources = Array.isArray(packetstoreSources) ? packetstoreSources : [];
+    const sourceAppliances = sources.map(source => source.appliance);
+    const metricSources = sources.filter(source => source.accessible).map(source => source.appliance);
+    const sourceProjection = sources.map(source => ({
+        id: source.id,
+        role: source.role,
+        eligibility_reason: source.eligibility_reason,
+        identity_source: source.identity_source,
+        online: source.online,
+        accessible: source.accessible
+    }));
+    const inventoryApplianceIds = sources
+        .filter(source => source.identity_source === 'inventory')
+        .map(source => source.id);
 
     const emptyMetric = (name, aggregationMode) => ({
         metric_category_used: 'cpc',
@@ -709,20 +776,22 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
         summary: aggregationMode === 'time_series'
             ? SystemHealthCollection.summarizeTimeSeriesRows([], name)
             : SystemHealthCollection.summarizeAggregateRows([]),
-        sensor_status: SystemHealthCollection.buildSensorCoverage(metricSensors, []),
+        sensor_status: SystemHealthCollection.buildSensorCoverage(sourceAppliances, []),
         errors: []
     });
     [...timeSeriesNames, ...totalNames].forEach(name => {
         metrics[name] = emptyMetric(name, timeSeriesNames.includes(name) ? 'time_series' : 'total_by_object');
     });
-    if (!metricSensors.length) {
+    if (!metricSources.length) {
         return {
             metric_category_used: 'cpc',
-            appliance_ids: [],
-            inventory_appliance_ids: (inventoryPacketstores || []).map(item => String(item.id)),
-            probe_status: probeResult.probe_status || {},
+            appliance_ids: sources.map(source => source.id),
+            queried_appliance_ids: [],
+            inventory_appliance_ids: inventoryApplianceIds,
+            sources: sourceProjection,
+            probe_status: sourceResult.probe_status || {},
             metrics,
-            errors: Array.from(new Set(probeResult.errors || []))
+            errors: Array.from(new Set(sourceResult.errors || []))
         };
     }
 
@@ -744,7 +813,7 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
             cycle: options.cycle,
             fromMs: options.fromMs,
             untilMs: options.untilMs,
-            objectIds: metricSensors.map(item => item.id),
+            objectIds: metricSources.map(item => item.id),
             metricNames: timeSeriesNames,
             metricCategory: 'cpc'
         });
@@ -756,7 +825,7 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
         );
         timeSeriesNames.forEach(name => {
             const rows = decorateRows(normalized.rows.map(row => ({ ...row, metric: name, value: row.values[name] })));
-            const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, rows.map(row => ({
+            const coverage = SystemHealthCollection.buildSensorCoverage(sourceAppliances, rows.map(row => ({
                 appliance_id: row.appliance_id,
                 value: row.value
             })), {
@@ -774,7 +843,7 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
         });
     } catch (error) {
         if (options.signal.aborted) throw error;
-        const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, [], { error });
+        const coverage = SystemHealthCollection.buildSensorCoverage(sourceAppliances, [], { error });
         timeSeriesNames.forEach(name => {
             metrics[name].sensor_status = coverage;
             metrics[name].errors = [error.message];
@@ -787,7 +856,7 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
             cycle: options.cycle,
             fromMs: options.fromMs,
             untilMs: options.untilMs,
-            objectIds: metricSensors.map(item => item.id),
+            objectIds: metricSources.map(item => item.id),
             metricNames: totalNames,
             metricCategory: 'cpc'
         });
@@ -799,7 +868,7 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
         );
         totalNames.forEach(name => {
             const rows = decorateRows(normalized.rows.filter(row => row.metric === name));
-            const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, rows, {
+            const coverage = SystemHealthCollection.buildSensorCoverage(sourceAppliances, rows, {
                 sensorFailures: result.sensor_failures,
                 sensorStatuses
             });
@@ -814,7 +883,7 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
         });
     } catch (error) {
         if (options.signal.aborted) throw error;
-        const coverage = SystemHealthCollection.buildSensorCoverage(metricSensors, [], { error });
+        const coverage = SystemHealthCollection.buildSensorCoverage(sourceAppliances, [], { error });
         totalNames.forEach(name => {
             metrics[name].sensor_status = coverage;
             metrics[name].errors = [error.message];
@@ -824,11 +893,13 @@ async function collectSystemHealthPacketstoreMetrics(metricSensors, probeResult,
 
     return {
         metric_category_used: 'cpc',
-        appliance_ids: metricSensors.map(item => String(item.id)),
-        inventory_appliance_ids: (inventoryPacketstores || []).map(item => String(item.id)),
-        probe_status: probeResult.probe_status || {},
+        appliance_ids: sources.map(source => source.id),
+        queried_appliance_ids: metricSources.map(item => String(item.id)),
+        inventory_appliance_ids: inventoryApplianceIds,
+        sources: sourceProjection,
+        probe_status: sourceResult.probe_status || {},
         metrics,
-        errors: Array.from(new Set([...(probeResult.errors || []), ...errors]))
+        errors: Array.from(new Set([...(sourceResult.errors || []), ...errors]))
     };
 }
 
@@ -991,7 +1062,10 @@ function buildSystemHealthReport({
         device_analysis: normalizedDeviceAnalysis,
         metrics: metricResults,
         trigger_utilization: triggerUtilization || SystemHealthCollection.summarizeTriggerUtilization([]),
-        packetstore: packetstore || { appliance_ids: [], inventory_appliance_ids: [], probe_status: {}, metrics: {}, errors: [] },
+        packetstore: packetstore || {
+            appliance_ids: [], queried_appliance_ids: [], inventory_appliance_ids: [],
+            sources: [], probe_status: {}, metrics: {}, errors: []
+        },
         errors: Array.from(new Set([
             ...collectionErrors,
             ...Object.values(metricResults).flatMap(result => result.errors || []),
@@ -1364,7 +1438,7 @@ function drawSystemHealthPacketstoreFidelity(canvas, rows, offlineRows = []) {
     const state = setupSystemHealthCanvas(canvas, height);
     if (!state) return;
     const { ctx, width } = state;
-    if (!rows.length && !offlineRows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore-backed sensors were detected');
+    if (!rows.length && !offlineRows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore metric sources were identified');
     const colors = systemHealthStyleColors();
     const { left, right } = systemHealthHorizontalChartLayout(width);
     const plotWidth = Math.max(100, width - left - right);
@@ -1431,7 +1505,7 @@ function drawSystemHealthPacketstoreLoad(canvas, rows, offlineRows = []) {
     const state = setupSystemHealthCanvas(canvas, height);
     if (!state) return;
     const { ctx, width } = state;
-    if (!rows.length && !offlineRows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore-backed sensors were detected');
+    if (!rows.length && !offlineRows.length) return drawSystemHealthEmpty(ctx, width, height, 'No Packetstore metric sources were identified');
     const colors = systemHealthStyleColors();
     const { left, right } = systemHealthHorizontalChartLayout(width);
     const plotWidth = Math.max(100, width - left - right);
@@ -1569,11 +1643,13 @@ function renderSystemHealthPacketstoreTable(rows) {
             <td>${formatSystemHealthPercentValue(row.compressionLoadPeak)}</td>
             <td>${formatSystemHealthPercentValue(row.diskWriteLoadPeak)}</td>
         </tr>`;
-    }).join('') || '<tr><td colspan="16">No Packetstore-backed sensors were detected.</td></tr>';
+    }).join('') || '<tr><td colspan="16">No Packetstore metric sources were identified.</td></tr>';
 }
 
 function systemHealthPacketstoreRoleLabel(row) {
-    return row && row.appliance_role === 'all_in_one' ? 'All in One' : 'Paired Packetstore';
+    if (row && row.appliance_role === 'all_in_one') return 'All-in-One';
+    if (row && row.appliance_role === 'packetstore') return 'Standalone Packetstore';
+    return 'Compatibility-detected source';
 }
 
 function sortSystemHealthDetailRows(rows) {
@@ -2603,8 +2679,8 @@ function buildSystemHealthReportFromUnifiedCsv(rows) {
         invalid_by_sensor: {}
     };
     const packetstore = {
-        metric_category_used: 'cpc', appliance_ids: [], inventory_appliance_ids: [],
-        probe_status: {}, metrics: {}, errors: []
+        metric_category_used: 'cpc', appliance_ids: [], queried_appliance_ids: [],
+        inventory_appliance_ids: [], sources: [], probe_status: {}, metrics: {}, errors: []
     };
     SystemHealthCollection.PACKETSTORE_TIME_SERIES_METRICS.forEach(name => {
         packetstore.metrics[name] = systemHealthEmptyImportedMetric('time_series');
@@ -2641,6 +2717,7 @@ function buildSystemHealthReportFromUnifiedCsv(rows) {
         };
         const applianceRole = row.appliance_role || 'packet_sensor';
         const probeStatus = row.packetstore_probe_status || '';
+        const packetstoreMetricEligible = systemHealthBoolean(row.packetstore_metric_eligible, false);
         appliances.push({
             id,
             name: row.appliance_name || `Sensor ${id}`,
@@ -2649,7 +2726,7 @@ function buildSystemHealthReportFromUnifiedCsv(rows) {
             license_platform: row.license_platform || '',
             uuid: row.uuid || '',
             appliance_role: applianceRole,
-            packetstore_metric_eligible: systemHealthBoolean(row.packetstore_metric_eligible, false),
+            packetstore_metric_eligible: packetstoreMetricEligible,
             packetstore_probe_status: probeStatus ? { status: probeStatus } : null,
             status_message: row.status_message || '',
             online: systemHealthBoolean(row.online, true),
@@ -2663,10 +2740,26 @@ function buildSystemHealthReportFromUnifiedCsv(rows) {
             health_conditions: healthConditions,
             capacity
         });
-        if (applianceRole === 'packetstore') packetstore.inventory_appliance_ids.push(id);
+        if (packetstoreMetricEligible) {
+            const inventoryConfirmed = ['all_in_one', 'packetstore'].includes(applianceRole);
+            packetstore.appliance_ids.push(id);
+            packetstore.sources.push({
+                id,
+                role: inventoryConfirmed ? applianceRole : 'compatibility_detected',
+                eligibility_reason: inventoryConfirmed
+                    ? applianceRole === 'all_in_one'
+                        ? 'integrated_packetstore_inventory'
+                        : 'standalone_packetstore_inventory'
+                    : 'positive_lookback_probe',
+                identity_source: inventoryConfirmed ? 'inventory' : 'compatibility_probe',
+                online: systemHealthBoolean(row.online, true),
+                accessible: systemHealthBoolean(row.online, true)
+                    && systemHealthOptionalBoolean(row.data_access) !== false
+            });
+            if (inventoryConfirmed) packetstore.inventory_appliance_ids.push(id);
+        }
         if (probeStatus) packetstore.probe_status[id] = { status: probeStatus };
         const packetstoreSnapshot = systemHealthJsonObject(row.packetstore_metrics_json, 'packetstore_metrics_json', index);
-        if (Object.keys(packetstoreSnapshot).length) packetstore.appliance_ids.push(id);
         Object.entries(packetstoreSnapshot).forEach(([name, value]) => {
             const metric = packetstore.metrics[name];
             if (!metric || !value || typeof value !== 'object') return;

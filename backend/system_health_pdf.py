@@ -221,7 +221,8 @@ class RendererOverview(StrictRendererModel):
     trigger_drops_unavailable: int
     packetstores: int
     packetstores_all_in_one: int
-    packetstores_paired: int
+    packetstores_standalone: int
+    packetstores_compatibility: int
     packetstores_with_loss: int
     packetstores_clean: int
     packetstores_loss_reporting: int
@@ -898,7 +899,7 @@ def system_health_pdf_summary(
         ("Packet Risk", packet_risk_value, packet_risk_note),
         ("Throughput Watch", throughput_watch_value, throughput_watch_note),
         ("Trigger Drops", trigger_drop_value, trigger_drop_note),
-        ("PCAP Sources", f"{len(packetstore_rows):,}", "Packetstore-backed sensors detected by cpc metrics"),
+        ("PCAP Sources", f"{len(packetstore_rows):,}", "Packetstore appliances and integrated sources reporting cpc metrics"),
         ("PCAP Loss", packetstore_loss_value, packetstore_loss_note),
     ]
     return "".join(

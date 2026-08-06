@@ -59,15 +59,20 @@ test('Packetstore sensor continuation failure produces diagnostics and continues
         status_message: 'Online',
         data_access: true
     }];
+    context.testSources = context.testAppliances.map(appliance => ({
+        id: String(appliance.id), appliance, role: 'compatibility_detected',
+        eligibility_reason: 'positive_lookback_probe', identity_source: 'compatibility_probe',
+        online: true, accessible: true
+    }));
     context.testAppliancesById = { '7': context.testAppliances[0] };
     context.testProbe = {
-        detected_sensors: context.testAppliances,
+        sources: context.testSources,
         probe_status: { '7': { status: 'detected' } },
         errors: []
     };
 
     const result = await vm.runInContext(
-        'collectSystemHealthPacketstoreMetrics(testAppliances, testProbe, [], testAppliancesById, testOptions)',
+        'collectSystemHealthPacketstoreMetrics(testSources, testProbe, testAppliancesById, testOptions)',
         context
     );
 
@@ -116,13 +121,17 @@ test('Packetstore coverage evaluates each time-series metric independently', asy
     vm.runInContext(source('js/modules/system-health-report.js'), context);
     const controller = new AbortController();
     context.testSensor = { id: '7', hostname: 'sensor-7', status_message: 'Online', data_access: true };
+    context.testSource = {
+        id: '7', appliance: context.testSensor, role: 'compatibility_detected',
+        eligibility_reason: 'positive_lookback_probe', identity_source: 'compatibility_probe',
+        online: true, accessible: true
+    };
     context.testOptions = { cycle: '1hr', fromMs: 0, untilMs: 3_600_000, signal: controller.signal };
 
     const result = await vm.runInContext(
         `collectSystemHealthPacketstoreMetrics(
-            [testSensor],
-            { detected_sensors: [testSensor], probe_status: { '7': { status: 'detected' } }, errors: [] },
-            [],
+            [testSource],
+            { sources: [testSource], probe_status: { '7': { status: 'detected' } }, errors: [] },
             { '7': testSensor },
             testOptions
         )`,
@@ -165,13 +174,17 @@ test('Packetstore collector marks malformed positional tuples partial', async ()
     vm.runInContext(source('js/modules/system-health-report.js'), context);
     const controller = new AbortController();
     context.testSensor = { id: '7', hostname: 'sensor-7', status_message: 'Online', data_access: true };
+    context.testSource = {
+        id: '7', appliance: context.testSensor, role: 'compatibility_detected',
+        eligibility_reason: 'positive_lookback_probe', identity_source: 'compatibility_probe',
+        online: true, accessible: true
+    };
     context.testOptions = { cycle: '1hr', fromMs: 0, untilMs: 3_600_000, signal: controller.signal };
 
     const result = await vm.runInContext(
         `collectSystemHealthPacketstoreMetrics(
-            [testSensor],
-            { detected_sensors: [testSensor], probe_status: { '7': { status: 'detected' } }, errors: [] },
-            [],
+            [testSource],
+            { sources: [testSource], probe_status: { '7': { status: 'detected' } }, errors: [] },
             { '7': testSensor },
             testOptions
         )`,
@@ -184,7 +197,7 @@ test('Packetstore collector marks malformed positional tuples partial', async ()
     assert.match(result.errors.join('\n'), /expected 4 values but received 3/);
 });
 
-test('probes every eligible sensor separately and keeps clean misses out of the full metric set', async () => {
+test('inventory sources bypass compatibility probes while ordinary sensors require positive evidence', async () => {
     const requestBodies = [];
     const window = {
         apiClient: {
@@ -233,15 +246,21 @@ test('probes every eligible sensor separately and keeps clean misses out of the 
             licensed_features: { eda_onboard_trace: true }
         }
     ];
-    context.testById = Object.fromEntries(context.testSensors.map(sensor => [String(sensor.id), sensor]));
+    context.testPacketstores = [{
+        id: '90071992547409931234', hostname: 'packetstore', platform: 'trace',
+        status_message: 'Online', data_access: true
+    }];
+    context.testById = Object.fromEntries(
+        [...context.testSensors, ...context.testPacketstores].map(appliance => [String(appliance.id), appliance])
+    );
     context.testOptions = { untilMs: 300000, cycle: '5min', signal: controller.signal };
 
     const result = await vm.runInContext(
-        'probeSystemHealthPacketstoreSensors(testSensors, testById, testOptions)',
+        'identifySystemHealthPacketstoreSources(testSensors, testPacketstores, testById, testOptions)',
         context
     );
 
-    assert.deepEqual(Array.from(result.sensor_ids), ['1', '6']);
+    assert.deepEqual(Array.from(result.source_ids), ['6', '90071992547409931234', '1']);
     assert.deepEqual(Array.from(result.indeterminate_sensor_ids), ['5']);
     assert.equal(result.probe_status['1'].status, 'detected');
     assert.equal(result.probe_status['1'].evidence, 'positive_lookback');
@@ -253,11 +272,120 @@ test('probes every eligible sensor separately and keeps clean misses out of the 
     assert.equal(result.probe_status['6'].status, 'detected');
     assert.equal(result.probe_status['6'].evidence, 'inventory_confirmed');
     assert.equal(result.errors.length, 2);
-    assert.equal(requestBodies.length, 5);
-    assert.deepEqual(requestBodies.map(body => body.object_ids), [[1], [2], [4], [5], [6]]);
+    assert.equal(result.probe_status['90071992547409931234'].evidence, 'inventory_confirmed');
+    assert.equal(requestBodies.length, 4);
+    assert.deepEqual(requestBodies.map(body => body.object_ids), [[1], [2], [4], [5]]);
     assert.ok(requestBodies.every(body => body.metric_specs.length === 1));
     assert.ok(requestBodies.every(body => body.metric_category === 'cpc'
         && body.cycle === '5min' && body.from === 0 && body.until === 300000));
+});
+
+test('standalone Packetstore metrics use and remain attributed to the Trace appliance ID', async () => {
+    const requests = [];
+    const window = {
+        apiClient: {
+            async request(endpoint, options) {
+                const body = JSON.parse(options.body);
+                requests.push({ endpoint, body });
+                if (body.object_ids.length === 1 && String(body.object_ids[0]) === '7') {
+                    const error = new Error("invalid stat name 'extrahop.system.cpc' (-32602)");
+                    error.status = 400;
+                    error.details = { error_message: error.message };
+                    throw error;
+                }
+                assert.deepEqual(body.object_ids, ['19']);
+                if (endpoint === '/metrics') {
+                    return {
+                        cycle: '1hr', node_id: 19,
+                        stats: [{ oid: 19, time: 1000, duration: 3_600_000, values: [172800, 10, 20, 30] }]
+                    };
+                }
+                if (endpoint === '/metrics/totalbyobject') {
+                    return {
+                        node_id: 19,
+                        stats: [{ oid: 19, time: 1000, duration: 3_600_000, values: [1000, 0, 0, 50, 0, 0, 0] }]
+                    };
+                }
+                throw new Error(`Unexpected endpoint ${endpoint}`);
+            }
+        }
+    };
+    const context = vm.createContext({
+        window, console, AbortController, setTimeout, clearTimeout,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
+    });
+    vm.runInContext(source('js/modules/system-health-collection.js'), context);
+    vm.runInContext(source('js/modules/system-health-report.js'), context);
+    const controller = new AbortController();
+    context.testSensor = {
+        id: '7', hostname: 'sensor-7', platform: 'discover', status_message: 'Online', data_access: true
+    };
+    context.testPacketstore = {
+        id: '19', hostname: 'packetstore-19', platform: 'trace', license_platform: 'ETA 9350',
+        status_message: 'Online', data_access: true
+    };
+    context.testById = { '7': context.testSensor, '19': context.testPacketstore };
+    context.testProbeOptions = { untilMs: 300000, cycle: 'auto', signal: controller.signal };
+    context.testCollectOptions = { cycle: '1hr', fromMs: 0, untilMs: 3_600_000, signal: controller.signal };
+
+    context.testSources = await vm.runInContext(
+        'identifySystemHealthPacketstoreSources([testSensor], [testPacketstore], testById, testProbeOptions)',
+        context
+    );
+    const result = await vm.runInContext(
+        'collectSystemHealthPacketstoreMetrics(testSources.sources, testSources, testById, testCollectOptions)',
+        context
+    );
+
+    assert.deepEqual(Array.from(result.appliance_ids), ['19']);
+    assert.deepEqual(Array.from(result.queried_appliance_ids), ['19']);
+    assert.deepEqual(JSON.parse(JSON.stringify(result.sources)), [{
+        id: '19', role: 'packetstore', eligibility_reason: 'standalone_packetstore_inventory',
+        identity_source: 'inventory', online: true, accessible: true
+    }]);
+    assert.deepEqual(requests.slice(1).map(item => item.body.object_ids), [['19'], ['19']]);
+    assert.equal(result.metrics.est_lookback_sec.summary.latest_values['19'], 172800);
+    assert.equal(result.metrics.pkts.summary.totals['19'], 1000);
+    assert.equal(result.metrics.est_lookback_sec.rows[0].appliance_name, 'packetstore-19');
+    assert.equal(result.metrics.est_lookback_sec.rows[0].platform, 'trace');
+});
+
+test('offline standalone Packetstores remain eligible rows without issuing metric requests', async () => {
+    const window = {
+        apiClient: {
+            async request() {
+                throw new Error('offline Packetstore must not be queried');
+            }
+        }
+    };
+    const context = vm.createContext({
+        window, console, AbortController, setTimeout, clearTimeout,
+        SystemHealthViewModel: require('../js/modules/system-health-view-model.js')
+    });
+    vm.runInContext(source('js/modules/system-health-collection.js'), context);
+    vm.runInContext(source('js/modules/system-health-report.js'), context);
+    const controller = new AbortController();
+    context.testPacketstore = {
+        id: '19', hostname: 'packetstore-19', platform: 'trace',
+        status_message: 'Unable to connect', data_access: true
+    };
+    context.testById = { '19': context.testPacketstore };
+    context.testOptions = { untilMs: 300000, cycle: 'auto', signal: controller.signal };
+    context.testCollectOptions = { cycle: '1hr', fromMs: 0, untilMs: 3_600_000, signal: controller.signal };
+
+    context.testSources = await vm.runInContext(
+        'identifySystemHealthPacketstoreSources([], [testPacketstore], testById, testOptions)',
+        context
+    );
+    const result = await vm.runInContext(
+        'collectSystemHealthPacketstoreMetrics(testSources.sources, testSources, testById, testCollectOptions)',
+        context
+    );
+
+    assert.deepEqual(Array.from(result.appliance_ids), ['19']);
+    assert.deepEqual(Array.from(result.queried_appliance_ids), []);
+    assert.equal(result.metrics.est_lookback_sec.sensor_status['19'].status, 'offline');
+    assert.equal(result.metrics.est_lookback_sec.rows.length, 0);
 });
 
 test('zero-only probes cannot promote unrelated interface drops into Packetstore rows', async () => {
@@ -291,16 +419,16 @@ test('zero-only probes cannot promote unrelated interface drops into Packetstore
     context.testCollectOptions = { cycle: '1hr', fromMs: 0, untilMs: 300000, signal: controller.signal };
 
     const probe = await vm.runInContext(
-        'probeSystemHealthPacketstoreSensors([testSensor], testById, testProbeOptions)',
+        'identifySystemHealthPacketstoreSources([testSensor], [], testById, testProbeOptions)',
         context
     );
     context.testProbe = probe;
     const collected = await vm.runInContext(
-        'collectSystemHealthPacketstoreMetrics(testProbe.detected_sensors, testProbe, [], testById, testCollectOptions)',
+        'collectSystemHealthPacketstoreMetrics(testProbe.sources, testProbe, testById, testCollectOptions)',
         context
     );
 
-    assert.deepEqual(Array.from(probe.sensor_ids), []);
+    assert.deepEqual(Array.from(probe.source_ids), []);
     assert.deepEqual(Array.from(probe.indeterminate_sensor_ids), ['7']);
     assert.equal(probe.probe_status['7'].status, 'indeterminate');
     assert.deepEqual(Array.from(collected.appliance_ids), []);
