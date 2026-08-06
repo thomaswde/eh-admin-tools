@@ -910,6 +910,31 @@ select[multiple] {
     bottom: calc(100% + 6px);
 }
 
+.custom-select-search {
+    position: sticky;
+    top: -5px;
+    z-index: 1;
+    padding: 3px 3px 6px;
+    background-color: var(--raised);
+}
+
+.custom-select-search-input {
+    width: 100%;
+    min-height: 34px;
+}
+
+.custom-select-empty {
+    padding: 12px 9px;
+    color: var(--text-faint);
+    font-size: 12px;
+    text-align: center;
+}
+
+.custom-select-empty[hidden],
+.custom-select-option[hidden],
+.custom-select-option-row[hidden],
+.custom-select-group[hidden] { display: none; }
+
 .custom-select-group + .custom-select-group { margin-top: 3px; }
 
 .custom-select-group-label {

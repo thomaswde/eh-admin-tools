@@ -518,3 +518,34 @@ test('stacked filters reject duplicates and usage lookbacks outside observed his
 
     assert.deepEqual(plain(results), [true, false, false, true, 2]);
 });
+
+test('owner-is selections merge into one OR filter and match any selected owner', () => {
+    const dashboards = [
+        { id: 'john', name: 'John dashboard', owner: 'John' },
+        { id: 'mary', name: 'Mary dashboard', owner: 'Mary' },
+        { id: 'pat', name: 'Pat dashboard', owner: 'Pat' }
+    ];
+    const { context, state } = loadDashboardManager({}, dashboards);
+
+    const result = vm.runInContext(`
+        [
+            addDashboardFilter({ field: 'owner', operator: 'is', operand: 'John' }),
+            addDashboardFilter({ field: 'owner', operator: 'is', operand: 'Mary' }),
+            addDashboardFilter({ field: 'owner', operator: 'is', operand: 'john' }),
+            dashboardFilterState.filters.length,
+            dashboardFilterState.filters[0].operand,
+            describeDashboardFilter(dashboardFilterState.filters[0])
+        ];
+    `, context);
+    vm.runInContext('applyDashboardFilters()', context);
+
+    assert.deepEqual(plain(result), [
+        true,
+        true,
+        false,
+        1,
+        ['John', 'Mary'],
+        'Owner is “John” or “Mary”'
+    ]);
+    assert.deepEqual(state.filteredDashboards.map(dashboard => dashboard.id), ['john', 'mary']);
+});

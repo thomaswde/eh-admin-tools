@@ -34,6 +34,15 @@ test('scrolling an open custom-select menu does not close it', () => {
     );
 });
 
+test('Dashboard Manager owner choices opt into the searchable custom select', () => {
+    const html = source('index.html');
+    const customSelect = source('js/ui/custom-select.js');
+
+    assert.match(html, /id="dashboardFilterOwnerOperand"[^>]*data-custom-select-searchable="true"/);
+    assert.match(customSelect, /customSelectSearchable/);
+    assert.match(customSelect, /custom-select-search-input/);
+});
+
 test('Topology uses a far-left trunk and row-level right-angle branches', () => {
     const nodemap = source('js/modules/nodemap.js');
 

@@ -67,6 +67,7 @@
         button.dataset.optionIndex = String(flatIndex);
         button.setAttribute('role', 'option');
         button.setAttribute('aria-selected', String(option.selected));
+        button.dataset.searchText = option.textContent.toLocaleLowerCase();
         button.disabled = option.disabled;
 
         const check = document.createElement('span');
@@ -136,6 +137,31 @@
         trigger.title = current ? current.textContent : '';
         menu.replaceChildren();
 
+        let searchInput = null;
+        let emptyState = null;
+        if (select.dataset.customSelectSearchable === 'true') {
+            const search = document.createElement('div');
+            search.className = 'custom-select-search';
+            searchInput = document.createElement('input');
+            searchInput.type = 'search';
+            searchInput.className = 'custom-select-search-input';
+            searchInput.placeholder = select.dataset.customSelectSearchPlaceholder || 'Search options…';
+            searchInput.setAttribute('aria-label', searchInput.placeholder);
+            search.appendChild(searchInput);
+            menu.appendChild(search);
+
+            emptyState = document.createElement('div');
+            emptyState.className = 'custom-select-empty';
+            emptyState.textContent = 'No matching options';
+            emptyState.hidden = true;
+        }
+
+        const optionsList = document.createElement('div');
+        optionsList.className = 'custom-select-options';
+        optionsList.id = `${menu.id}-listbox`;
+        optionsList.setAttribute('role', 'listbox');
+        menu.appendChild(optionsList);
+
         let flatIndex = 0;
         const appendOptions = (container, options) => {
             for (const option of options) {
@@ -156,11 +182,30 @@
                 groupLabel.textContent = child.label;
                 group.appendChild(groupLabel);
                 appendOptions(group, Array.from(child.children));
-                menu.appendChild(group);
+                optionsList.appendChild(group);
             } else if (child instanceof HTMLOptionElement) {
-                menu.appendChild(createOptionButton(control, child, flatIndex));
+                optionsList.appendChild(createOptionButton(control, child, flatIndex));
                 flatIndex += 1;
             }
+        }
+        if (emptyState) menu.appendChild(emptyState);
+
+        if (searchInput) {
+            searchInput.addEventListener('input', () => {
+                const query = searchInput.value.trim().toLocaleLowerCase();
+                let visibleCount = 0;
+                menu.querySelectorAll('.custom-select-option').forEach(button => {
+                    const matches = !query || button.dataset.searchText.includes(query);
+                    const row = button.closest('.custom-select-option-row');
+                    button.hidden = !matches;
+                    if (row) row.hidden = !matches;
+                    if (matches && !button.disabled) visibleCount += 1;
+                });
+                menu.querySelectorAll('.custom-select-group').forEach(group => {
+                    group.hidden = !group.querySelector('.custom-select-option:not([hidden])');
+                });
+                emptyState.hidden = visibleCount > 0;
+            });
         }
 
         const selectedButton = menu.querySelector(`[data-option-index="${select.selectedIndex}"]`);
@@ -203,15 +248,20 @@
             ? `${Math.max(8, triggerRect.top - menuHeight - 6)}px`
             : `${triggerRect.bottom + 6}px`;
 
-        const buttons = Array.from(control.menu.querySelectorAll('.custom-select-option:not(:disabled)'));
+        const buttons = Array.from(control.menu.querySelectorAll(
+            '.custom-select-option:not(:disabled):not([hidden])'
+        ));
+        const searchInput = control.menu.querySelector('.custom-select-search-input');
         let target = control.menu.querySelector('.custom-select-option[aria-selected="true"]:not(:disabled)');
         if (focusDirection > 0) target = buttons[0];
         if (focusDirection < 0) target = buttons.at(-1);
-        target?.focus();
+        (focusDirection === 0 && searchInput ? searchInput : target)?.focus();
     }
 
     function moveOptionFocus(control, direction) {
-        const buttons = Array.from(control.menu.querySelectorAll('.custom-select-option:not(:disabled)'));
+        const buttons = Array.from(control.menu.querySelectorAll(
+            '.custom-select-option:not(:disabled):not([hidden])'
+        ));
         if (!buttons.length) return;
         const currentIndex = buttons.indexOf(document.activeElement);
         const nextIndex = currentIndex < 0
@@ -285,9 +335,8 @@
         const menu = document.createElement('div');
         menu.className = 'custom-select-menu';
         menu.id = `${select.id || `custom-select-${++generatedId}`}-menu`;
-        menu.setAttribute('role', 'listbox');
         menu.hidden = true;
-        trigger.setAttribute('aria-controls', menu.id);
+        trigger.setAttribute('aria-controls', `${menu.id}-listbox`);
 
         if (select.id) {
             trigger.id = `${select.id}Button`;

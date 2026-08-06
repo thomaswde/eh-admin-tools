@@ -4,6 +4,7 @@ const DASHBOARD_USAGE_LOOKBACK_DAYS = 365;
 const DASHBOARD_USAGE_DAY_MS = 24 * 60 * 60 * 1000;
 const DASHBOARD_USAGE_FILTER_PRESETS = [7, 14, 30, 60, 90, 180, 365];
 const MAX_DASHBOARD_FILTERS = 20;
+const MAX_DASHBOARD_OWNER_FILTER_VALUES = 20;
 const DASHBOARD_PAGE_SIZE = 100;
 const DASHBOARD_HIGH_IMPACT_THRESHOLD = 100;
 
@@ -192,7 +193,22 @@ function normalizeDashboardFilter(filter) {
     if (!definition) return null;
     const operator = String(filter?.operator || '');
     if (!definition.operators.some(candidate => candidate.value === operator)) return null;
-    const operand = String(filter?.operand ?? '').trim();
+    const rawOperand = filter?.operand;
+    if (field === 'owner' && operator === 'is') {
+        const source = Array.isArray(rawOperand) ? rawOperand : [rawOperand];
+        const seen = new Set();
+        const operand = source
+            .map(value => String(value ?? '').trim())
+            .filter(value => {
+                const folded = value.toLocaleLowerCase();
+                if (!value || seen.has(folded)) return false;
+                seen.add(folded);
+                return true;
+            });
+        if (!operand.length || operand.length > MAX_DASHBOARD_OWNER_FILTER_VALUES) return null;
+        return { field, operator, operand };
+    }
+    const operand = String(rawOperand ?? '').trim();
     if (!operand) return null;
     if (field === 'viewed') {
         const days = Number(operand);
@@ -217,6 +233,9 @@ function dashboardFilterMatches(dashboard, filter) {
         ? dashboardOwnerValue(dashboard)
         : String(dashboard?.name || '');
     const actualFolded = actual.toLocaleLowerCase();
+    if (normalized.field === 'owner' && normalized.operator === 'is') {
+        return normalized.operand.some(owner => actualFolded === owner.toLocaleLowerCase());
+    }
     const operandFolded = normalized.operand.toLocaleLowerCase();
     if (normalized.operator === 'contains') return actualFolded.includes(operandFolded);
     if (normalized.operator === 'not_contains') return !actualFolded.includes(operandFolded);
@@ -234,6 +253,10 @@ function describeDashboardFilter(filter) {
         const suffix = dashboardUsageCoversDays(normalized.operand) ? '' : ' — history unavailable';
         return `${definition.label} ${operator.chipLabel} ${normalized.operand}d${suffix}`;
     }
+    if (normalized.field === 'owner' && normalized.operator === 'is') {
+        const owners = normalized.operand.map(owner => `“${owner}”`).join(' or ');
+        return `${definition.label} ${operator.chipLabel} ${owners}`;
+    }
     return `${definition.label} ${operator.chipLabel} “${normalized.operand}”`;
 }
 
@@ -243,23 +266,60 @@ function dashboardFilterValidation(filter) {
     if (normalized.field === 'viewed' && !dashboardUsageCoversDays(normalized.operand)) {
         return { valid: false, reason: 'That lookback is outside the returned usage metric history.' };
     }
-    if (dashboardFilterState.filters.length >= MAX_DASHBOARD_FILTERS) {
+    const mergeTarget = normalized.field === 'owner' && normalized.operator === 'is'
+        ? dashboardFilterState.filters.find(existing => {
+            const current = normalizeDashboardFilter(existing);
+            return current?.field === 'owner' && current.operator === 'is';
+        })
+        : null;
+    if (!mergeTarget && dashboardFilterState.filters.length >= MAX_DASHBOARD_FILTERS) {
         return { valid: false, reason: `Up to ${MAX_DASHBOARD_FILTERS} filters can be applied.` };
     }
     const duplicate = dashboardFilterState.filters.some(existing => {
         const current = normalizeDashboardFilter(existing);
+        if (current?.field === 'owner' && current.operator === 'is'
+            && normalized.field === 'owner' && normalized.operator === 'is') {
+            const currentOwners = new Set(current.operand.map(owner => owner.toLocaleLowerCase()));
+            return normalized.operand.every(owner => currentOwners.has(owner.toLocaleLowerCase()));
+        }
         return current
             && current.field === normalized.field
             && current.operator === normalized.operator
             && current.operand.toLocaleLowerCase() === normalized.operand.toLocaleLowerCase();
     });
     if (duplicate) return { valid: false, reason: 'That filter is already applied.' };
+    if (mergeTarget) {
+        const current = normalizeDashboardFilter(mergeTarget);
+        const owners = new Set(current.operand.map(owner => owner.toLocaleLowerCase()));
+        const additions = normalized.operand.filter(owner => !owners.has(owner.toLocaleLowerCase()));
+        if (current.operand.length + additions.length > MAX_DASHBOARD_OWNER_FILTER_VALUES) {
+            return {
+                valid: false,
+                reason: `Up to ${MAX_DASHBOARD_OWNER_FILTER_VALUES} owners can be included in one filter.`
+            };
+        }
+    }
     return { valid: true, filter: normalized, reason: '' };
 }
 
 function addDashboardFilter(filter) {
     const validation = dashboardFilterValidation(filter);
     if (!validation.valid) return false;
+    if (validation.filter.field === 'owner' && validation.filter.operator === 'is') {
+        const existing = dashboardFilterState.filters.find(candidate => {
+            const current = normalizeDashboardFilter(candidate);
+            return current?.field === 'owner' && current.operator === 'is';
+        });
+        if (existing) {
+            const current = normalizeDashboardFilter(existing);
+            const owners = new Set(current.operand.map(owner => owner.toLocaleLowerCase()));
+            existing.operand = [
+                ...current.operand,
+                ...validation.filter.operand.filter(owner => !owners.has(owner.toLocaleLowerCase()))
+            ];
+            return true;
+        }
+    }
     dashboardFilterState.filters.push({
         id: dashboardFilterState.nextId++,
         ...validation.filter
