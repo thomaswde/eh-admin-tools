@@ -32,8 +32,63 @@ const USER_MODULE_ACCESS_OPTIONS = {
 const USER_ROLE_ORDER = ['system', 'write', 'metrics', 'ndr', 'npm', 'packets'];
 const USER_BASE_FAMILIES = ['system', 'write', 'metrics'];
 const USER_KNOWN_FAMILIES = [...USER_ROLE_ORDER];
-const USER_INACTIVITY_FILTER_DAYS = new Set(['30', '90', '180', '365']);
+const USER_FILTER_LOOKBACK_DAYS = ['7', '14', '30', '60', '90', '180', '365'];
+const MAX_USER_FILTERS = 20;
 const MAX_USER_BATCH_SIZE = 500;
+
+const USER_FILTER_DEFINITIONS = {
+    identity: {
+        label: 'Name or username',
+        operators: [
+            { value: 'contains', label: 'contains (≈)', chipLabel: 'contains' },
+            { value: 'not_contains', label: 'does not contain (≉)', chipLabel: 'does not contain' },
+            { value: 'is', label: 'is (=)', chipLabel: 'is' },
+            { value: 'is_not', label: 'is not (≠)', chipLabel: 'is not' }
+        ]
+    },
+    type: {
+        label: 'Type',
+        operators: [
+            { value: 'is', label: 'is (=)', chipLabel: 'is' },
+            { value: 'is_not', label: 'is not (≠)', chipLabel: 'is not' }
+        ],
+        choices: [
+            { value: 'local', label: 'Local' },
+            { value: 'remote', label: 'Remote' }
+        ]
+    },
+    base_access: {
+        label: 'Base access',
+        operators: [
+            { value: 'is', label: 'is (=)', chipLabel: 'is' },
+            { value: 'is_not', label: 'is not (≠)', chipLabel: 'is not' }
+        ],
+        choices: [
+            ...USER_BASE_ACCESS_OPTIONS.map(option => ({ value: option.value, label: option.label })),
+            { value: 'custom', label: 'Custom' },
+            { value: 'not_set', label: 'Not Set' }
+        ]
+    },
+    state: {
+        label: 'State',
+        operators: [
+            { value: 'is', label: 'is (=)', chipLabel: 'is' },
+            { value: 'is_not', label: 'is not (≠)', chipLabel: 'is not' }
+        ],
+        choices: [
+            { value: 'enabled', label: 'Enabled' },
+            { value: 'disabled', label: 'Disabled' }
+        ]
+    },
+    last_login: {
+        label: 'Last UI login',
+        operators: [
+            { value: 'within', label: 'within the last', chipLabel: 'within the last' },
+            { value: 'not_within', label: 'not within the last', chipLabel: 'not within the last' },
+            { value: 'never', label: 'is never recorded', chipLabel: 'is never recorded' }
+        ]
+    }
+};
 
 const userManagerState = {
     isLoaded: false,
@@ -47,6 +102,11 @@ const userManagerState = {
     selectedUsers: new Set(),
     mutationPromise: null,
     mutationOperation: null
+};
+
+const userFilterState = {
+    filters: [],
+    nextId: 1
 };
 
 function isUserMutationRunning() {
@@ -64,7 +124,7 @@ function userMatchesInactivityFilter(user, filterValue, nowMs = Date.now()) {
     if (!normalized) return true;
     const lastLogin = userTimestamp(user?.last_ui_login_time);
     if (normalized === 'never') return lastLogin === null;
-    if (!USER_INACTIVITY_FILTER_DAYS.has(normalized)) return true;
+    if (!USER_FILTER_LOOKBACK_DAYS.includes(normalized)) return true;
 
     const cutoff = nowMs - Number(normalized) * 24 * 60 * 60 * 1000;
     if (lastLogin !== null) return lastLogin <= cutoff;
@@ -72,52 +132,153 @@ function userMatchesInactivityFilter(user, filterValue, nowMs = Date.now()) {
     return joined !== null && joined <= cutoff;
 }
 
-function describeUserFilters(searchValue, typeValue, stateValue, inactivityValue) {
-    const filters = [];
-    const search = String(searchValue || '').trim();
-    const type = String(typeValue || '');
-    const accountState = String(stateValue || '');
-    const inactivity = String(inactivityValue || '');
+function userMatchesLastLoginFilter(user, operator, days, nowMs = Date.now()) {
+    if (operator === 'never') return userTimestamp(user?.last_ui_login_time) === null;
+    if (!USER_FILTER_LOOKBACK_DAYS.includes(String(days))) return false;
+    if (operator === 'not_within') return userMatchesInactivityFilter(user, days, nowMs);
+    if (operator !== 'within') return false;
+    const lastLogin = userTimestamp(user?.last_ui_login_time);
+    const cutoff = nowMs - Number(days) * 24 * 60 * 60 * 1000;
+    return lastLogin !== null && lastLogin > cutoff;
+}
 
-    if (search) filters.push(`Name or username contains “${search}”`);
-    if (type === 'local') filters.push('Type: Local');
-    if (type === 'remote') filters.push('Type: Remote');
-    if (accountState === 'enabled') filters.push('State: Enabled');
-    if (accountState === 'disabled') filters.push('State: Disabled');
-    if (inactivity === 'never') filters.push('Last login: Never logged in');
-    if (USER_INACTIVITY_FILTER_DAYS.has(inactivity)) {
-        filters.push(`Last login: Inactive for ${inactivity} days`);
+function getUserBaseAccessFilterValue(user) {
+    const granted = getBaseAccessInfo(user?.granted_roles || {});
+    if (granted.value !== 'not_set') return granted.value;
+    return getBaseAccessInfo(user?.effective_roles || {}).value;
+}
+
+function normalizeUserFilter(filter) {
+    const field = String(filter?.field || '');
+    const definition = USER_FILTER_DEFINITIONS[field];
+    if (!definition) return null;
+    const operator = String(filter?.operator || '');
+    if (!definition.operators.some(candidate => candidate.value === operator)) return null;
+    if (field === 'last_login' && operator === 'never') {
+        return { field, operator, operand: '' };
     }
-    return filters;
+    const operand = String(filter?.operand ?? '').trim();
+    if (!operand) return null;
+    if (field === 'last_login' && !USER_FILTER_LOOKBACK_DAYS.includes(operand)) return null;
+    if (definition.choices && !definition.choices.some(choice => choice.value === operand)) return null;
+    return { field, operator, operand };
 }
 
-function getUserFilterDescription() {
-    return describeUserFilters(
-        document.getElementById('searchUsers')?.value,
-        document.getElementById('filterUserType')?.value,
-        document.getElementById('filterUserState')?.value,
-        document.getElementById('filterUserInactivity')?.value
-    );
+function userFilterMatches(user, filter, nowMs = Date.now()) {
+    const normalized = normalizeUserFilter(filter);
+    if (!normalized) return true;
+    if (normalized.field === 'last_login') {
+        return userMatchesLastLoginFilter(user, normalized.operator, normalized.operand, nowMs);
+    }
+
+    if (normalized.field === 'identity') {
+        const values = [user?.username, user?.name]
+            .map(value => String(value || '').toLocaleLowerCase());
+        const operand = normalized.operand.toLocaleLowerCase();
+        if (normalized.operator === 'contains') return values.some(value => value.includes(operand));
+        if (normalized.operator === 'not_contains') return values.every(value => !value.includes(operand));
+        if (normalized.operator === 'is') return values.some(value => value === operand);
+        if (normalized.operator === 'is_not') return values.every(value => value !== operand);
+        return false;
+    }
+
+    let actual = '';
+    if (normalized.field === 'type') actual = String(user?.type || '').toLocaleLowerCase();
+    if (normalized.field === 'state') actual = user?.enabled ? 'enabled' : 'disabled';
+    if (normalized.field === 'base_access') actual = getUserBaseAccessFilterValue(user);
+    const matches = actual === normalized.operand;
+    return normalized.operator === 'is' ? matches : !matches;
 }
 
-function userFilterCountText(matchedCount, totalCount, appliedFilterCount) {
+function userFilterChoiceLabel(field, value) {
+    const definition = USER_FILTER_DEFINITIONS[field];
+    return definition?.choices?.find(choice => choice.value === value)?.label || value;
+}
+
+function describeUserFilter(filter) {
+    const normalized = normalizeUserFilter(filter);
+    if (!normalized) return '';
+    const definition = USER_FILTER_DEFINITIONS[normalized.field];
+    const operator = definition.operators.find(candidate => candidate.value === normalized.operator);
+    if (normalized.field === 'last_login') {
+        return normalized.operator === 'never'
+            ? `${definition.label} ${operator.chipLabel}`
+            : `${definition.label} ${operator.chipLabel} ${normalized.operand}d`;
+    }
+    if (definition.choices) {
+        return `${definition.label} ${operator.chipLabel} “${userFilterChoiceLabel(normalized.field, normalized.operand)}”`;
+    }
+    return `${definition.label} ${operator.chipLabel} “${normalized.operand}”`;
+}
+
+function userFilterValidation(filter) {
+    const normalized = normalizeUserFilter(filter);
+    if (!normalized) return { valid: false, reason: 'Choose a field, operator, and value.' };
+    if (userFilterState.filters.length >= MAX_USER_FILTERS) {
+        return { valid: false, reason: `Up to ${MAX_USER_FILTERS} filters can be applied.` };
+    }
+    const duplicate = userFilterState.filters.some(existing => {
+        const current = normalizeUserFilter(existing);
+        return current
+            && current.field === normalized.field
+            && current.operator === normalized.operator
+            && current.operand.toLocaleLowerCase() === normalized.operand.toLocaleLowerCase();
+    });
+    if (duplicate) return { valid: false, reason: 'That filter is already applied.' };
+    return { valid: true, filter: normalized, reason: '' };
+}
+
+function addUserFilter(filter) {
+    const validation = userFilterValidation(filter);
+    if (!validation.valid) return false;
+    userFilterState.filters.push({
+        id: userFilterState.nextId++,
+        ...validation.filter
+    });
+    return true;
+}
+
+function removeUserFilter(filterId) {
+    const index = userFilterState.filters.findIndex(filter => String(filter.id) === String(filterId));
+    if (index < 0) return false;
+    userFilterState.filters.splice(index, 1);
+    return true;
+}
+
+function userFilterCountMarkup(matchedCount, totalCount, appliedFilterCount) {
     const totalLabel = Number(totalCount || 0).toLocaleString();
     if (appliedFilterCount === 0) {
-        return `Showing all ${totalLabel} user${totalCount === 1 ? '' : 's'}`;
+        return `Showing all <strong>${totalLabel}</strong> user${totalCount === 1 ? '' : 's'}`;
     }
     const matchedLabel = Number(matchedCount || 0).toLocaleString();
-    return `${matchedLabel} of ${totalLabel} user${totalCount === 1 ? '' : 's'} match ${appliedFilterCount} applied filter${appliedFilterCount === 1 ? '' : 's'}`;
+    return `<strong>${matchedLabel}</strong> of <strong>${totalLabel}</strong> user${totalCount === 1 ? '' : 's'} match <strong>${appliedFilterCount}</strong> applied filter${appliedFilterCount === 1 ? '' : 's'}`;
 }
 
-function renderUserAppliedFilters(filters = getUserFilterDescription()) {
+function renderUserAppliedFilters(filters = userFilterState.filters) {
     const summary = document.getElementById('userAppliedFilters');
     const chips = document.getElementById('userAppliedFilterChips');
     if (!summary || !chips) return;
     chips.replaceChildren();
-    filters.forEach(label => {
+    filters.forEach(filter => {
+        const label = describeUserFilter(filter);
+        if (!label) return;
         const chip = document.createElement('span');
-        chip.className = 'badge';
-        chip.textContent = label;
+        chip.className = 'badge filter-chip';
+        const text = document.createElement('span');
+        text.textContent = label;
+        chip.appendChild(text);
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'filter-chip-remove';
+        remove.textContent = '×';
+        remove.setAttribute('aria-label', `Remove filter: ${label}`);
+        remove.addEventListener('click', () => {
+            if (!removeUserFilter(filter.id)) return;
+            applyUserFilters();
+            renderUsers();
+            syncUserFilterApplyButton();
+        });
+        chip.appendChild(remove);
         chips.appendChild(chip);
     });
     summary.hidden = filters.length === 0;
@@ -394,6 +555,7 @@ function getBaseAccessInfo(roles = {}) {
 
     if (Object.keys(baseSubset).length === 0) {
         return {
+            value: 'not_set',
             label: 'Not Set',
             color: 'var(--text-muted)'
         };
@@ -402,12 +564,14 @@ function getBaseAccessInfo(roles = {}) {
     const matched = USER_BASE_ACCESS_OPTIONS.find(option => roleObjectsEqual(option.roles, baseSubset));
     if (!matched) {
         return {
+            value: 'custom',
             label: 'Custom',
             color: 'var(--plum)'
         };
     }
 
     return {
+        value: matched.value,
         label: matched.label,
         color: matched.value === 'system_full' ? 'var(--magenta)' : 'var(--sapphire)'
     };
@@ -422,6 +586,7 @@ function getDisplayedBaseAccess(user) {
     const effective = getBaseAccessInfo(user.effective_roles || {});
     if (effective.label !== 'Not Set') {
         return {
+            value: effective.value,
             label: `${effective.label} (effective)`,
             color: effective.color
         };
@@ -517,23 +682,140 @@ function renderLockPanel(user) {
     `;
 }
 
-function applyUserFilters() {
-    const searchTerm = document.getElementById('searchUsers').value.trim().toLowerCase();
-    const typeFilter = document.getElementById('filterUserType').value;
-    const stateFilter = document.getElementById('filterUserState').value;
-    const inactivityFilter = document.getElementById('filterUserInactivity').value;
-
-    state.filteredUsers = state.users.filter(user => {
-        const matchesSearch = !searchTerm
-            || (user.username || '').toLowerCase().includes(searchTerm)
-            || (user.name || '').toLowerCase().includes(searchTerm);
-        const matchesType = !typeFilter || user.type === typeFilter;
-        const enabledState = user.enabled ? 'enabled' : 'disabled';
-        const matchesState = !stateFilter || enabledState === stateFilter;
-        const matchesInactivity = userMatchesInactivityFilter(user, inactivityFilter);
-        return matchesSearch && matchesType && matchesState && matchesInactivity;
+function setUserSelectOptions(select, options, desiredValue = '') {
+    if (!select) return;
+    select.replaceChildren();
+    options.forEach(item => {
+        const option = document.createElement('option');
+        option.value = String(item.value ?? '');
+        option.textContent = String(item.label || '');
+        option.disabled = Boolean(item.disabled);
+        select.appendChild(option);
     });
+    const desired = String(desiredValue || '');
+    const desiredOption = Array.from(select.options)
+        .find(option => option.value === desired && !option.disabled);
+    select.value = desiredOption ? desired : '';
+    window.refreshCustomSelect?.(select);
+}
 
+function updateUserFilterBuilder({ preserveOperator = true, preserveOperand = true } = {}) {
+    const fieldSelect = document.getElementById('userFilterField');
+    const operatorSelect = document.getElementById('userFilterOperator');
+    if (!fieldSelect || !operatorSelect) return;
+
+    const field = USER_FILTER_DEFINITIONS[fieldSelect.value] ? fieldSelect.value : 'identity';
+    fieldSelect.value = field;
+    const definition = USER_FILTER_DEFINITIONS[field];
+    const desiredOperator = preserveOperator ? operatorSelect.value : '';
+    setUserSelectOptions(
+        operatorSelect,
+        definition.operators.map(operator => ({ value: operator.value, label: operator.label })),
+        definition.operators.some(operator => operator.value === desiredOperator)
+            ? desiredOperator
+            : definition.operators[0].value
+    );
+
+    const operator = operatorSelect.value;
+    const textWrap = document.getElementById('userFilterTextOperandWrap');
+    const choiceWrap = document.getElementById('userFilterChoiceOperandWrap');
+    const lookbackWrap = document.getElementById('userFilterLookbackOperandWrap');
+    if (textWrap) textWrap.hidden = field !== 'identity';
+    if (choiceWrap) choiceWrap.hidden = !definition.choices;
+    if (lookbackWrap) lookbackWrap.hidden = field !== 'last_login' || operator === 'never';
+
+    if (definition.choices) {
+        const choiceSelect = document.getElementById('userFilterChoiceOperand');
+        const desiredChoice = preserveOperand ? choiceSelect?.value : '';
+        setUserSelectOptions(choiceSelect, [
+            { value: '', label: `Select ${definition.label.toLocaleLowerCase()}…`, disabled: true },
+            ...definition.choices
+        ], desiredChoice);
+        choiceWrap?.classList.toggle('is-placeholder', !choiceSelect?.value);
+    }
+
+    if (field === 'last_login' && operator !== 'never') {
+        const lookbackSelect = document.getElementById('userFilterLookbackOperand');
+        const desiredLookback = preserveOperand ? lookbackSelect?.value : '';
+        setUserSelectOptions(lookbackSelect, [
+            { value: '', label: 'Select a lookback…', disabled: true },
+            ...USER_FILTER_LOOKBACK_DAYS.map(days => ({ value: days, label: `${days} days` }))
+        ], desiredLookback);
+        lookbackWrap?.classList.toggle('is-placeholder', !lookbackSelect?.value);
+    }
+
+    syncUserFilterApplyButton();
+}
+
+function readUserFilterBuilder() {
+    const field = document.getElementById('userFilterField')?.value || '';
+    const operator = document.getElementById('userFilterOperator')?.value || '';
+    let operand = '';
+    if (field === 'identity') operand = document.getElementById('userFilterTextOperand')?.value || '';
+    if (USER_FILTER_DEFINITIONS[field]?.choices) {
+        operand = document.getElementById('userFilterChoiceOperand')?.value || '';
+    }
+    if (field === 'last_login' && operator !== 'never') {
+        operand = document.getElementById('userFilterLookbackOperand')?.value || '';
+    }
+    return { field, operator, operand };
+}
+
+function syncUserFilterApplyButton() {
+    const button = document.getElementById('addUserFilterBtn');
+    if (!button) return;
+    const validation = userFilterValidation(readUserFilterBuilder());
+    button.disabled = !validation.valid;
+    button.title = validation.reason;
+
+    const choiceSelect = document.getElementById('userFilterChoiceOperand');
+    const lookbackSelect = document.getElementById('userFilterLookbackOperand');
+    document.getElementById('userFilterChoiceOperandWrap')
+        ?.classList.toggle('is-placeholder', !choiceSelect?.value);
+    document.getElementById('userFilterLookbackOperandWrap')
+        ?.classList.toggle('is-placeholder', !lookbackSelect?.value);
+}
+
+function resetUserFilterOperand() {
+    const field = document.getElementById('userFilterField')?.value;
+    if (field === 'identity') {
+        const input = document.getElementById('userFilterTextOperand');
+        if (input) input.value = '';
+    } else if (USER_FILTER_DEFINITIONS[field]?.choices) {
+        const select = document.getElementById('userFilterChoiceOperand');
+        if (select) select.value = '';
+        window.refreshCustomSelect?.(select);
+    } else if (field === 'last_login') {
+        const select = document.getElementById('userFilterLookbackOperand');
+        if (select) select.value = '';
+        window.refreshCustomSelect?.(select);
+    }
+    syncUserFilterApplyButton();
+}
+
+function addUserFilterFromBuilder() {
+    if (!addUserFilter(readUserFilterBuilder())) {
+        syncUserFilterApplyButton();
+        return false;
+    }
+    resetUserFilterOperand();
+    applyUserFilters();
+    renderUsers();
+    return true;
+}
+
+function clearUserFilters() {
+    userFilterState.filters.length = 0;
+    applyUserFilters();
+    renderUsers();
+    syncUserFilterApplyButton();
+}
+
+function applyUserFilters() {
+    const nowMs = Date.now();
+    state.filteredUsers = state.users.filter(user => (
+        userFilterState.filters.every(filter => userFilterMatches(user, filter, nowMs))
+    ));
     userManagerState.currentPage = 1;
 }
 
@@ -722,12 +1004,11 @@ function updateUsersPagination() {
     const infoEl = document.getElementById('usersPaginationInfo');
     const prevBtn = document.getElementById('usersPrevPageBtn');
     const nextBtn = document.getElementById('usersNextPageBtn');
-    const appliedFilters = getUserFilterDescription();
-    renderUserAppliedFilters(appliedFilters);
-    document.getElementById('userFilterCount').textContent = userFilterCountText(
+    renderUserAppliedFilters();
+    document.getElementById('userFilterCount').innerHTML = userFilterCountMarkup(
         totalItems,
         state.users.length,
-        appliedFilters.length
+        userFilterState.filters.length
     );
 
     if (totalItems === 0) {
@@ -956,6 +1237,7 @@ async function loadUsers(options = {}) {
         state.allUsers = users.map(user => ({ username: user.username }));
         userManagerState.isLoaded = true;
 
+        updateUserFilterBuilder({ preserveOperator: true, preserveOperand: true });
         applyUserFilters();
         renderUsers();
 
@@ -1344,6 +1626,7 @@ async function activateUsersModule() {
     }
 
     if (userManagerState.isLoaded && state.users.length > 0) {
+        updateUserFilterBuilder({ preserveOperator: true, preserveOperand: true });
         applyUserFilters();
         renderUsers();
         return;
@@ -1363,36 +1646,22 @@ function initUsersModule() {
     document.getElementById('loadUsersBtn').addEventListener('click', () => loadUsers());
     document.getElementById('createUserBtn').addEventListener('click', openCreateUserModal);
 
-    document.getElementById('searchUsers').addEventListener('input', () => {
-        applyUserFilters();
-        renderUsers();
+    document.getElementById('userFilterField').addEventListener('change', () => {
+        updateUserFilterBuilder({ preserveOperator: false, preserveOperand: false });
     });
-
-    document.getElementById('filterUserType').addEventListener('change', () => {
-        applyUserFilters();
-        renderUsers();
+    document.getElementById('userFilterOperator').addEventListener('change', () => {
+        updateUserFilterBuilder({ preserveOperator: true, preserveOperand: true });
     });
-
-    document.getElementById('filterUserState').addEventListener('change', () => {
-        applyUserFilters();
-        renderUsers();
+    document.getElementById('userFilterTextOperand').addEventListener('input', syncUserFilterApplyButton);
+    document.getElementById('userFilterTextOperand').addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        addUserFilterFromBuilder();
     });
-
-    document.getElementById('filterUserInactivity').addEventListener('change', () => {
-        applyUserFilters();
-        renderUsers();
-    });
-
-    document.getElementById('clearUserFiltersBtn').addEventListener('click', () => {
-        document.getElementById('searchUsers').value = '';
-        ['filterUserType', 'filterUserState', 'filterUserInactivity'].forEach(id => {
-            const filter = document.getElementById(id);
-            filter.value = '';
-            window.refreshCustomSelect?.(filter);
-        });
-        applyUserFilters();
-        renderUsers();
-    });
+    document.getElementById('userFilterChoiceOperand').addEventListener('change', syncUserFilterApplyButton);
+    document.getElementById('userFilterLookbackOperand').addEventListener('change', syncUserFilterApplyButton);
+    document.getElementById('addUserFilterBtn').addEventListener('click', addUserFilterFromBuilder);
+    document.getElementById('clearUserFiltersBtn').addEventListener('click', clearUserFilters);
 
     document.getElementById('selectAllUsers').addEventListener('change', event => {
         if (isUserMutationRunning()) return;
@@ -1485,6 +1754,7 @@ function initUsersModule() {
         document.getElementById('createdUserApiKeyValue').textContent = '';
     });
 
+    updateUserFilterBuilder({ preserveOperator: false, preserveOperand: false });
     document.getElementById('loadUsersBtn').setAttribute('data-listener-added', 'true');
 }
 

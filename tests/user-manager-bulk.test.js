@@ -67,26 +67,36 @@ test('inactivity filtering uses account age for users who never logged in', () =
     ), true);
 });
 
-test('user filter summary distinguishes no filters from combined filters', () => {
+test('user filter labels distinguish fields, operators, and operands', () => {
     const { context } = loadUserManager({});
-    context.filterDescription = vm.runInContext(
-        `describeUserFilters(' Alice ', 'local', 'disabled', '90')`,
-        context
-    );
-
-    assert.deepEqual(plain(context.filterDescription), [
-        'Name or username contains “Alice”',
-        'Type: Local',
-        'State: Disabled',
-        'Last login: Inactive for 90 days'
-    ]);
     assert.equal(
-        vm.runInContext(`userFilterCountText(25, 25, 0)`, context),
-        'Showing all 25 users'
+        vm.runInContext(
+            `describeUserFilter({ field: 'identity', operator: 'contains', operand: ' Alice ' })`,
+            context
+        ),
+        'Name or username contains “Alice”'
     );
     assert.equal(
-        vm.runInContext(`userFilterCountText(2, 25, 4)`, context),
-        '2 of 25 users match 4 applied filters'
+        vm.runInContext(
+            `describeUserFilter({ field: 'type', operator: 'is_not', operand: 'remote' })`,
+            context
+        ),
+        'Type is not “Remote”'
+    );
+    assert.equal(
+        vm.runInContext(
+            `describeUserFilter({ field: 'last_login', operator: 'not_within', operand: '90' })`,
+            context
+        ),
+        'Last UI login not within the last 90d'
+    );
+    assert.equal(
+        vm.runInContext(`userFilterCountMarkup(25, 25, 0)`, context),
+        'Showing all <strong>25</strong> users'
+    );
+    assert.equal(
+        vm.runInContext(`userFilterCountMarkup(2, 25, 4)`, context),
+        '<strong>2</strong> of <strong>25</strong> users match <strong>4</strong> applied filters'
     );
 });
 
@@ -94,12 +104,6 @@ test('user name, type, state, and inactivity filters combine in one result set',
     const nowMs = Date.UTC(2026, 7, 5);
     const oldLogin = Date.UTC(2025, 0, 1);
     const recentLogin = Date.UTC(2026, 7, 4);
-    const elements = {
-        searchUsers: { value: 'alice' },
-        filterUserType: { value: 'local' },
-        filterUserState: { value: 'disabled' },
-        filterUserInactivity: { value: '90' }
-    };
     const users = [
         { username: 'alice', name: 'Alice Admin', type: 'local', enabled: false, last_ui_login_time: oldLogin },
         { username: 'alice-remote', name: 'Alice Remote', type: 'remote', enabled: false, last_ui_login_time: oldLogin },
@@ -107,15 +111,52 @@ test('user name, type, state, and inactivity filters combine in one result set',
         { username: 'alice-current', name: 'Alice Current', type: 'local', enabled: false, last_ui_login_time: recentLogin },
         { username: 'bob', name: 'Bob Admin', type: 'local', enabled: false, last_ui_login_time: oldLogin }
     ];
-    const { context, state } = loadUserManager({}, users, elements);
+    const { context, state } = loadUserManager({}, users);
     context.nowMs = nowMs;
 
     vm.runInContext(`
         Date.now = () => nowMs;
+        userFilterState.filters = [
+            { id: 1, field: 'identity', operator: 'contains', operand: 'alice' },
+            { id: 2, field: 'type', operator: 'is', operand: 'local' },
+            { id: 3, field: 'state', operator: 'is', operand: 'disabled' },
+            { id: 4, field: 'last_login', operator: 'not_within', operand: '90' }
+        ];
         applyUserFilters();
     `, context);
 
     assert.deepEqual(state.filteredUsers.map(user => user.username), ['alice']);
+});
+
+test('base access filters use the displayed granted or effective access', () => {
+    const users = [
+        { username: 'system', granted_roles: { system: 'full' } },
+        { username: 'effective', granted_roles: {}, effective_roles: { write: 'limited' } },
+        { username: 'custom', granted_roles: { write: 'custom' } }
+    ];
+    const { context, state } = loadUserManager({}, users);
+
+    vm.runInContext(`
+        userFilterState.filters = [
+            { id: 1, field: 'base_access', operator: 'is', operand: 'write_limited' }
+        ];
+        applyUserFilters();
+    `, context);
+
+    assert.deepEqual(state.filteredUsers.map(user => user.username), ['effective']);
+});
+
+test('stacked user filters reject duplicates and allow inverse filters', () => {
+    const { context } = loadUserManager({});
+    const results = vm.runInContext(`[
+        addUserFilter({ field: 'identity', operator: 'contains', operand: 'Admin' }),
+        addUserFilter({ field: 'identity', operator: 'contains', operand: ' admin ' }),
+        addUserFilter({ field: 'identity', operator: 'not_contains', operand: 'test' }),
+        addUserFilter({ field: 'last_login', operator: 'never', operand: '' }),
+        userFilterState.filters.length
+    ]`, context);
+
+    assert.deepEqual(plain(results), [true, false, true, true, 3]);
 });
 
 test('bulk disable skips disabled users, continues after failures, and reloads once', async () => {

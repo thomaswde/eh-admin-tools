@@ -462,39 +462,47 @@
 
         <!-- ---------------------- User Manager ---------------------- -->
         <div id="usersModule" class="module-content page" style="display: none;">
-            <div class="page-head">
-                <h1 class="page-title">User Manager</h1>
-                <p class="page-desc">Manage user accounts, privileges, API keys, and lock status.</p>
+            <div class="page-head dashboard-page-head">
+                <div>
+                    <h1 class="page-title">User Manager</h1>
+                    <p class="page-desc">Manage user accounts, privileges, API keys, and lock status.</p>
+                </div>
+                <div class="row-tight">
+                    <button type="button" id="loadUsersBtn" class="btn">Refresh</button>
+                    <button type="button" id="createUserBtn" class="btn-primary">Create user</button>
+                </div>
             </div>
 
-            <div class="toolbar">
-                <div class="search-wrap">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                        <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path>
-                    </svg>
-                    <input type="search" id="searchUsers" placeholder="Search users…">
+            <div class="dashboard-filter-panel">
+                <div class="dashboard-filter-builder" role="group" aria-label="Add a user filter">
+                    <select id="userFilterField" aria-label="Filter field">
+                        <option value="identity">Name or username</option>
+                        <option value="type">Type</option>
+                        <option value="base_access">Base access</option>
+                        <option value="state">State</option>
+                        <option value="last_login">Last UI login</option>
+                    </select>
+                    <select id="userFilterOperator" aria-label="Filter operator">
+                        <option value="contains">contains</option>
+                        <option value="not_contains">does not contain</option>
+                        <option value="is">is</option>
+                        <option value="is_not">is not</option>
+                    </select>
+                    <div id="userFilterTextOperandWrap" class="dashboard-filter-operand">
+                        <input type="text" id="userFilterTextOperand" maxlength="200" placeholder="Enter a name or username…" aria-label="Filter value">
+                    </div>
+                    <div id="userFilterChoiceOperandWrap" class="dashboard-filter-operand is-placeholder" hidden>
+                        <select id="userFilterChoiceOperand" aria-label="Filter value">
+                            <option value="" disabled selected>Select a value…</option>
+                        </select>
+                    </div>
+                    <div id="userFilterLookbackOperandWrap" class="dashboard-filter-operand is-placeholder" hidden>
+                        <select id="userFilterLookbackOperand" aria-label="Last UI login lookback">
+                            <option value="" disabled selected>Select a lookback…</option>
+                        </select>
+                    </div>
+                    <button type="button" id="addUserFilterBtn" class="btn-primary" disabled>Apply filter</button>
                 </div>
-                <select id="filterUserType" style="width: 150px;">
-                    <option value="">All types</option>
-                    <option value="local">Local</option>
-                    <option value="remote">Remote</option>
-                </select>
-                <select id="filterUserState" style="width: 150px;">
-                    <option value="">All states</option>
-                    <option value="enabled">Enabled</option>
-                    <option value="disabled">Disabled</option>
-                </select>
-                <select id="filterUserInactivity" style="width: 210px;">
-                    <option value="">All last-login dates</option>
-                    <option value="never">Never logged in</option>
-                    <option value="30">Inactive for 30 days</option>
-                    <option value="90">Inactive for 90 days</option>
-                    <option value="180">Inactive for 180 days</option>
-                    <option value="365">Inactive for 365 days</option>
-                </select>
-                <button type="button" id="loadUsersBtn" class="btn">Refresh</button>
-                <button type="button" id="createUserBtn" class="btn-primary">Create user</button>
-                <div class="spacer"></div>
                 <span id="userFilterCount" class="small muted"></span>
             </div>
 
