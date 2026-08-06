@@ -17,7 +17,7 @@ test('HopCloud proxy-token fields explain how to copy only the cookie value', ()
     assert.match(markup, /id="enterpriseProxyToken"/);
 });
 
-test('mixed saved connections are grouped with 360 before Enterprise', () => {
+test('mixed saved connections use the renamed console groups', () => {
     const context = vm.createContext({ console });
     vm.runInContext(source('js/auth/auth-manager.js'), context);
 
@@ -32,20 +32,72 @@ test('mixed saved connections are grouped with 360 before Enterprise', () => {
         JSON.parse(JSON.stringify(groups)),
         [
             {
-                label: 'RevealX 360',
+                label: 'REVEALX 360 CONSOLES',
                 connections: [
                     { id: 'c-a', type: '360', label: 'alpha' },
                     { id: 'c-z', type: '360', label: 'zulu' }
                 ]
             },
             {
-                label: 'RevealX Enterprise',
+                label: 'REVEALX ENTERPRISE CONSOLES',
                 connections: [
                     { id: 'e-a', type: 'enterprise', label: 'sensor-a' },
                     { id: 'e-b', type: 'enterprise', label: 'sensor-b' }
                 ]
             }
         ]
+    );
+});
+
+test('classified Enterprise appliances create only the populated saved-connection groups', () => {
+    const context = vm.createContext({ console });
+    vm.runInContext(source('js/auth/auth-manager.js'), context);
+
+    const groups = vm.runInContext(`groupSavedConnections([
+        { id: 'console', type: 'enterprise', label: 'console', applianceType: 'console' },
+        { id: 'sensor-z', type: 'enterprise', label: 'zulu', applianceType: 'sensor' },
+        { id: 'sensor-a', type: 'enterprise', label: 'alpha', applianceType: 'sensor' },
+        { id: 'packetstore', type: 'enterprise', label: 'packets', applianceType: 'packetstore' }
+    ])`, context);
+
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(groups)),
+        [
+            {
+                label: 'REVEALX ENTERPRISE CONSOLES',
+                connections: [
+                    { id: 'console', type: 'enterprise', label: 'console', applianceType: 'console' }
+                ]
+            },
+            {
+                label: 'SENSORS',
+                connections: [
+                    { id: 'sensor-a', type: 'enterprise', label: 'alpha', applianceType: 'sensor' },
+                    { id: 'sensor-z', type: 'enterprise', label: 'zulu', applianceType: 'sensor' }
+                ]
+            },
+            {
+                label: 'PACKETSTORES',
+                connections: [
+                    { id: 'packetstore', type: 'enterprise', label: 'packets', applianceType: 'packetstore' }
+                ]
+            }
+        ]
+    );
+});
+
+test('empty sensor and Packetstore categories are omitted', () => {
+    const context = vm.createContext({ console });
+    vm.runInContext(source('js/auth/auth-manager.js'), context);
+
+    const groups = vm.runInContext(`groupSavedConnections([
+        { id: 'cloud', type: '360', label: 'cloud' },
+        { id: 'console', type: 'enterprise', label: 'console', applianceType: 'console' }
+    ])`, context);
+
+    assert.deepEqual(
+        Array.from(groups, group => group.label),
+        ['REVEALX 360 CONSOLES', 'REVEALX ENTERPRISE CONSOLES']
     );
 });
 

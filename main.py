@@ -357,6 +357,8 @@ async def establish_session(
     }
     if save_connection:
         try:
+            if client.metadata.appliance_type:
+                config_dict["applianceType"] = client.metadata.appliance_type
             saved = await asyncio.to_thread(connection_store.save, config_dict)
             result.update(
                 {
@@ -419,7 +421,11 @@ async def create_saved_connection_session(
             detail={"message": "Saved connection changes are invalid."},
         ) from error
 
-    runtime_config = dict(stored_config)
+    runtime_config = {
+        key: value
+        for key, value in stored_config.items()
+        if key != "applianceType"
+    }
     proxy_token = str(request_body.proxyToken or "").strip() if request_body else ""
     if proxy_token:
         if runtime_config.get("type") != "enterprise":
@@ -442,6 +448,9 @@ async def create_saved_connection_session(
         eh_admin_session,
         save_connection=False,
     )
+    appliance_type = result.get("config", {}).get("applianceType")
+    if appliance_type:
+        stored_config["applianceType"] = appliance_type
     if changes:
         try:
             saved = await asyncio.to_thread(
@@ -473,6 +482,17 @@ async def create_saved_connection_session(
                     "connectionStorage": storage_status,
                 }
             )
+    elif appliance_type:
+        try:
+            await asyncio.to_thread(
+                connection_store.update_appliance_type,
+                connection_id,
+                appliance_type,
+            )
+        except (ConnectionStorageError, KeyError):
+            # .env connections are intentionally read-only, and classification
+            # metadata must never prevent a successful connection.
+            pass
     return result
 
 

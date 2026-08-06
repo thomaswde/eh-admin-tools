@@ -115,15 +115,19 @@ class SessionMetadata:
     tenant: str | None = None
     host: str | None = None
     verify_tls: bool = True
+    appliance_type: str | None = None
 
     def public_dict(self) -> dict[str, Any]:
         if self.type == "360":
             return {"type": "360", "tenant": self.tenant or ""}
-        return {
+        result = {
             "type": "enterprise",
             "host": self.host or "",
             "verifyTls": self.verify_tls,
         }
+        if self.appliance_type:
+            result["applianceType"] = self.appliance_type
+        return result
 
 
 @dataclass(frozen=True)
@@ -174,6 +178,37 @@ class ExtraHopClient:
             return
 
         await self.request("GET", "/api/v1/extrahop")
+        try:
+            appliances = await self.request("GET", "/api/v1/appliances")
+        except ExtraHopApiError:
+            # Appliance identity enriches saved-connection metadata, but a
+            # restricted inventory grant must not invalidate working credentials.
+            return
+        self.metadata.appliance_type = self._local_appliance_type(appliances)
+
+    @staticmethod
+    def _local_appliance_type(appliances: Any) -> str | None:
+        if not isinstance(appliances, list):
+            return None
+        local = next(
+            (
+                appliance
+                for appliance in appliances
+                if isinstance(appliance, dict) and str(appliance.get("id")) == "0"
+            ),
+            None,
+        )
+        if not local:
+            return None
+
+        platform = str(local.get("platform") or "").strip().casefold().replace("-", "_")
+        if platform == "command":
+            return "console"
+        if platform in {"discover", "flow_collector"}:
+            return "sensor"
+        if platform == "trace":
+            return "packetstore"
+        return None
 
     async def _authenticate_360(self, *, force: bool) -> None:
         async with self._auth_lock:

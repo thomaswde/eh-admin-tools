@@ -62,6 +62,17 @@ class DummyConnectionStore:
             "tenant": config.get("tenant"),
         }
 
+    def update_appliance_type(self, connection_id, appliance_type):
+        config = self.get(connection_id)
+        config["applianceType"] = appliance_type
+        return {
+            "id": connection_id,
+            "type": config["type"],
+            "host": config.get("host"),
+            "tenant": config.get("tenant"),
+            "applianceType": appliance_type,
+        }
+
     def delete(self, connection_id):
         self.get(connection_id)
         del self.configs[connection_id]
@@ -619,6 +630,56 @@ class BackendRouteSecurityTests(unittest.TestCase):
         self.assertTrue(response.json()["savedConnection"])
         self.assertEqual(response.json()["connectionId"], "enterprise-saved")
         self.assertEqual(store.saved, [{**config, "verifyTls": True}])
+
+    def test_manual_connection_saves_server_classified_appliance_type(self):
+        class ClassifiedDummyExtraHopClient(DummyExtraHopClient):
+            def __init__(self, config, response_logger=None):
+                super().__init__(config, response_logger)
+                self.metadata.appliance_type = "sensor"
+
+        config = {
+            "type": "enterprise",
+            "host": "sensor.example.test",
+            "apiKey": "key",
+        }
+        store = DummyConnectionStore()
+        with (
+            patch("main.ExtraHopClient", ClassifiedDummyExtraHopClient),
+            patch("main.connection_store", store),
+        ):
+            response = self.client.post("/backend/session", json=config)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["config"]["applianceType"], "sensor")
+        self.assertEqual(store.saved[0]["applianceType"], "sensor")
+
+    def test_saved_connection_refreshes_server_classified_appliance_type(self):
+        class ClassifiedDummyExtraHopClient(DummyExtraHopClient):
+            def __init__(self, config, response_logger=None):
+                super().__init__(config, response_logger)
+                self.metadata.appliance_type = "packetstore"
+
+        store = DummyConnectionStore()
+        store.configs["enterprise-saved"] = {
+            "type": "enterprise",
+            "host": "packetstore.example.test",
+            "apiKey": "key",
+            "applianceType": "console",
+        }
+        with (
+            patch("main.ExtraHopClient", ClassifiedDummyExtraHopClient),
+            patch("main.connection_store", store),
+        ):
+            response = self.client.post(
+                "/backend/connections/enterprise-saved/session"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["config"]["applianceType"], "packetstore")
+        self.assertEqual(
+            store.configs["enterprise-saved"]["applianceType"],
+            "packetstore",
+        )
 
     def test_secure_storage_failure_does_not_discard_active_session(self):
         config = {

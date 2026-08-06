@@ -275,6 +275,23 @@ class ConnectionStore:
             self._write_keychain_configs(configs)
         return self._metadata(normalized, source="keychain")
 
+    def update_appliance_type(
+        self,
+        connection_id: str,
+        appliance_type: str,
+    ) -> dict[str, Any]:
+        """Persist server-derived appliance identity for an editable connection."""
+        with self._lock:
+            configs = self._read_keychain_configs()
+            if connection_id not in configs:
+                raise KeyError(connection_id)
+            updated = dict(configs[connection_id])
+            updated["applianceType"] = appliance_type
+            normalized = self._persisted_config(updated)
+            configs[connection_id] = normalized
+            self._write_keychain_configs(configs)
+        return self._metadata(normalized, source="keychain")
+
     def delete(self, connection_id: str) -> None:
         with self._lock:
             configs = self._read_keychain_configs()
@@ -480,6 +497,9 @@ class ConnectionStore:
             proxy_token = str(config.get("proxyToken", "")).strip()
             if proxy_token:
                 normalized["proxyToken"] = proxy_token
+            appliance_type = str(config.get("applianceType", "")).strip().lower()
+            if appliance_type in {"console", "sensor", "packetstore"}:
+                normalized["applianceType"] = appliance_type
             return normalized
 
         raise ValueError("unsupported deployment type")
@@ -547,6 +567,8 @@ class ConnectionStore:
                 "host": label,
                 "verifyTls": normalized["verifyTls"],
             }
+            if normalized.get("applianceType"):
+                metadata["applianceType"] = normalized["applianceType"]
         metadata["source"] = source
         metadata["sources"] = [source]
         metadata["editable"] = source == "keychain"

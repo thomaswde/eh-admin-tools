@@ -32,6 +32,71 @@ class ChunkedAsyncStream(httpx.AsyncByteStream):
 
 
 class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_authentication_classifies_the_local_enterprise_appliance(self):
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
+        client.request = AsyncMock(
+            side_effect=[
+                {"version": "9.9"},
+                [
+                    {"id": "12", "platform": "command"},
+                    {"id": "0", "platform": "flow_collector"},
+                ],
+            ]
+        )
+
+        await client.authenticate()
+
+        self.assertEqual(client.metadata.appliance_type, "sensor")
+        self.assertEqual(client.metadata.public_dict()["applianceType"], "sensor")
+        self.assertEqual(
+            [call.args for call in client.request.await_args_list],
+            [
+                ("GET", "/api/v1/extrahop"),
+                ("GET", "/api/v1/appliances"),
+            ],
+        )
+
+    def test_local_appliance_platforms_map_to_saved_connection_categories(self):
+        for platform, expected in (
+            ("command", "console"),
+            ("discover", "sensor"),
+            ("flow_collector", "sensor"),
+            ("flow-collector", "sensor"),
+            ("trace", "packetstore"),
+        ):
+            with self.subTest(platform=platform):
+                self.assertEqual(
+                    ExtraHopClient._local_appliance_type(
+                        [{"id": "0", "platform": platform}]
+                    ),
+                    expected,
+                )
+
+    async def test_inventory_denial_does_not_invalidate_enterprise_credentials(self):
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
+        client.request = AsyncMock(
+            side_effect=[
+                {"version": "9.9"},
+                ExtraHopApiError("forbidden", status_code=403),
+            ]
+        )
+
+        await client.authenticate()
+
+        self.assertIsNone(client.metadata.appliance_type)
+
     def test_request_log_body_parser_bounds_before_json_decoding(self):
         body = b'{"key":"' + (b"x" * 10_000) + b'"}'
         preview = ExtraHopClient._request_body_for_log(

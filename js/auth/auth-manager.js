@@ -9,21 +9,41 @@ function groupSavedConnections(connections) {
         if (labelOrder !== 0) return labelOrder;
         return String(left.id || '').localeCompare(String(right.id || ''));
     });
-    const has360 = sorted.some(connection => connection.type === '360');
-    const hasEnterprise = sorted.some(connection => connection.type === 'enterprise');
-    if (!has360 || !hasEnterprise) {
-        return [{ label: null, connections: sorted }];
-    }
-    return [
+    const definitions = [
         {
-            label: 'RevealX 360',
-            connections: sorted.filter(connection => connection.type === '360')
+            label: 'REVEALX 360 CONSOLES',
+            matches: connection => connection.type === '360'
         },
         {
-            label: 'RevealX Enterprise',
-            connections: sorted.filter(connection => connection.type === 'enterprise')
+            label: 'REVEALX ENTERPRISE CONSOLES',
+            matches: connection => (
+                connection.type === 'enterprise'
+                && !['sensor', 'packetstore'].includes(connection.applianceType)
+            )
+        },
+        {
+            label: 'SENSORS',
+            matches: connection => (
+                connection.type === 'enterprise' && connection.applianceType === 'sensor'
+            )
+        },
+        {
+            label: 'PACKETSTORES',
+            matches: connection => (
+                connection.type === 'enterprise' && connection.applianceType === 'packetstore'
+            )
         }
     ];
+    const groups = definitions
+        .map(definition => ({
+            label: definition.label,
+            connections: sorted.filter(definition.matches)
+        }))
+        .filter(group => group.connections.length > 0);
+    if (groups.length <= 1) {
+        return [{ label: null, connections: sorted }];
+    }
+    return groups;
 }
 
 function savedConnectionTarget(connection) {

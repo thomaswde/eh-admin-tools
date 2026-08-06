@@ -111,6 +111,31 @@ class ConnectionStoreTests(unittest.TestCase):
             self.assertNotIn("single-use-token", payload)
             self.assertNotIn("proxyToken", payload)
 
+    def test_persists_and_updates_server_derived_appliance_type(self):
+        with TemporaryDirectory() as directory:
+            keyring = FakeKeyring()
+            store = ConnectionStore(
+                Path(directory),
+                env_path=Path(directory) / ".env",
+                keyring_backend=keyring,
+            )
+            saved = store.save(
+                {
+                    "type": "enterprise",
+                    "host": "appliance.lab.local",
+                    "apiKey": "durable-key",
+                    "applianceType": "sensor",
+                }
+            )
+
+            self.assertEqual(saved["applianceType"], "sensor")
+            updated = store.update_appliance_type(saved["id"], "packetstore")
+            self.assertEqual(updated["applianceType"], "packetstore")
+            self.assertEqual(
+                store.list_connections()["connections"][0]["applianceType"],
+                "packetstore",
+            )
+
     def test_legacy_keychain_proxy_token_is_scrubbed_on_read(self):
         with TemporaryDirectory() as directory:
             keyring = FakeKeyring()
