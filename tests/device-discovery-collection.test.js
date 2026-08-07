@@ -36,11 +36,45 @@ function loadDeviceDiscovery(overrides = {}) {
         genericChartPaletteColor: () => '#7655c8',
         stateIndicatorColor: () => '#f59e0b',
         escapeHtml: value => String(value),
+        alert: overrides.alert || (() => {}),
         ReportCacheValidation
     });
-    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, getPeriodRange, fetchDevicesBatch, renderDeviceDiscoveryTable, buildDeviceDiscoveryResult, validateDeviceDiscoveryCachePayload, stopDeviceDiscoveryLoad };`, context);
+    vm.runInContext(`${source}\nwindow.__deviceDiscoveryTest = { deviceDiscoveryState, getPeriodRange, fetchDevicesBatch, renderDeviceDiscoveryTable, buildDeviceDiscoveryResult, validateDeviceDiscoveryCachePayload, generateDeviceDiscoveryReport, stopDeviceDiscoveryLoad };`, context);
     return { api: window.__deviceDiscoveryTest, elements };
 }
+
+test('report generation reaches appliance collection and restores controls after an inventory failure', async () => {
+    const elements = {
+        deviceDiscoveryLoading: { style: {} },
+        deviceDiscoveryResults: { style: {} },
+        deviceNoDataMessage: { style: {} },
+        generateDeviceReport: { style: {}, disabled: false },
+        stopDeviceDiscoveryLoad: { style: {} },
+        deviceLoadingText: { textContent: '' }
+    };
+    const alerts = [];
+    let applianceRequests = 0;
+    const { api } = loadDeviceDiscovery({
+        elements,
+        alert: message => alerts.push(message),
+        apiClient: {
+            async getAppliances() {
+                applianceRequests += 1;
+                throw new Error('inventory unavailable');
+            }
+        }
+    });
+
+    await api.generateDeviceDiscoveryReport();
+
+    assert.equal(applianceRequests, 1);
+    assert.equal(elements.deviceDiscoveryLoading.style.display, 'none');
+    assert.equal(elements.deviceDiscoveryResults.style.display, 'none');
+    assert.equal(elements.generateDeviceReport.disabled, false);
+    assert.equal(elements.generateDeviceReport.style.display, 'block');
+    assert.equal(elements.stopDeviceDiscoveryLoad.style.display, 'none');
+    assert.match(alerts[0], /inventory unavailable/);
+});
 
 test('device pagination deduplicates IDs before counts and totals are accumulated', async () => {
     const firstPage = Array.from({ length: 5000 }, (_, index) => ({

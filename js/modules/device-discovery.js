@@ -566,6 +566,7 @@ async function restoreDeviceDiscoveryCache() {
 
 async function generateDeviceDiscoveryReport() {
     const loading = document.getElementById('deviceDiscoveryLoading');
+    const results = document.getElementById('deviceDiscoveryResults');
     const noData = document.getElementById('deviceNoDataMessage');
     const generateBtn = document.getElementById('generateDeviceReport');
     const stopBtn = document.getElementById('stopDeviceDiscoveryLoad');
