@@ -267,7 +267,7 @@ test('System Health cache omits raw time-series rows while preserving every summ
     const encoded = JSON.stringify(payload);
     const restored = csvApi.systemHealthReportFromCachePayload(payload);
 
-    assert.equal(payload.projectionVersion, 1);
+    assert.equal(payload.projectionVersion, 2);
     assert.equal(encoded.includes(rawMarker), false);
     assert.ok(encoded.length < JSON.stringify(original).length / 10);
     assert.equal(restored.source_type, 'cached_api_summary');
@@ -344,7 +344,8 @@ test('unified CSV round-trips Packetstore summaries under the standalone applian
     report.appliances.push({
         id, name: 'Packetstore 19', platform: 'Trace', license_platform: 'ETA 9350',
         appliance_role: 'packetstore', online: true, metric_eligible: false,
-        packetstore_metric_eligible: true, packetstore_probe_status: { status: 'detected' },
+        packetstore_metric_eligible: true, packetstore_identity_source: 'inventory_platform',
+        packetstore_eligibility_reason: 'standalone_packetstore_inventory',
         data_access: true, health_conditions: [], capacity: {}
     });
     report.device_analysis[id] = { advanced: 0, standard: 0, discovery: 0, unrecognized: 0, total: 0, status: 'zero_valued' };
@@ -354,7 +355,7 @@ test('unified CSV round-trips Packetstore summaries under the standalone applian
             id, role: 'packetstore', eligibility_reason: 'standalone_packetstore_inventory',
             identity_source: 'inventory', online: true, accessible: true
         }],
-        probe_status: { [id]: { status: 'detected' } }, errors: [], metrics: {
+        errors: [], metrics: {
             est_lookback_sec: packetstoreMetric('time_series', id, {
                 latest_values: { [id]: 172800 }, min_values: { [id]: 86400 },
                 peak_values: { [id]: 200000 }, actual_cycles: { [id]: '1hr' }
@@ -380,7 +381,8 @@ test('unified CSV round-trips Packetstore summaries under the standalone applian
     assert.equal(packetstores.length, 1);
     assert.equal(packetstores[0].id, id);
     assert.equal(packetstores[0].appliance_role, 'packetstore');
-    assert.equal(packetstores[0].packetstore_probe_status.status, 'detected');
+    assert.equal(packetstores[0].packetstore_identity_source, 'inventory_platform');
+    assert.equal(packetstores[0].packetstore_eligibility_reason, 'standalone_packetstore_inventory');
     assert.equal(packetstores[0].lookbackLatestSec, 172800);
     assert.equal(packetstores[0].lookbackMinSec, 86400);
     assert.equal(packetstores[0].packetDropRatio, 0.01);

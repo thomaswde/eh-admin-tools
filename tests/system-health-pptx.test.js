@@ -502,7 +502,7 @@ test('a clean packetstore fleet is stated rather than left silent', () => {
     assert.match(model.verdict, /The Packetstore source reported no capture loss/);
 });
 
-test('Packetstore composition distinguishes all-in-one, standalone, and compatibility sources', () => {
+test('Packetstore composition distinguishes all-in-one and standalone sources', () => {
     const model = pptxApi.buildDeckModel({
         meta,
         rows: [
@@ -512,16 +512,14 @@ test('Packetstore composition distinguishes all-in-one, standalone, and compatib
         ],
         packetstore_rows: [
             packetstoreRow({ id: 'aio', name: 'All in one', appliance_role: 'all_in_one', license_platform: 'EDA 6320' }),
-            packetstoreRow({ id: '19', name: 'Standalone Packetstore', appliance_role: 'packetstore', license_platform: 'ETA 9350' }),
-            packetstoreRow({ id: 'compat', name: 'Compatibility sensor', appliance_role: 'packet_sensor', license_platform: 'EDA 8320' })
+            packetstoreRow({ id: '19', name: 'Standalone Packetstore', appliance_role: 'packetstore', license_platform: 'ETA 9350' })
         ]
     });
 
     assert.equal(model.overview.sensors, 3);
-    assert.equal(model.overview.packetstores, 3);
+    assert.equal(model.overview.packetstores, 2);
     assert.equal(model.overview.packetstores_all_in_one, 1);
     assert.equal(model.overview.packetstores_standalone, 1);
-    assert.equal(model.overview.packetstores_compatibility, 1);
     // Packetstore appliances do not inflate the Packet Sensor model counts.
     const counts = Object.fromEntries(model.overview.model_counts);
     assert.deepEqual(counts, { 'EDA 6320': 1, 'EDA 8320': 1, 'EDA 9320': 1 });
@@ -530,8 +528,8 @@ test('Packetstore composition distinguishes all-in-one, standalone, and compatib
     const overviewSlide = pptx._slides.find(slide => slide.texts.some(item => item.text === 'Fleet summary'));
     const overviewText = overviewSlide.texts.map(item => item.text).join(' | ');
     assert.match(overviewText, /Packetstore sources with loss/);
-    assert.match(overviewText, /1 standalone · 1 compatibility-detected · 1 all-in-one/);
-    assert.match(overviewText, /Of 3 sources/);
+    assert.match(overviewText, /1 standalone · 1 all-in-one/);
+    assert.match(overviewText, /Of 2 sources/);
 });
 
 test('the three packetstore charts are drawn as native shapes and label their own scale', () => {

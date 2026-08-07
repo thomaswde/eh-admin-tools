@@ -488,10 +488,6 @@
         return String((row && row.appliance_role) || '') === 'packetstore';
     }
 
-    function isCompatibilityPacketstoreSource(row) {
-        return !['all_in_one', 'packetstore'].includes(String((row && row.appliance_role) || ''));
-    }
-
     function packetstoreModelLabel(row) {
         return applianceModelLabel(row);
     }
@@ -660,7 +656,6 @@
             packetstores: packetstoreRows.length,
             packetstores_all_in_one: packetstoreRows.filter((row) => row.appliance_role === 'all_in_one').length,
             packetstores_standalone: packetstoreRows.filter(isStandalonePacketstoreSource).length,
-            packetstores_compatibility: packetstoreRows.filter(isCompatibilityPacketstoreSource).length,
             packetstores_with_loss: packetstoreRows.filter(hasCaptureLoss).length,
             packetstores_clean: lossStatuses.filter((status) => status === 'clean').length,
             packetstores_loss_reporting: lossStatuses.filter((status) => status !== 'unavailable').length,
@@ -874,7 +869,6 @@
         recommendationPriority,
         recommendationsFromFindings,
         isStandalonePacketstoreSource,
-        isCompatibilityPacketstoreSource,
         packetstoreModelLabel,
         hasCaptureLoss,
         packetstoreLossStatus,

@@ -60,31 +60,6 @@ test('builds the exact batched Packetstore cpc metric request', () => {
     ]);
 });
 
-test('recognizes only the expected cpc invalid-stat response as a negative Packetstore probe', () => {
-    const miss = new Error("invalid stat name 'extrahop.system.cpc' (-32602)");
-    miss.status = 400;
-    miss.details = { error_message: "invalid stat name 'extrahop.system.cpc' (-32602)" };
-    assert.equal(health.isPacketstoreProbeMiss(miss), true);
-
-    const unauthorized = new Error('forbidden');
-    unauthorized.status = 403;
-    assert.equal(health.isPacketstoreProbeMiss(unauthorized), false);
-});
-
-test('preserves a zero metric value without treating it as positive evidence', () => {
-    assert.equal(health.hasMetricValue([{
-        appliance_id: '7', values: { est_lookback_sec: 0 }
-    }], health.PACKETSTORE_PROBE_METRIC, '7'), true);
-    assert.equal(health.metricValueState([{
-        appliance_id: '7', values: { est_lookback_sec: 0 }
-    }], health.PACKETSTORE_PROBE_METRIC, '7'), 'zero_only');
-    assert.equal(health.metricValueState([{
-        appliance_id: '7', values: { est_lookback_sec: 60 }
-    }], health.PACKETSTORE_PROBE_METRIC, '7'), 'positive');
-    assert.equal(health.hasMetricValue([], health.PACKETSTORE_PROBE_METRIC, '7'), false);
-    assert.equal(health.metricValueState([], health.PACKETSTORE_PROBE_METRIC, '7'), 'empty');
-});
-
 test('drains XID chunks through again, data, and null', async () => {
     const responses = [
         { xid: '90071992547409931234' },
@@ -507,7 +482,6 @@ test('honors safe fixed UI cycles and rejects an explicit cycle that exceeds the
 });
 
 test('sends auto upstream within the budget and preserves actual response cycles', () => {
-    assert.equal(health.PACKETSTORE_PROBE_CYCLE, 'auto');
     const policy = health.chooseCyclePolicy({
         requestedCycle: 'auto',
         windowMs: 7 * health.DAY_MS,

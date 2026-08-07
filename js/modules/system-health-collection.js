@@ -15,9 +15,6 @@
     };
     const ORDERED_CYCLES = ['1sec', '30sec', '5min', '1hr', '24hr'];
     const TIME_SERIES_METRICS = ['bytes', 'pkts', 'trigger_cycles', 'trigger_cycles_avail'];
-    const PACKETSTORE_PROBE_METRIC = 'est_lookback_sec';
-    const PACKETSTORE_PROBE_CYCLE = 'auto';
-    const PACKETSTORE_PROBE_WINDOW_MS = 5 * 60 * 1000;
     const PACKETSTORE_TIME_SERIES_METRICS = ['est_lookback_sec', 'input_load', 'compress_load', 'disk_write_load'];
     const PACKETSTORE_TOTAL_METRICS = [
         'pkts', 'pkts_dropped', 'pkts_dropped_wrslow', 'secrets', 'secrets_dropped',
@@ -170,44 +167,6 @@
         if (xid === null || xid === undefined || xid === '') return null;
         if (Array.isArray(xid)) return xid.length === 1 ? xid[0] : null;
         return xid;
-    }
-
-    function errorResponseMessage(error) {
-        const details = error && error.details;
-        const response = details && details.response !== undefined ? details.response : details;
-        if (response && typeof response === 'object') {
-            return String(response.error_message || response.message || response.error || error.message || '');
-        }
-        return String(response || (error && error.message) || '');
-    }
-
-    function isPacketstoreProbeMiss(error) {
-        return Number(error && error.status) === 400
-            && /invalid stat name\s+['"]extrahop\.system\.cpc['"]/i.test(errorResponseMessage(error));
-    }
-
-    function hasMetricValue(rows, metricName, sensorId = null) {
-        const expectedId = sensorId === null || sensorId === undefined ? null : idKey(sensorId);
-        return (rows || []).some(row => {
-            if (expectedId !== null && idKey(row && row.appliance_id) !== expectedId) return false;
-            return finiteNumber(row && row.values && row.values[metricName]) !== null;
-        });
-    }
-
-    function metricValueState(rows, metricName, sensorId = null) {
-        const expectedId = sensorId === null || sensorId === undefined ? null : idKey(sensorId);
-        let found = false;
-        let invalid = false;
-        for (const row of rows || []) {
-            if (expectedId !== null && idKey(row && row.appliance_id) !== expectedId) continue;
-            const value = finiteNumber(row && row.values && row.values[metricName]);
-            if (value === null) continue;
-            found = true;
-            if (value > 0) return 'positive';
-            if (value < 0) invalid = true;
-        }
-        if (invalid) return 'invalid';
-        return found ? 'zero_only' : 'empty';
     }
 
     function metricSensorFailure(error) {
@@ -938,9 +897,6 @@
         DAY_MS,
         CYCLE_MS,
         TIME_SERIES_METRICS,
-        PACKETSTORE_PROBE_METRIC,
-        PACKETSTORE_PROBE_CYCLE,
-        PACKETSTORE_PROBE_WINDOW_MS,
         PACKETSTORE_TIME_SERIES_METRICS,
         PACKETSTORE_TOTAL_METRICS,
         MAX_BUCKETS_PER_SENSOR,
@@ -956,9 +912,6 @@
         buildMetricRequest,
         balancedMetricBatches,
         metricSensorFailure,
-        isPacketstoreProbeMiss,
-        hasMetricValue,
-        metricValueState,
         collectMetricEndpoint,
         collectMetricBatches,
         normalizeTimeSeriesChunks,

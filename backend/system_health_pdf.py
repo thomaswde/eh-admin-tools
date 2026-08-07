@@ -222,7 +222,6 @@ class RendererOverview(StrictRendererModel):
     packetstores: int
     packetstores_all_in_one: int
     packetstores_standalone: int
-    packetstores_compatibility: int
     packetstores_with_loss: int
     packetstores_clean: int
     packetstores_loss_reporting: int

@@ -555,7 +555,6 @@ function addOverview(model, assets) {
         // the cpc measurements.
         const composition = [
             overview.packetstores_standalone ? `${formatInteger(overview.packetstores_standalone)} standalone` : '',
-            overview.packetstores_compatibility ? `${formatInteger(overview.packetstores_compatibility)} compatibility-detected` : '',
             overview.packetstores_all_in_one ? `${formatInteger(overview.packetstores_all_in_one)} all-in-one` : ''
         ].filter(Boolean).join(' · ');
         stats.push([
