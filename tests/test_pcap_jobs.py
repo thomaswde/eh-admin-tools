@@ -73,6 +73,13 @@ def settings(**changes):
     return PcapJobSettings(**values)
 
 
+def test_sequence_interval_limit_defaults_to_500000(monkeypatch):
+    monkeypatch.delenv("EH_PCAP_MAX_SEQUENCE_INTERVALS", raising=False)
+
+    assert PcapJobSettings().analyzer_limits.max_sequence_intervals == 500_000
+    assert PcapJobSettings.from_environment().analyzer_limits.max_sequence_intervals == 500_000
+
+
 class DownloadClient:
     def __init__(self, capture, deployment="enterprise", error=None):
         self.capture = capture

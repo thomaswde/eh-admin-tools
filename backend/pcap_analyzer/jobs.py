@@ -77,7 +77,7 @@ class PcapJobSettings:
             max_packets=2_000_000,
             max_flows=50_000,
             max_findings=50_000,
-            max_sequence_intervals=200_000,
+            max_sequence_intervals=500_000,
             max_record_bytes=4 * MIB,
             progress_interval=1_000,
         )
@@ -114,7 +114,7 @@ class PcapJobSettings:
                 max_packets=integer("EH_PCAP_MAX_PACKETS", 2_000_000),
                 max_flows=integer("EH_PCAP_MAX_FLOWS", 50_000),
                 max_findings=integer("EH_PCAP_MAX_FINDINGS", 50_000),
-                max_sequence_intervals=integer("EH_PCAP_MAX_SEQUENCE_INTERVALS", 200_000),
+                max_sequence_intervals=integer("EH_PCAP_MAX_SEQUENCE_INTERVALS", 500_000),
                 max_record_bytes=integer("EH_PCAP_MAX_RECORD_BYTES", 4 * MIB),
                 progress_interval=integer("EH_PCAP_PROGRESS_INTERVAL", 1_000),
             ),
