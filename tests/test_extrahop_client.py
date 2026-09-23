@@ -207,6 +207,41 @@ class ReusableHttpClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(attempts, 2, "completed work is not retained as a durable idempotency cache")
         await client.aclose()
 
+    async def test_coalesces_identical_dashboard_sharing_replacements(self):
+        attempts = 0
+        request_started = asyncio.Event()
+        release_request = asyncio.Event()
+
+        async def handler(_request):
+            nonlocal attempts
+            attempts += 1
+            request_started.set()
+            await release_request.wait()
+            return httpx.Response(204)
+
+        client = ExtraHopClient(
+            {
+                "type": "enterprise",
+                "host": "sensor.example.test",
+                "apiKey": "key",
+            }
+        )
+        client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        first = asyncio.create_task(client.request("PUT", "/dashboards/42/sharing", body=b'{"anyone":"null","users":{},"groups":{}}'))
+        await request_started.wait()
+        duplicate = asyncio.create_task(client.request("PUT", "/dashboards/42/sharing", body=b'{"anyone":"null","users":{},"groups":{}}'))
+        await asyncio.sleep(0)
+
+        self.assertEqual(attempts, 1)
+        release_request.set()
+        self.assertEqual(await first, {})
+        self.assertEqual(await duplicate, {})
+
+        await client.request("PUT", "/dashboards/42/sharing", body=b'{"anyone":"null","users":{},"groups":{}}')
+        self.assertEqual(attempts, 2, "completed work is not retained as a durable idempotency cache")
+        await client.aclose()
+
     async def test_360_reauthenticates_once_after_401_with_shared_client(self):
         api_attempts = 0
         token_attempts = 0

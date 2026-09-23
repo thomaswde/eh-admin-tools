@@ -647,7 +647,7 @@ class ExtraHopClient:
 
     @staticmethod
     def _coalesces_mutation(method: str, endpoint: str) -> bool:
-        if method not in {"PATCH", "DELETE"}:
+        if method not in {"PATCH", "PUT", "DELETE"}:
             return False
         path_parts = endpoint.strip("/").split("/")
         return (

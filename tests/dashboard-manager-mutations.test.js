@@ -578,3 +578,48 @@ test('owner-is selections merge into one OR filter and match any selected owner'
     ]);
     assert.deepEqual(state.filteredDashboards.map(dashboard => dashboard.id), ['john', 'mary']);
 });
+
+for (const action of ['remove', 'enable', 'unchanged', 'clear']) {
+    test(`sharing dialog applies explicit ${action} action`, async () => {
+        const writes = [];
+        const api = {
+            async getDashboardSharing() {
+                return { anyone: 'viewer', users: { existing: 'viewer' }, groups: { ops: 'editor' } };
+            },
+            async updateDashboardSharing(id, payload) { writes.push([id, plain(payload)]); },
+            async clearDashboardSharing(id) { writes.push([id, 'cleared']); }
+        };
+        const { context, state, alerts } = loadDashboardManager(api, [], {
+            dashboardSharingAction: { value: action },
+            additionalEditorsSelect: { selectedOptions: [] }
+        });
+        state.selectedDashboards.add('9007199254740993');
+        vm.runInContext('runDashboardMutation = async (operation, ids, work) => work()', context);
+        await context.confirmDashboardModifySharing();
+        if (action === 'unchanged') {
+            assert.equal(writes.length, 0);
+            assert.match(alerts[0], /Choose a sharing change/);
+        } else if (action === 'clear') {
+            assert.deepEqual(writes, [['9007199254740993', 'cleared']]);
+        } else {
+            assert.deepEqual(writes, [['9007199254740993', {
+                anyone: action === 'remove' ? null : 'viewer',
+                users: { existing: 'viewer' }, groups: { ops: 'editor' }
+            }]]);
+        }
+    });
+}
+
+test('bulk clearing continues after verification failure and records separate outcomes', async () => {
+    const calls = [];
+    const { context } = loadDashboardManager({
+        async clearDashboardSharing(id) {
+            calls.push(id);
+            if (id === 'first') throw new Error('not verified');
+        }
+    });
+    const results = await context.performDashboardSharingChanges(['first', 'second'], { clearAll: true });
+    assert.deepEqual(calls, ['first', 'second']);
+    assert.equal(results.sharingChanges, 1);
+    assert.equal(results.errors.length, 1);
+});

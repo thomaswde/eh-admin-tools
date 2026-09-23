@@ -1063,9 +1063,15 @@ async function performDashboardSharingChanges(dashboardIds, changes, onProgress)
         const itemResult = { id, sharing: { status: 'pending' } };
         results.items.push(itemResult);
         try {
-            await mergeAndUpdateDashboardSharing(id, changes);
+            if (changes.clearAll) {
+                // A failed readback can follow a successful write; still refresh.
+                results.mutations++;
+                await window.apiClient.clearDashboardSharing(id);
+            } else {
+                await mergeAndUpdateDashboardSharing(id, changes);
+                results.mutations++;
+            }
             results.sharingChanges++;
-            results.mutations++;
             itemResult.sharing.status = 'succeeded';
         } catch (error) {
             const message = describeDashboardMutationError(id, 'sharing update', error);
@@ -1423,17 +1429,33 @@ async function executeDashboardOwnerChange({ dashboardIds, newOwner, grantAccess
 
 async function handleDashboardBulkShare() {
     if (isDashboardMutationRunning()) return;
+    document.getElementById('dashboardSharingAction').value = 'unchanged';
+    Array.from(document.getElementById('additionalEditorsSelect').options).forEach(option => {
+        option.selected = false;
+    });
+    window.refreshCustomSelect?.(document.getElementById('dashboardSharingAction'));
     showModal('modifySharingModal');
 }
 
 async function confirmDashboardModifySharing() {
-    const shareWithAll = document.getElementById('shareWithAll').checked;
+    const action = document.getElementById('dashboardSharingAction').value;
     const editorsSelect = document.getElementById('additionalEditorsSelect');
     const selectedEditors = Array.from(editorsSelect.selectedOptions).map(opt => opt.value);
 
     const dashboardIds = Array.from(state.selectedDashboards);
     const sharingChanges = {};
-    if (shareWithAll) sharingChanges.anyone = 'viewer';
+    if (!['unchanged', 'enable', 'remove', 'clear'].includes(action)) return;
+    if (action === 'clear' && selectedEditors.length > 0) {
+        alert('Remove the additional editor selections before clearing all sharing.');
+        return;
+    }
+    if (action === 'unchanged' && selectedEditors.length === 0) {
+        alert('Choose a sharing change or select additional editors.');
+        return;
+    }
+    if (action === 'enable') sharingChanges.anyone = 'viewer';
+    if (action === 'remove') sharingChanges.anyone = null;
+    if (action === 'clear') sharingChanges.clearAll = true;
     if (selectedEditors.length > 0) {
         sharingChanges.users = Object.fromEntries(selectedEditors.map(username => [username, 'editor']));
     }

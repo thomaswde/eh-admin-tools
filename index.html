@@ -1773,10 +1773,16 @@
     <div class="modal-content">
         <h2 class="modal-title">Modify dashboard sharing</h2>
         <div class="modal-body">
-            <label class="check">
-                <input type="checkbox" id="shareWithAll">
-                <span>Share with all users, viewer access</span>
-            </label>
+            <div class="field">
+                <label for="dashboardSharingAction">Sharing change</label>
+                <select id="dashboardSharingAction">
+                    <option value="unchanged">Leave all-users access unchanged</option>
+                    <option value="enable">Enable all-users viewer access</option>
+                    <option value="remove">Remove all-users access</option>
+                    <option value="clear">Clear all direct sharing (users and groups included)</option>
+                </select>
+                <span class="field-hint">Clearing removes direct grants. Shared collections can still provide access and must be reviewed in ExtraHop.</span>
+            </div>
             <div class="field">
                 <label for="additionalEditorsSelect">Additional editors</label>
                 <select id="additionalEditorsSelect" multiple size="6"></select>
@@ -1978,6 +1984,12 @@
                     <option value="">Do not transfer owned objects</option>
                 </select>
             </div>
+            <fieldset>
+                <legend>Sharing on transferred dashboards</legend>
+                <label class="check"><input type="radio" name="deleteUserSharing" id="deleteUserPreserveSharing" checked> Preserve existing sharing</label>
+                <label class="check"><input type="radio" name="deleteUserSharing" id="deleteUserClearSharing" disabled> Clear all direct dashboard sharing before transfer</label>
+                <p class="field-hint">Requires a transfer destination. Removes all-users, individual-user, and group grants on these dashboards only. Collections and activity maps retain their sharing; shared collections can still provide dashboard access. If cleanup fails, that user is not deleted. Changes already applied are retained.</p>
+            </fieldset>
             <div class="field">
                 <label for="deleteUserConfirmInput">Type the username to confirm</label>
                 <input type="text" id="deleteUserConfirmInput">
@@ -2022,6 +2034,12 @@
                     <option value="">Do not transfer owned objects</option>
                 </select>
             </div>
+            <fieldset>
+                <legend>Sharing on transferred dashboards</legend>
+                <label class="check"><input type="radio" name="bulkDeleteUsersSharing" id="bulkDeleteUsersPreserveSharing" checked> Preserve existing sharing</label>
+                <label class="check"><input type="radio" name="bulkDeleteUsersSharing" id="bulkDeleteUsersClearSharing" disabled> Clear all direct dashboard sharing before transfer</label>
+                <p class="field-hint">Requires a transfer destination. Removes all-users, individual-user, and group grants on these dashboards only. Collections and activity maps retain their sharing; shared collections can still provide dashboard access. If cleanup fails, that user is not deleted. Changes already applied are retained.</p>
+            </fieldset>
             <div class="field">
                 <label for="bulkDeleteUsersConfirmInput">Type DELETE to confirm</label>
                 <input type="text" id="bulkDeleteUsersConfirmInput" autocomplete="off">

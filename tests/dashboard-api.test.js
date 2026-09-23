@@ -61,3 +61,38 @@ test('RevealX 360 rejects configuration backups before network transport', async
 
     assert.equal(calls.length, 0);
 });
+
+for (const deployment of ['enterprise', '360']) {
+    test(`${deployment} clears dashboard grants with PUT and verifies the response`, async () => {
+        const { api, calls } = loadApi(deployment);
+        api.getDashboardSharing = async id => {
+            assert.equal(id, '9007199254740993');
+            return { anyone: 'null', users: {}, groups: {} };
+        };
+        await api.clearDashboardSharing('9007199254740993');
+        assert.equal(calls[0].options.method, 'PUT');
+        assert.equal(calls[0].url, '/backend/extrahop/api/v1/dashboards/9007199254740993/sharing');
+        assert.deepEqual(JSON.parse(calls[0].options.body), { anyone: 'null', users: {}, groups: {} });
+    });
+}
+
+test('clearing sharing fails closed for retained grants and incomplete readback', async () => {
+    const { api } = loadApi('enterprise');
+    for (const sharing of [
+        null, {}, { anyone: null, users: {} },
+        { anyone: 'viewer', users: {}, groups: {} },
+        { anyone: null, users: { alice: 'viewer' }, groups: {} },
+        { anyone: null, users: {}, groups: { ops: 'editor' } }
+    ]) {
+        api.getDashboardSharing = async () => sharing;
+        await assert.rejects(api.clearDashboardSharing('42'), /not verified/);
+    }
+    api.getDashboardSharing = async () => { throw new Error('readback denied'); };
+    await assert.rejects(api.clearDashboardSharing('42'), /readback denied/);
+});
+
+test('dashboard revocation serializes the documented null permission string', async () => {
+    const { api, calls } = loadApi('enterprise');
+    await api.updateDashboardSharing('42', { anyone: null, users: {}, groups: {} });
+    assert.deepEqual(JSON.parse(calls[0].options.body), { anyone: 'null', users: {}, groups: {} });
+});

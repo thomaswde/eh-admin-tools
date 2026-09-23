@@ -227,3 +227,115 @@ test('bulk delete rejects a transfer destination selected for deletion', async (
     );
     assert.equal(context.refreshCount, 0);
 });
+
+test('transfer cleanup scopes inventory to deleted owners and skips a user on partial cleanup failure', async () => {
+    const calls = [];
+    const dashboards = [
+        { id: '9007199254740993', owner: 'first' },
+        { id: '2', owner: 'first' },
+        { id: '3', owner: 'second' },
+        { id: '4', owner: 'repo' },
+        { id: '5', owner: 'unrelated' }
+    ];
+    const { context } = loadUserManager({
+        async getDashboards() { calls.push('inventory'); return dashboards; },
+        async request(url) { return dashboards.find(d => url === `/dashboards/${d.id}`); },
+        async clearDashboardSharing(id) {
+            calls.push(`clear:${id}`);
+            if (id === '2') throw new Error('verification failed');
+        },
+        async deleteUser(username, destination) { calls.push(`delete:${username}:${destination}`); }
+    });
+    const results = await context.performUserDeletes(['first', 'second'], 'repo', undefined, true);
+    assert.deepEqual(calls, ['inventory', 'clear:9007199254740993', 'clear:2', 'clear:3', 'delete:second:repo']);
+    assert.equal(results.deleted, 1);
+    assert.equal(results.skipped, 1);
+    assert.equal(results.sharingCleared, 2);
+    assert.equal(results.items[0].sharing.cleared, 1);
+    assert.match(results.errors[0], /user not deleted/);
+});
+
+test('cleanup inventory failure prevents deletion and missing transfer destination prevents inventory', async () => {
+    const calls = [];
+    const { context } = loadUserManager({
+        async getDashboards() { calls.push('inventory'); throw new Error('inventory denied'); },
+        async deleteUser() { calls.push('delete'); }
+    });
+    await assert.rejects(context.performUserDeletes(['first'], '', undefined, true), /transfer destination/);
+    assert.deepEqual(calls, []);
+    await assert.rejects(context.performUserDeletes(['first'], 'repo', undefined, true), /inventory denied/);
+    assert.deepEqual(calls, ['inventory']);
+});
+
+test('changed dashboard ownership prevents cleanup and deletion', async () => {
+    const calls = [];
+    const { context } = loadUserManager({
+        async getDashboards() { return [{ id: '42', owner: 'first' }]; },
+        async request() { return { id: '42', owner: 'someone-else' }; },
+        async clearDashboardSharing() { calls.push('clear'); },
+        async deleteUser() { calls.push('delete'); }
+    });
+    const results = await context.performUserDeletes(['first'], 'repo', undefined, true);
+    assert.deepEqual(calls, []);
+    assert.equal(results.skipped, 1);
+});
+
+test('deletion failure after verified cleanup reports retained sharing changes', async () => {
+    const { context } = loadUserManager({
+        async getDashboards() { return [{ id: '42', owner: 'first' }]; },
+        async request() { return { owner: 'first' }; },
+        async clearDashboardSharing() {},
+        async deleteUser() { throw new Error('delete denied'); }
+    });
+    const results = await context.performUserDeletes(['first'], 'repo', undefined, true);
+    assert.equal(results.sharingCleared, 1);
+    assert.equal(results.items[0].sharing.status, 'succeeded');
+    assert.equal(results.items[0].deletion.status, 'failed');
+    assert.match(context.userDeletionSummary(results, 1, true), /deletion failed/);
+});
+
+for (const bulk of [false, true]) {
+    test(`${bulk ? 'bulk' : 'single'} deletion dialog forwards sharing cleanup choice`, async () => {
+        const prefix = bulk ? 'bulkDeleteUsers' : 'deleteUser';
+        const elements = {
+            [`${prefix}ConfirmInput`]: { value: bulk ? 'DELETE' : 'first' },
+            [`${prefix}TransferSelect`]: { value: 'repo' },
+            [`${prefix}ClearSharing`]: { checked: true },
+            confirmDeleteUser: { disabled: false, textContent: '' }
+        };
+        const calls = [];
+        const { context } = loadUserManager({
+            async getDashboards() { return [{ id: '42', owner: 'first' }]; },
+            async request() { return { owner: 'first' }; },
+            async clearDashboardSharing(id) { calls.push(`clear:${id}`); },
+            async deleteUser(name, destination) { calls.push(`delete:${name}:${destination}`); }
+        }, [], elements);
+        vm.runInContext(`
+            userManagerState.activeDeleteUsername = 'first';
+            userManagerState.selectedUsers.add('first');
+            runUserMutation = async (operation, ids, work) => work();
+            renderUsers = () => {};
+        `, context);
+        await (bulk ? context.confirmBulkDeleteUsers() : context.confirmDeleteUser());
+        assert.deepEqual(calls, ['clear:42', 'delete:first:repo']);
+    });
+}
+
+test('sharing radio controls default to preserve and require a transfer destination', () => {
+    const elements = {
+        deleteUserTransferSelect: { value: '' },
+        deleteUserPreserveSharing: { checked: false },
+        deleteUserClearSharing: { checked: true, disabled: false }
+    };
+    const { context } = loadUserManager({}, [], elements);
+    context.resetUserTransferSharing('deleteUser');
+    assert.equal(elements.deleteUserPreserveSharing.checked, true);
+    assert.equal(elements.deleteUserClearSharing.disabled, true);
+    elements.deleteUserTransferSelect.value = 'repo';
+    elements.deleteUserTransferSelect.onchange();
+    assert.equal(elements.deleteUserClearSharing.disabled, false);
+    elements.deleteUserClearSharing.checked = true;
+    elements.deleteUserTransferSelect.value = '';
+    elements.deleteUserTransferSelect.onchange();
+    assert.equal(elements.deleteUserClearSharing.checked, false);
+});

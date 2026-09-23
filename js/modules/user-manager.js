@@ -895,7 +895,9 @@ function setUserMutationBusy(busy) {
         'confirmBulkDisableUsers',
         'cancelBulkDisableUsers',
         'confirmBulkDeleteUsers',
-        'cancelBulkDeleteUsers'
+        'cancelBulkDeleteUsers',
+        'confirmDeleteUser',
+        'cancelDeleteUser'
     ].forEach(id => {
         const control = document.getElementById(id);
         if (control) control.disabled = busy;
@@ -973,29 +975,107 @@ async function performUserDisables(usernames, onProgress) {
     return results;
 }
 
-async function performUserDeletes(usernames, transferUser, onProgress) {
+async function performUserDeletes(usernames, transferUser, onProgress, clearSharing = false) {
     const results = newUserMutationResults();
+    results.sharingCleared = 0;
     if (transferUser && usernames.includes(transferUser)) {
         throw new Error('The ownership-transfer user cannot also be selected for deletion.');
     }
+    if (clearSharing && !transferUser) {
+        throw new Error('Choose a transfer destination before clearing dashboard sharing.');
+    }
+    if (usernames.length === 0 || usernames.length > MAX_USER_BATCH_SIZE) {
+        throw new RangeError(`Select between 1 and ${MAX_USER_BATCH_SIZE} users.`);
+    }
+    const deadline = Date.now() + 15 * 60 * 1000;
+    const checkDeadline = () => {
+        if (Date.now() >= deadline) throw new Error('Deletion batch exceeded its 15-minute deadline.');
+    };
+    const ownedDashboards = new Map(usernames.map(username => [username, []]));
+    if (clearSharing) {
+        const dashboards = await window.apiClient.getDashboards();
+        if (!Array.isArray(dashboards) || dashboards.length > 10000
+            || dashboards.some(dashboard => !dashboard || typeof dashboard.id !== 'string'
+                || typeof dashboard.owner !== 'string')) {
+            throw new Error('Cannot safely inventory dashboards (invalid response or more than 10,000 dashboards). No users deleted.');
+        }
+        for (const dashboard of dashboards) ownedDashboards.get(dashboard.owner)?.push(dashboard.id);
+    }
     for (const [index, username] of usernames.entries()) {
-        const item = { username, deletion: { status: 'pending' } };
+        const item = {
+            username,
+            deletion: { status: 'pending' },
+            sharing: { status: clearSharing ? 'pending' : 'not_requested', cleared: 0 }
+        };
         results.items.push(item);
         try {
-            await window.apiClient.deleteUser(username, transferUser || undefined);
-            item.deletion.status = 'succeeded';
-            results.deleted++;
-            results.mutations++;
+            checkDeadline();
+            if (clearSharing) {
+                for (const id of ownedDashboards.get(username)) {
+                    checkDeadline();
+                    // Recheck ownership so a changed owner cannot silently broaden cleanup.
+                    const dashboard = await window.apiClient.request(`/dashboards/${id}`);
+                    if (dashboard.owner !== username) throw new Error(`Dashboard ${id} ownership changed; cleanup stopped.`);
+                    checkDeadline();
+                    results.mutations++;
+                    await window.apiClient.clearDashboardSharing(id);
+                    item.sharing.cleared++;
+                    results.sharingCleared++;
+                }
+                item.sharing.status = 'succeeded';
+            }
         } catch (error) {
-            const message = `${username}: ${error?.message || error}`;
-            item.deletion = { status: 'failed', error: message };
+            const message = `${username}: dashboard cleanup failed; user not deleted: ${error?.message || error}`;
+            item.sharing.status = clearSharing ? 'failed' : 'not_requested';
+            item.deletion = { status: 'skipped', error: message };
+            results.skipped++;
             results.errors.push(message);
+        }
+        if (item.deletion.status === 'pending') {
+            try {
+                checkDeadline();
+                await window.apiClient.deleteUser(username, transferUser || undefined);
+                item.deletion.status = 'succeeded';
+                results.deleted++;
+                results.mutations++;
+            } catch (error) {
+                const message = `${username}: deletion failed: ${error?.message || error}`;
+                item.deletion = { status: 'failed', error: message };
+                results.errors.push(message);
+            }
         }
         onProgress?.({ completed: index + 1, total: usernames.length, phase: 'mutating' });
     }
     onProgress?.({ completed: usernames.length, total: usernames.length, phase: 'refreshing' });
     await refreshUsersAfterMutations(results);
     return results;
+}
+
+function resetUserTransferSharing(prefix) {
+    const transfer = document.getElementById(`${prefix}TransferSelect`);
+    const preserve = document.getElementById(`${prefix}PreserveSharing`);
+    const clear = document.getElementById(`${prefix}ClearSharing`);
+    preserve.checked = true;
+    clear.checked = false;
+    clear.disabled = !transfer.value;
+    transfer.onchange = () => {
+        clear.disabled = !transfer.value;
+        if (!transfer.value) {
+            preserve.checked = true;
+            clear.checked = false;
+        }
+    };
+}
+
+function userDeletionSummary(results, total, clearSharing) {
+    const cleanup = clearSharing
+        ? ` Direct sharing cleared and verified on ${results.sharingCleared} dashboard(s).`
+        : '';
+    const errors = results.errors.length
+        ? ` ${results.errors.length} operation(s) failed.\n${results.errors.slice(0, 10).join('\n')}`
+            + (results.errors.length > 10 ? '\nFurther errors omitted.' : '')
+        : '';
+    return `Deleted ${results.deleted} of ${total} user(s); ${results.skipped} skipped.${cleanup}${errors}`;
 }
 
 function updateUsersPagination() {
@@ -1379,6 +1459,7 @@ function openDeleteUserModal(username) {
             select.appendChild(option);
         });
 
+    resetUserTransferSharing('deleteUser');
     showModal('deleteUserModal');
 }
 
@@ -1500,6 +1581,7 @@ async function confirmEditUser() {
 }
 
 async function confirmDeleteUser() {
+    if (userManagerState.mutationPromise) return;
     const deleteBtn = document.getElementById('confirmDeleteUser');
     const username = userManagerState.activeDeleteUsername;
     const confirmation = document.getElementById('deleteUserConfirmInput').value.trim();
@@ -1517,10 +1599,14 @@ async function confirmDeleteUser() {
     try {
         deleteBtn.disabled = true;
         deleteBtn.textContent = 'Deleting...';
-        await window.apiClient.deleteUser(username, transferUser || undefined);
-        hideModal('deleteUserModal');
-        await loadUsers();
-        alert(`Deleted ${username} successfully.`);
+        const clearSharing = document.getElementById('deleteUserClearSharing').checked;
+        const results = await runUserMutation(
+            'delete', [username],
+            onProgress => performUserDeletes([username], transferUser, onProgress, clearSharing)
+        );
+        if (!results) return;
+        if (results.deleted) hideModal('deleteUserModal');
+        alert(userDeletionSummary(results, 1, clearSharing));
     } catch (error) {
         alert('Error deleting user: ' + error.message);
     } finally {
@@ -1576,6 +1662,7 @@ function openBulkDeleteUsersModal() {
             transferSelect.appendChild(option);
         });
     window.refreshCustomSelect?.(transferSelect);
+    resetUserTransferSharing('bulkDeleteUsers');
     showModal('bulkDeleteUsersModal');
 }
 
@@ -1587,17 +1674,17 @@ async function confirmBulkDeleteUsers() {
     }
     const usernames = Array.from(userManagerState.selectedUsers);
     const transferUser = document.getElementById('bulkDeleteUsersTransferSelect').value;
+    const clearSharing = document.getElementById('bulkDeleteUsersClearSharing').checked;
     try {
         const results = await runUserMutation(
             'delete',
             usernames,
-            onProgress => performUserDeletes(usernames, transferUser, onProgress)
+            onProgress => performUserDeletes(usernames, transferUser, onProgress, clearSharing)
         );
         if (!results) return;
         if (results.deleted > 0) hideModal('bulkDeleteUsersModal');
         renderUsers();
-        const errorSummary = results.errors.length > 0 ? ` ${results.errors.length} deletion(s) failed.` : '';
-        alert(`Deleted ${results.deleted} of ${usernames.length} selected user(s).${errorSummary}`);
+        alert(userDeletionSummary(results, usernames.length, clearSharing));
     } catch (error) {
         alert('Error deleting users: ' + error.message);
     }

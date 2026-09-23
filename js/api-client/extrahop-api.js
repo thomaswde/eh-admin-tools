@@ -376,8 +376,24 @@ class ExtraHopAPI {
     async updateDashboardSharing(dashboardId, body) {
         return this.request(`/dashboards/${dashboardId}/sharing`, {
             method: 'PATCH',
-            body: JSON.stringify(body)
+            body: JSON.stringify({ ...body, anyone: body.anyone === null ? 'null' : body.anyone })
         });
+    }
+
+    async clearDashboardSharing(dashboardId) {
+        // PUT replaces grants; PATCH with empty maps would retain existing grants.
+        await this.request(`/dashboards/${dashboardId}/sharing`, {
+            method: 'PUT',
+            body: JSON.stringify({ anyone: 'null', users: {}, groups: {} })
+        });
+        const sharing = await this.getDashboardSharing(dashboardId);
+        const emptyGrants = grants => grants && typeof grants === 'object'
+            && !Array.isArray(grants)
+            && Object.values(grants).every(role => role === null || role === 'null');
+        if (!sharing || ![null, 'null'].includes(sharing.anyone)
+            || !emptyGrants(sharing.users) || !emptyGrants(sharing.groups)) {
+            throw new Error('Dashboard sharing was not verified as cleared.');
+        }
     }
 
     async deleteDashboard(dashboardId) {
