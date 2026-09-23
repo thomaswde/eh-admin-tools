@@ -980,6 +980,7 @@ function newDashboardMutationResults() {
         mutations: 0,
         ownerChanges: 0,
         sharingChanges: 0,
+        sharingUnverified: 0,
         deletions: 0,
         items: [],
         errors: []
@@ -1074,9 +1075,16 @@ async function performDashboardSharingChanges(dashboardIds, changes, onProgress)
             results.sharingChanges++;
             itemResult.sharing.status = 'succeeded';
         } catch (error) {
-            const message = describeDashboardMutationError(id, 'sharing update', error);
-            itemResult.sharing = { status: 'failed', error: message };
-            results.errors.push(message);
+            if (error?.code === 'DASHBOARD_SHARING_UNVERIFIED' && error.writeAcknowledged === true) {
+                results.sharingChanges++;
+                results.sharingUnverified++;
+                itemResult.sharing = { status: 'unverified', error: error.message };
+                results.errors.push(`Dashboard ${id}: ${error.message}`);
+            } else {
+                const message = describeDashboardMutationError(id, 'sharing update', error);
+                itemResult.sharing = { status: 'failed', error: message };
+                results.errors.push(message);
+            }
         }
         onProgress?.({ completed: index + 1, total: dashboardIds.length, phase: 'mutating' });
     }
@@ -1470,8 +1478,13 @@ async function confirmDashboardModifySharing() {
         hideModal('modifySharingModal');
     }
 
-    const errorSummary = results.errors.length > 0 ? ` ${results.errors.length} update(s) failed.` : '';
-    alert(`Updated sharing for ${results.sharingChanges} of ${dashboardIds.length} dashboard(s).${errorSummary}`);
+    const verificationSummary = results.sharingUnverified > 0
+        ? ` Clearing could not be verified for ${results.sharingUnverified} dashboard(s); review their sharing in ExtraHop.`
+        : '';
+    const errorSummary = results.errors.length > 0
+        ? `\n${results.errors.slice(0, 10).join('\n')}${results.errors.length > 10 ? '\nFurther errors omitted.' : ''}`
+        : '';
+    alert(`ExtraHop accepted sharing updates for ${results.sharingChanges} of ${dashboardIds.length} dashboard(s).${verificationSummary}${errorSummary}`);
 }
 
 async function handleDashboardBulkDelete() {

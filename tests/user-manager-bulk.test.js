@@ -339,3 +339,22 @@ test('sharing radio controls default to preserve and require a transfer destinat
     elements.deleteUserTransferSelect.onchange();
     assert.equal(elements.deleteUserClearSharing.checked, false);
 });
+
+test('acknowledged but unverified sharing cleanup still blocks user deletion', async () => {
+    let deletions = 0;
+    const { context } = loadUserManager({
+        async getDashboards() { return [{ id: '42', owner: 'first' }]; },
+        async request() { return { owner: 'first' }; },
+        async clearDashboardSharing() {
+            const error = new Error('accepted, but verification failed');
+            error.code = 'DASHBOARD_SHARING_UNVERIFIED';
+            error.writeAcknowledged = true;
+            throw error;
+        },
+        async deleteUser() { deletions++; }
+    });
+    const results = await context.performUserDeletes(['first'], 'repo', undefined, true);
+    assert.equal(deletions, 0);
+    assert.equal(results.skipped, 1);
+    assert.equal(results.sharingCleared, 0);
+});

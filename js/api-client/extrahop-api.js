@@ -386,13 +386,20 @@ class ExtraHopAPI {
             method: 'PUT',
             body: JSON.stringify({ anyone: 'null', users: {}, groups: {} })
         });
-        const sharing = await this.getDashboardSharing(dashboardId);
-        const emptyGrants = grants => grants && typeof grants === 'object'
-            && !Array.isArray(grants)
-            && Object.values(grants).every(role => role === null || role === 'null');
-        if (!sharing || ![null, 'null'].includes(sharing.anyone)
-            || !emptyGrants(sharing.users) || !emptyGrants(sharing.groups)) {
-            throw new Error('Dashboard sharing was not verified as cleared.');
+        try {
+            const sharing = await this.getDashboardSharing(dashboardId);
+            const emptyGrants = grants => grants && typeof grants === 'object'
+                && !Array.isArray(grants)
+                && Object.values(grants).every(role => role === null || role === 'null');
+            if (!sharing || ![null, 'null'].includes(sharing.anyone)
+                || !emptyGrants(sharing.users) || !emptyGrants(sharing.groups)) {
+                throw new Error('Dashboard sharing was not verified as cleared.');
+            }
+        } catch (cause) {
+            const error = new Error(`ExtraHop accepted the sharing update, but clearing could not be verified: ${cause?.message || cause}`);
+            error.code = 'DASHBOARD_SHARING_UNVERIFIED';
+            error.writeAcknowledged = true;
+            throw error;
         }
     }
 

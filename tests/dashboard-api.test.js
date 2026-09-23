@@ -96,3 +96,20 @@ test('dashboard revocation serializes the documented null permission string', as
     await api.updateDashboardSharing('42', { anyone: null, users: {}, groups: {} });
     assert.deepEqual(JSON.parse(calls[0].options.body), { anyone: 'null', users: {}, groups: {} });
 });
+
+test('accepted clear writes preserve their outcome when verification fails', async () => {
+    const { api } = loadApi('enterprise');
+    api.getDashboardSharing = async () => { throw new Error('readback denied'); };
+    await assert.rejects(api.clearDashboardSharing('42'), error => {
+        assert.equal(error.code, 'DASHBOARD_SHARING_UNVERIFIED');
+        assert.equal(error.writeAcknowledged, true);
+        assert.match(error.message, /readback denied/);
+        return true;
+    });
+    api.request = async () => { throw new Error('write denied'); };
+    await assert.rejects(api.clearDashboardSharing('42'), error => {
+        assert.equal(error.writeAcknowledged, undefined);
+        assert.equal(error.message, 'write denied');
+        return true;
+    });
+});

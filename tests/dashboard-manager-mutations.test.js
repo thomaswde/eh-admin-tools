@@ -623,3 +623,37 @@ test('bulk clearing continues after verification failure and records separate ou
     assert.equal(results.sharingChanges, 1);
     assert.equal(results.errors.length, 1);
 });
+
+test('sharing summary counts accepted writes separately from verification and write failures after refresh', async () => {
+    const { context, state, alerts } = loadDashboardManager({
+        async clearDashboardSharing(id) {
+            if (id === 'unverified') {
+                const error = new Error('readback denied');
+                error.code = 'DASHBOARD_SHARING_UNVERIFIED';
+                error.writeAcknowledged = true;
+                throw error;
+            }
+            if (id === 'failed') throw new Error('write denied');
+        }
+    }, [], {
+        dashboardSharingAction: { value: 'clear' },
+        additionalEditorsSelect: { selectedOptions: [] }
+    });
+    ['verified', 'unverified', 'failed'].forEach(id => state.selectedDashboards.add(id));
+    vm.runInContext(`
+        runDashboardMutation = async (operation, ids, work) => {
+            capturedResults = await work();
+            return capturedResults;
+        };
+        loadDashboards = async () => { refreshCount++; state.selectedDashboards.clear(); return true; };
+    `, context);
+    await context.confirmDashboardModifySharing();
+    assert.equal(context.refreshCount, 1);
+    assert.equal(context.capturedResults.sharingChanges, 2);
+    assert.equal(context.capturedResults.sharingUnverified, 1);
+    assert.deepEqual(plain(context.capturedResults.items.map(item => item.sharing.status)),
+        ['succeeded', 'unverified', 'failed']);
+    assert.match(alerts[0], /accepted sharing updates for 2 of 3/);
+    assert.match(alerts[0], /could not be verified for 1/);
+    assert.match(alerts[0], /write denied/);
+});
