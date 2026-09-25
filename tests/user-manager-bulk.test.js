@@ -358,3 +358,45 @@ test('acknowledged but unverified sharing cleanup still blocks user deletion', a
     assert.equal(results.skipped, 1);
     assert.equal(results.sharingCleared, 0);
 });
+
+for (const writeStatus of [204, 422]) {
+    test(`user transfer uses verified replacement and handles HTTP ${writeStatus} before deletion`, async () => {
+        const { context } = loadUserManager(null);
+        const calls = [];
+        let sharing = { anyone: 'viewer', users: { existing: 'editor' }, groups: {} };
+        Object.assign(context, {
+            setTimeout, clearTimeout, AbortController,
+            fetch: async (url, { method, body }) => {
+                calls.push([method, url]);
+                let status = 200;
+                let data;
+                if (method === 'PUT') {
+                    assert.equal(url, '/backend/extrahop/api/v1/dashboards/42/sharing');
+                    assert.deepEqual(JSON.parse(body), { users: {}, groups: {} });
+                    sharing = { anyone: null, ...JSON.parse(body) };
+                    status = writeStatus;
+                    data = { message: 'Upstream returned 422' };
+                } else if (method === 'DELETE') {
+                    assert.equal(writeStatus, 204, 'an API cleanup error must prevent deletion');
+                    status = 204;
+                } else if (url.endsWith('/dashboards')) {
+                    data = [{ id: '42', owner: 'first' }];
+                } else if (url.endsWith('/sharing')) {
+                    data = sharing;
+                } else {
+                    data = { owner: 'first' };
+                }
+                return { status, ok: status < 400, statusText: 'Unprocessable Entity', async text() { return JSON.stringify(data); } };
+            }
+        });
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/api-client/extrahop-api.js'), 'utf8'), context);
+        vm.runInContext("window.apiClient = new ExtraHopAPI({ type: 'enterprise' })", context);
+        const results = await context.performUserDeletes(['first'], 'repo', undefined, true);
+        assert.equal(results.sharingCleared, 1);
+        assert.equal(results.items[0].sharing.cleared, 1);
+        assert.equal(results.deleted, writeStatus === 204 ? 1 : 0);
+        assert.equal(results.skipped, writeStatus === 204 ? 0 : 1);
+        assert.deepEqual(calls.map(([method]) => method), writeStatus === 204
+            ? ['GET', 'GET', 'PUT', 'GET', 'DELETE'] : ['GET', 'GET', 'PUT', 'GET']);
+    });
+}

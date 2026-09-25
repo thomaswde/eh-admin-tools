@@ -970,8 +970,18 @@ function buildCompleteDashboardSharingPayload(currentSharing, changes = {}) {
 
 async function mergeAndUpdateDashboardSharing(dashboardId, changes) {
     const currentSharing = await window.apiClient.getDashboardSharing(dashboardId);
+    const removingAllUsers = Object.hasOwn(changes, 'anyone') && changes.anyone === null;
+    if (removingAllUsers && (!currentSharing || ![null, 'null', 'viewer'].includes(currentSharing.anyone)
+        || !currentSharing.users || typeof currentSharing.users !== 'object' || Array.isArray(currentSharing.users)
+        || !currentSharing.groups || typeof currentSharing.groups !== 'object' || Array.isArray(currentSharing.groups))) {
+        throw new Error('Cannot preserve existing grants: dashboard sharing is incomplete.');
+    }
     const payload = buildCompleteDashboardSharingPayload(currentSharing, changes);
-    await window.apiClient.updateDashboardSharing(dashboardId, payload);
+    if (removingAllUsers) {
+        await window.apiClient.replaceDashboardSharing(dashboardId, payload);
+    } else {
+        await window.apiClient.updateDashboardSharing(dashboardId, payload);
+    }
     return payload;
 }
 
@@ -981,6 +991,7 @@ function newDashboardMutationResults() {
         ownerChanges: 0,
         sharingChanges: 0,
         sharingUnverified: 0,
+        sharingVerifiedAfterError: 0,
         deletions: 0,
         items: [],
         errors: []
@@ -1064,18 +1075,24 @@ async function performDashboardSharingChanges(dashboardIds, changes, onProgress)
         const itemResult = { id, sharing: { status: 'pending' } };
         results.items.push(itemResult);
         try {
+            // Refresh even when a removal reports an error after applying grants.
+            const removal = changes.clearAll || (Object.hasOwn(changes, 'anyone') && changes.anyone === null);
+            if (removal) results.mutations++;
             if (changes.clearAll) {
-                // A failed readback can follow a successful write; still refresh.
-                results.mutations++;
                 await window.apiClient.clearDashboardSharing(id);
             } else {
                 await mergeAndUpdateDashboardSharing(id, changes);
-                results.mutations++;
+                if (!removal) results.mutations++;
             }
             results.sharingChanges++;
             itemResult.sharing.status = 'succeeded';
         } catch (error) {
-            if (error?.code === 'DASHBOARD_SHARING_UNVERIFIED' && error.writeAcknowledged === true) {
+            if (error?.code === 'DASHBOARD_SHARING_VERIFIED_AFTER_ERROR' && error.sharingVerified === true) {
+                results.sharingChanges++;
+                results.sharingVerifiedAfterError++;
+                itemResult.sharing = { status: 'verified_after_error', error: error.message };
+                results.errors.push(`Dashboard ${id}: ${error.message}`);
+            } else if (error?.code === 'DASHBOARD_SHARING_UNVERIFIED' && error.writeAcknowledged === true) {
                 results.sharingChanges++;
                 results.sharingUnverified++;
                 itemResult.sharing = { status: 'unverified', error: error.message };
@@ -1204,7 +1221,7 @@ function dashboardRoleBadge(name, role) {
 }
 
 function renderDashboardRoleBadges(entries) {
-    const list = Object.entries(entries || {});
+    const list = Object.entries(entries || {}).filter(([, role]) => role !== null && role !== 'null');
     if (list.length === 0) return '<span class="small muted">None</span>';
     return list.map(([name, role]) => dashboardRoleBadge(name, role)).join('');
 }
@@ -1223,7 +1240,7 @@ function renderDashboardSharingSection(dashboard) {
     }
 
     const sharing = dashboard.sharing;
-    const anyoneBubble = sharing.anyone
+    const anyoneBubble = sharing.anyone === 'viewer'
         ? dashboardRoleBadge('All users', sharing.anyone)
         : '<span class="small muted">No public access</span>';
     const userBubbles = renderDashboardRoleBadges(sharing.users);
@@ -1479,12 +1496,12 @@ async function confirmDashboardModifySharing() {
     }
 
     const verificationSummary = results.sharingUnverified > 0
-        ? ` Clearing could not be verified for ${results.sharingUnverified} dashboard(s); review their sharing in ExtraHop.`
+        ? ` ExtraHop accepted ${results.sharingUnverified} additional update(s), but the requested sharing could not be verified; review their sharing in ExtraHop.`
         : '';
     const errorSummary = results.errors.length > 0
         ? `\n${results.errors.slice(0, 10).join('\n')}${results.errors.length > 10 ? '\nFurther errors omitted.' : ''}`
         : '';
-    alert(`ExtraHop accepted sharing updates for ${results.sharingChanges} of ${dashboardIds.length} dashboard(s).${verificationSummary}${errorSummary}`);
+    alert(`Sharing updates completed for ${results.sharingChanges - results.sharingUnverified} of ${dashboardIds.length} dashboard(s).${verificationSummary}${errorSummary}`);
 }
 
 async function handleDashboardBulkDelete() {

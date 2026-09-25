@@ -376,29 +376,70 @@ class ExtraHopAPI {
     async updateDashboardSharing(dashboardId, body) {
         return this.request(`/dashboards/${dashboardId}/sharing`, {
             method: 'PATCH',
-            body: JSON.stringify({ ...body, anyone: body.anyone === null ? 'null' : body.anyone })
+            body: JSON.stringify(body)
         });
     }
 
     async clearDashboardSharing(dashboardId) {
-        // PUT replaces grants; PATCH with empty maps would retain existing grants.
-        await this.request(`/dashboards/${dashboardId}/sharing`, {
-            method: 'PUT',
-            body: JSON.stringify({ anyone: 'null', users: {}, groups: {} })
-        });
+        return this.replaceDashboardSharing(dashboardId, { anyone: null, users: {}, groups: {} });
+    }
+
+    async replaceDashboardSharing(dashboardId, body) {
+        const activeGrants = grants => {
+            if (!grants || typeof grants !== 'object' || Array.isArray(grants)) {
+                throw new Error('Dashboard sharing grants are incomplete.');
+            }
+            return Object.fromEntries(Object.entries(grants).filter(([, role]) => role !== null && role !== 'null'));
+        };
+        if (!body || ![null, 'null', 'viewer'].includes(body.anyone)) {
+            throw new Error('Dashboard all-users sharing is incomplete.');
+        }
+        // PUT replaces the entire grant set. Omit the optional anyone grant to
+        // revoke it; do not send the ambiguous string "null" as a permission.
+        const payload = { users: activeGrants(body.users), groups: activeGrants(body.groups) };
+        if (body.anyone === 'viewer') payload.anyone = 'viewer';
+        let writeError;
+        try {
+            await this.request(`/dashboards/${dashboardId}/sharing`, {
+                method: 'PUT',
+                body: JSON.stringify(payload)
+            });
+        } catch (error) {
+            // Some appliances can apply a replacement before returning 422.
+            // Reconcile that response once, without repeating the mutation.
+            if (error.status !== 422) throw error;
+            writeError = error;
+        }
         try {
             const sharing = await this.getDashboardSharing(dashboardId);
-            const emptyGrants = grants => grants && typeof grants === 'object'
-                && !Array.isArray(grants)
-                && Object.values(grants).every(role => role === null || role === 'null');
-            if (!sharing || ![null, 'null'].includes(sharing.anyone)
-                || !emptyGrants(sharing.users) || !emptyGrants(sharing.groups)) {
-                throw new Error('Dashboard sharing was not verified as cleared.');
+            const matches = (actual, expected) => {
+                const grants = activeGrants(actual);
+                return Object.keys(grants).length === Object.keys(expected).length
+                    && Object.entries(expected).every(([name, role]) => Object.hasOwn(grants, name) && grants[name] === role);
+            };
+            const anyoneMatches = body.anyone === 'viewer'
+                ? sharing?.anyone === 'viewer'
+                : [null, 'null'].includes(sharing?.anyone);
+            if (!anyoneMatches || !matches(sharing.users, payload.users) || !matches(sharing.groups, payload.groups)) {
+                throw new Error('Dashboard sharing was not verified: the returned grants do not match the requested sharing.');
             }
         } catch (cause) {
-            const error = new Error(`ExtraHop accepted the sharing update, but clearing could not be verified: ${cause?.message || cause}`);
+            if (writeError) {
+                writeError.message += ` Requested sharing could not be verified: ${cause?.message || cause}`;
+                throw writeError;
+            }
+            const error = new Error(`ExtraHop accepted the sharing update, but the requested sharing could not be verified: ${cause?.message || cause}`);
             error.code = 'DASHBOARD_SHARING_UNVERIFIED';
             error.writeAcknowledged = true;
+            throw error;
+        }
+        if (writeError) {
+            const error = new Error(`Requested sharing is confirmed by readback, although ExtraHop returned an error: ${writeError.message}`);
+            error.code = 'DASHBOARD_SHARING_VERIFIED_AFTER_ERROR';
+            error.sharingVerified = true;
+            error.writeAcknowledged = false;
+            error.status = writeError.status;
+            error.details = writeError.details;
             throw error;
         }
     }

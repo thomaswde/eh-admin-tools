@@ -1018,7 +1018,16 @@ async function performUserDeletes(usernames, transferUser, onProgress, clearShar
                     if (dashboard.owner !== username) throw new Error(`Dashboard ${id} ownership changed; cleanup stopped.`);
                     checkDeadline();
                     results.mutations++;
-                    await window.apiClient.clearDashboardSharing(id);
+                    try {
+                        await window.apiClient.clearDashboardSharing(id);
+                    } catch (error) {
+                        if (error?.code === 'DASHBOARD_SHARING_VERIFIED_AFTER_ERROR' && error.sharingVerified === true) {
+                            item.sharing.cleared++;
+                            results.sharingCleared++;
+                        }
+                        // Even a reconciled API error stops the destructive step.
+                        throw error;
+                    }
                     item.sharing.cleared++;
                     results.sharingCleared++;
                 }

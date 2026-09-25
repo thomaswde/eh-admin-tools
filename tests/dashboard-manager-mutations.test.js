@@ -587,6 +587,7 @@ for (const action of ['remove', 'enable', 'unchanged', 'clear']) {
                 return { anyone: 'viewer', users: { existing: 'viewer' }, groups: { ops: 'editor' } };
             },
             async updateDashboardSharing(id, payload) { writes.push([id, plain(payload)]); },
+            async replaceDashboardSharing(id, payload) { writes.push([id, plain(payload)]); },
             async clearDashboardSharing(id) { writes.push([id, 'cleared']); }
         };
         const { context, state, alerts } = loadDashboardManager(api, [], {
@@ -653,7 +654,99 @@ test('sharing summary counts accepted writes separately from verification and wr
     assert.equal(context.capturedResults.sharingUnverified, 1);
     assert.deepEqual(plain(context.capturedResults.items.map(item => item.sharing.status)),
         ['succeeded', 'unverified', 'failed']);
-    assert.match(alerts[0], /accepted sharing updates for 2 of 3/);
-    assert.match(alerts[0], /could not be verified for 1/);
+    assert.match(alerts[0], /Sharing updates completed for 1 of 3/);
+    assert.match(alerts[0], /accepted 1 additional update\(s\).*could not be verified/);
     assert.match(alerts[0], /write denied/);
 });
+
+test('all-users removal refuses to replace incomplete sharing inventories', async () => {
+    let writes = 0;
+    const { context } = loadDashboardManager({
+        async replaceDashboardSharing() { writes++; }
+    });
+    for (const sharing of [null, {}, { anyone: 'viewer', users: {} },
+        { anyone: 'viewer', users: [], groups: {} }]) {
+        context.window.apiClient.getDashboardSharing = async () => sharing;
+        const results = await context.performDashboardSharingChanges(['42'], { anyone: null });
+        assert.equal(results.sharingChanges, 0);
+        assert.match(results.errors[0], /sharing is incomplete/);
+    }
+    assert.equal(writes, 0);
+});
+
+test('sharing details do not display revoked null entries as viewer grants', () => {
+    const { context } = loadDashboardManager({});
+    for (const revoked of [null, 'null']) {
+        const html = context.renderDashboardSharingSection({
+            sharing: { anyone: revoked, users: { removedUser: revoked, retainedUser: 'viewer' }, groups: { removedGroup: revoked } }
+        });
+        assert.match(html, /No public access/);
+        assert.match(html, /retainedUser/);
+        assert.doesNotMatch(html, /All users|removedUser|removedGroup/);
+    }
+});
+
+for (const action of ['remove', 'clear']) {
+    for (const outcome of ['applied', 'retained', 'applied_with_422', 'retained_with_422']) {
+        test(`${action} dialog uses actual API serialization and reports ${outcome} after refresh`, async () => {
+            let sharing = { anyone: 'viewer', users: { existing: 'viewer' }, groups: { 'local.ops': 'editor' } };
+            const calls = [];
+            const { context, state, alerts } = loadDashboardManager(null, [], {
+                dashboardSharingAction: { value: action },
+                additionalEditorsSelect: { selectedOptions: action === 'remove' ? [{ value: 'added' }] : [] }
+            });
+            Object.assign(context, {
+                setTimeout, clearTimeout, AbortController,
+                fetch: async (url, options) => {
+                    calls.push({ url, method: options.method });
+                    let status = 200;
+                    if (options.method === 'PUT') {
+                        const body = JSON.parse(options.body);
+                        assert.equal(Object.hasOwn(body, 'anyone'), false);
+                        if (outcome.startsWith('applied')) sharing = { anyone: null, ...body };
+                        status = outcome.endsWith('422') ? 422 : 204;
+                    } else {
+                        assert.equal(options.method, 'GET');
+                    }
+                    return {
+                        status, ok: status < 400, statusText: 'Unprocessable Entity',
+                        async text() { return JSON.stringify(status === 422 ? { message: 'API returned 422' } : sharing); }
+                    };
+                }
+            });
+            vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/api-client/extrahop-api.js'), 'utf8'), context);
+            vm.runInContext(`
+                window.apiClient = new ExtraHopAPI({ type: 'enterprise' });
+                runDashboardMutation = async (operation, ids, work) => {
+                    capturedResults = await work();
+                    return capturedResults;
+                };
+                loadDashboards = async () => { refreshCount++; state.selectedDashboards.clear(); return true; };
+            `, context);
+            state.selectedDashboards.add('9007199254740993');
+            await context.confirmDashboardModifySharing();
+            assert.equal(context.refreshCount, 1);
+            assert.equal(calls.filter(call => call.method === 'PUT').length, 1);
+            assert.ok(calls.every(call => call.url === '/backend/extrahop/api/v1/dashboards/9007199254740993/sharing'));
+            assert.deepEqual(calls.map(call => call.method), action === 'remove' ? ['GET', 'PUT', 'GET'] : ['PUT', 'GET']);
+            const result = context.capturedResults;
+            if (outcome.startsWith('applied')) {
+                assert.equal(result.sharingChanges, 1);
+                assert.equal(result.sharingUnverified, 0);
+                assert.match(alerts[0], /Sharing updates completed for 1 of 1/);
+                assert.deepEqual(sharing, action === 'clear'
+                    ? { anyone: null, users: {}, groups: {} }
+                    : { anyone: null, users: { existing: 'viewer', added: 'editor' }, groups: { 'local.ops': 'editor' } });
+                if (outcome.endsWith('422')) {
+                    assert.equal(result.sharingVerifiedAfterError, 1);
+                    assert.equal(result.items[0].sharing.status, 'verified_after_error');
+                    assert.match(alerts[0], /confirmed by readback.*422/);
+                }
+            } else {
+                assert.match(alerts[0], /Sharing updates completed for 0 of 1/);
+                assert.match(alerts[0], /could not be verified/);
+                assert.equal(result.items[0].sharing.status, outcome.endsWith('422') ? 'failed' : 'unverified');
+            }
+        });
+    }
+}
