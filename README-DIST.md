@@ -82,6 +82,13 @@ The browser cannot reach the local launcher service.
 3. Run `START-HERE.command` or `./start.sh` again.
 4. Use the exact `http://127.0.0.1:PORT` URL printed by the launcher.
 
+### Saved connections are unavailable or the keyring is locked
+
+Unlock macOS Keychain or Linux Secret Service and check saved connections again, or choose
+**Add new connection** to connect manually. Credential-store calls time out after five seconds;
+startup, local tools, and manual connection controls remain usable while the service is waiting.
+If saving credentials fails, the active connection still works.
+
 ### Collect safe diagnostics
 
 macOS or Linux:
@@ -138,6 +145,19 @@ The launcher prints the writable log directory during startup and diagnostics.
 - `server.log` contains local startup and request status messages.
 - `api-responses.jsonl` records failed API responses and network errors by default; logging can be changed or disabled in the UI.
 - **Full** API logging can contain sensitive operational data even though credential-shaped fields are redacted. Review logs before sharing them.
+
+## Dashboard sharing and user transfer
+
+Dashboard Manager can preserve, enable, or remove all-users access, or clear all direct user and
+group grants. Removing only all-users access preserves explicit grants. Readback verification
+distinguishes confirmed changes from accepted but unverified updates.
+
+User Manager can optionally clear direct dashboard sharing before deleting users and transferring
+their owned objects. Sharing is preserved by default. Deletion requires an acknowledged cleanup
+write and successful verification; even a readback-confirmed HTTP 422 response stops deletion.
+Earlier successful changes remain applied if later work fails. Collections and activity maps retain
+their sharing, and shared collections can still provide dashboard access; review those separately
+in ExtraHop.
 
 ## Datafeed Analysis
 

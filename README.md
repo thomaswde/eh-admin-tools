@@ -57,7 +57,9 @@ operating-system credential service: macOS Keychain or Linux Secret Service. The
 only the tenant or hostname, an opaque connection ID, and the HTTP-only workspace cookie. The same
 workspace identifier remains in use when an ExtraHop client is attached or detached. If the
 operating-system credential service is unavailable, the active connection still works and the UI
-shows that it could not be saved.
+shows that it could not be saved. A locked or unresponsive credential service does not block
+startup, local tools, or manual connection controls. Credential-store calls time out after five
+seconds; unlock the keyring and check again, or connect manually.
 
 The app can also read credentials from a local `.env` file at startup. 
 Copy `.env.example` to `.env`, replace the example values, and restart:
@@ -67,7 +69,7 @@ cp .env.example .env
 ```
 
 Connections use numbered variables, so additional RevealX 360 or Enterprise entries can use
-indexes `2`, `3`, and so on. `.env`. 
+indexes `2`, `3`, and so on.
 It's recommended to use the connection form and operating-system credential store for normal use.
 
 ## Cached reports
@@ -90,8 +92,6 @@ Set `EH_REPORT_CACHE_DIR`, `EH_REPORT_CACHE_MAX_ENTRY_BYTES`,
 those defaults. Cached report data can contain sensitive operational details; protect it and
 review it before sharing.
 
-```
-
 ## API response logging
 
 Use the API Logging control in the sidebar to write proxied ExtraHop API responses to `logs/api-responses.jsonl`, or to the launcher-managed state directory when using `start.sh`.
@@ -102,6 +102,21 @@ Use the API Logging control in the sidebar to write proxied ExtraHop API respons
 - `Full`: every response with request and response previews and credential-shaped fields redacted.
 
 Full response logs can still contain sensitive operational data. Preview and entry sizes are bounded, oversized JSON is not parsed solely for logging, and the log rotates by bytes with a fixed backup count. API response logging defaults to `Errors`; the default file path can be changed with `EH_API_RESPONSE_LOG`, and startup verbosity with `EH_API_LOG_VERBOSITY`.
+
+## Dashboard sharing and user transfer
+
+Dashboard Manager can preserve, enable, or remove all-users access, or clear all direct sharing.
+Removing all-users access preserves explicit user and group grants; clearing direct sharing removes
+those grants too. Sharing replacements are read back for verification. An accepted write whose
+verification fails is reported separately from a confirmed change. If the API returns HTTP 422,
+one readback checks whether the requested sharing was nevertheless applied without repeating the write.
+
+In User Manager, single and bulk deletion can optionally clear direct dashboard sharing before
+transferring owned objects to another user. Existing sharing is preserved by default. Cleanup must
+receive both an acknowledged write and successful verification before deletion proceeds; even a
+reconciled HTTP 422 stops that user's deletion. Earlier successful changes remain applied if later
+work fails. Collections and activity maps retain their sharing, and shared collections can still
+provide dashboard access; review those separately in ExtraHop.
 
 ## Datafeed Analysis
 
