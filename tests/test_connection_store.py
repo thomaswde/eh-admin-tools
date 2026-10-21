@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -46,6 +47,30 @@ class MissingBackendKeyring:
 
 
 class ConnectionStoreTests(unittest.TestCase):
+    def test_blocked_keyring_returns_status_without_spawning_more_calls(self):
+        release = threading.Event()
+        calls = []
+
+        class BlockedKeyring(FakeKeyring):
+            def get_password(self, service, account):
+                calls.append((service, account))
+                release.wait(5)
+                return None
+
+        with TemporaryDirectory() as directory:
+            store = ConnectionStore(Path(directory), keyring_backend=BlockedKeyring())
+            try:
+                with patch("backend.connection_store.KEYRING_TIMEOUT_SECONDS", 0.01):
+                    catalog = store.list_connections()
+                    self.assertFalse(catalog["secureStorage"]["available"])
+                    self.assertEqual(catalog["secureStorage"]["code"], "timeout")
+                    self.assertEqual(store.list_connections()["secureStorage"]["code"], "busy")
+                    self.assertEqual(len(calls), 1)
+            finally:
+                release.set()
+                store._keyring_pending.result(timeout=1)
+            self.assertTrue(store.list_connections()["secureStorage"]["available"])
+
     def test_shipped_env_example_is_never_offered_as_saved_connections(self):
         repository_root = Path(__file__).resolve().parents[1]
         store = ConnectionStore(

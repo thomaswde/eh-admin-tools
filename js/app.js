@@ -16,16 +16,18 @@ async function initializeApp() {
     // Load saved config on page load
     loadSavedConfig();
 
+    // Controls must remain usable while the OS credential service is locked
+    // or waiting for an unlock prompt.
+    setupGlobalEventListeners();
+
     // Start loading .env and OS-credential entries without delaying restoration
     // of an existing browser session.
     const savedConnectionsPromise = loadSavedConnections();
 
     // Restore a still-valid backend session after a frontend reload
     await restoreBackendSession();
-    await savedConnectionsPromise;
-    
-    // Set up global event listeners
-    setupGlobalEventListeners();
+    // Saved entries are optional; they must not block local tools or logging.
+    void savedConnectionsPromise;
 
     // Restore diagnostic logging preference
     await loadApiLoggingStatus();

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from hashlib import sha256
 import json
 import os
@@ -24,6 +25,7 @@ except ImportError:  # Keep the app importable so diagnostics can explain the ru
 
 KEYRING_SERVICE = "com.extrahop.admin-tools.connections"
 KEYRING_ACCOUNT = "saved-connections-v1"
+KEYRING_TIMEOUT_SECONDS = 5
 ENV_CONNECTION_PATTERN = re.compile(
     r"^EH_CONNECTION_(360|ENTERPRISE)_([1-9][0-9]*)_"
     r"(TENANT|API_ID|API_SECRET|HOST|API_KEY|VERIFY_TLS)$"
@@ -139,6 +141,35 @@ class ConnectionStore:
         self._keyring = keyring_backend if keyring_backend is not None else keyring
         self._dotenv_loader = dotenv_loader if dotenv_loader is not None else dotenv_values
         self._lock = threading.RLock()
+        self._keyring_pending: Future | None = None
+
+    def _call_keyring(self, method: str, *args: str) -> Any:
+        # One daemon worker at a time bounds blocked OS prompts without leaving
+        # an unbounded executor queue or preventing application shutdown.
+        if self._keyring_pending is not None and not self._keyring_pending.done():
+            raise ConnectionStorageError(
+                "The operating-system credential store is still waiting. "
+                "Unlock the keyring and check again, or connect manually.",
+                code="busy",
+            )
+        pending: Future = Future()
+        self._keyring_pending = pending
+
+        def run() -> None:
+            try:
+                pending.set_result(getattr(self._require_keyring(), method)(*args))
+            except Exception as error:
+                pending.set_exception(error)
+
+        threading.Thread(target=run, daemon=True, name="credential-store").start()
+        try:
+            return pending.result(timeout=KEYRING_TIMEOUT_SECONDS)
+        except FutureTimeoutError as error:
+            raise ConnectionStorageError(
+                "The operating-system credential store did not respond. "
+                "Unlock the keyring and check again, or connect manually.",
+                code="timeout",
+            ) from error
 
     def list_connections(self) -> dict[str, Any]:
         env_configs, env_warnings = self._read_env_configs()
@@ -303,10 +334,13 @@ class ConnectionStore:
     def _read_keychain_configs(self) -> dict[str, dict[str, Any]]:
         with self._lock:
             try:
-                payload = self._require_keyring().get_password(
+                payload = self._call_keyring(
+                    "get_password",
                     KEYRING_SERVICE,
                     KEYRING_ACCOUNT,
                 )
+            except ConnectionStorageError:
+                raise
             except Exception as error:
                 raise self._unavailable_error(error, update=False) from error
             if not payload:
@@ -343,11 +377,14 @@ class ConnectionStore:
             sort_keys=True,
         )
         try:
-            self._require_keyring().set_password(
+            self._call_keyring(
+                "set_password",
                 KEYRING_SERVICE,
                 KEYRING_ACCOUNT,
                 payload,
             )
+        except ConnectionStorageError:
+            raise
         except Exception as error:
             raise self._unavailable_error(error, update=True) from error
 
